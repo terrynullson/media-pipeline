@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +19,8 @@ type JobRepository interface {
 	ClaimNextPending(ctx context.Context, jobType job.Type, nowUTC time.Time) (job.Job, bool, error)
 	MarkDone(ctx context.Context, id int64, nowUTC time.Time) error
 	MarkFailed(ctx context.Context, id int64, errorMessage string, nowUTC time.Time) error
+	ListByStatus(ctx context.Context, jobType job.Type, status job.Status) ([]job.Job, error)
+	Requeue(ctx context.Context, id int64, errorMessage string, nowUTC time.Time) error
 }
 
 type MediaRepository interface {
@@ -27,6 +28,7 @@ type MediaRepository interface {
 	MarkProcessing(ctx context.Context, id int64, nowUTC time.Time) error
 	MarkAudioExtracted(ctx context.Context, id int64, extractedAudioPath string, nowUTC time.Time) error
 	MarkFailed(ctx context.Context, id int64, nowUTC time.Time) error
+	MarkUploaded(ctx context.Context, id int64, nowUTC time.Time) error
 }
 
 type Processor struct {
@@ -113,10 +115,18 @@ func (p *Processor) ProcessNext(ctx context.Context) (bool, error) {
 		ProcessedAt: time.Now().UTC().Format("2006-01-02"),
 	})
 	if err != nil {
+		logger.Error("ffmpeg failed",
+			slog.Any("error", err),
+			slog.String("stderr", strings.TrimSpace(extractResult.Stderr)),
+		)
 		failureMessage := buildFailureMessage("extract audio", err, extractResult.Stderr)
 		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
 		return true, nil
 	}
+	logger.Info("ffmpeg completed",
+		slog.String("audio_path", extractResult.OutputPath),
+		slog.String("stderr", strings.TrimSpace(extractResult.Stderr)),
+	)
 
 	if err := p.media.MarkAudioExtracted(ctx, mediaItem.ID, extractResult.OutputPath, time.Now().UTC()); err != nil {
 		_ = cleanupOutputFile(p.audioDir, extractResult.OutputPath)
@@ -136,6 +146,38 @@ func (p *Processor) ProcessNext(ctx context.Context) (bool, error) {
 		slog.String("audio_path", extractResult.OutputPath),
 	)
 	return true, nil
+}
+
+func (p *Processor) RecoverInterruptedJobs(ctx context.Context) error {
+	runningJobs, err := p.jobs.ListByStatus(ctx, job.TypeExtractAudio, job.StatusRunning)
+	if err != nil {
+		return fmt.Errorf("list running jobs: %w", err)
+	}
+	if len(runningJobs) == 0 {
+		return nil
+	}
+
+	recoveryMessage := "worker restarted before job completion"
+	for _, currentJob := range runningJobs {
+		logger := p.logger.With(
+			slog.Int64("job_id", currentJob.ID),
+			slog.Int64("media_id", currentJob.MediaID),
+			slog.String("job_type", string(currentJob.Type)),
+		)
+
+		if err := p.media.MarkUploaded(ctx, currentJob.MediaID, time.Now().UTC()); err != nil {
+			logger.Error("recover media state failed", slog.Any("error", err))
+			continue
+		}
+		if err := p.jobs.Requeue(ctx, currentJob.ID, recoveryMessage, time.Now().UTC()); err != nil {
+			logger.Error("requeue interrupted job failed", slog.Any("error", err))
+			continue
+		}
+
+		logger.Warn("requeued interrupted job", slog.String("reason", recoveryMessage))
+	}
+
+	return nil
 }
 
 func (p *Processor) failJob(ctx context.Context, currentJob job.Job, mediaID int64, failureMessage string, logger *slog.Logger) {
@@ -193,6 +235,9 @@ func cleanupOutputFile(audioDir string, relativePath string) error {
 
 func safeJoinBasePath(baseDir string, relativePath string) (string, error) {
 	cleanRelativePath := filepath.Clean(filepath.FromSlash(relativePath))
+	if cleanRelativePath == "." || cleanRelativePath == string(filepath.Separator) {
+		return "", fmt.Errorf("invalid relative path %q", relativePath)
+	}
 	fullPath := filepath.Join(baseDir, cleanRelativePath)
 
 	baseAbs, err := filepath.Abs(baseDir)
@@ -208,8 +253,4 @@ func safeJoinBasePath(baseDir string, relativePath string) (string, error) {
 	}
 
 	return fullAbs, nil
-}
-
-func IsMissingMediaError(err error) bool {
-	return errors.Is(err, sql.ErrNoRows)
 }

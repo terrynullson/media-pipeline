@@ -158,6 +158,10 @@ func (r *MediaRepository) MarkProcessing(ctx context.Context, id int64, nowUTC t
 	return r.updateState(ctx, id, media.StatusProcessing, "", nowUTC)
 }
 
+func (r *MediaRepository) MarkUploaded(ctx context.Context, id int64, nowUTC time.Time) error {
+	return r.updateState(ctx, id, media.StatusUploaded, "", nowUTC)
+}
+
 func (r *MediaRepository) MarkAudioExtracted(ctx context.Context, id int64, extractedAudioPath string, nowUTC time.Time) error {
 	result, err := r.db.ExecContext(
 		ctx,

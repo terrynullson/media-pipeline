@@ -23,6 +23,9 @@ func NewRunner(processor *Processor, pollInterval time.Duration, logger *slog.Lo
 
 func (r *Runner) Run(ctx context.Context) error {
 	r.logger.Info("worker loop started", slog.Duration("poll_interval", r.pollInterval))
+	if err := r.processor.RecoverInterruptedJobs(ctx); err != nil {
+		return err
+	}
 
 	for {
 		if err := ctx.Err(); err != nil {

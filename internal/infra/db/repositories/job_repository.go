@@ -131,6 +131,75 @@ func (r *JobRepository) MarkFailed(ctx context.Context, id int64, errorMessage s
 	return ensureRowsAffected(result, id, "mark job failed")
 }
 
+func (r *JobRepository) ListByStatus(ctx context.Context, jobType job.Type, status job.Status) ([]job.Job, error) {
+	rows, err := r.db.QueryContext(
+		ctx,
+		`SELECT id, media_id, type, status, attempts, error_message, created_at, updated_at
+		 FROM jobs
+		 WHERE type = ? AND status = ?
+		 ORDER BY datetime(created_at) ASC, id ASC`,
+		jobType,
+		status,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list jobs by status: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]job.Job, 0)
+	for rows.Next() {
+		var item job.Job
+		var createdAt string
+		var updatedAt string
+		if err := rows.Scan(
+			&item.ID,
+			&item.MediaID,
+			&item.Type,
+			&item.Status,
+			&item.Attempts,
+			&item.ErrorMessage,
+			&createdAt,
+			&updatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan job row: %w", err)
+		}
+
+		item.CreatedAtUTC, err = time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse job created_at: %w", err)
+		}
+		item.UpdatedAtUTC, err = time.Parse(time.RFC3339, updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse job updated_at: %w", err)
+		}
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate jobs by status: %w", err)
+	}
+
+	return items, nil
+}
+
+func (r *JobRepository) Requeue(ctx context.Context, id int64, errorMessage string, nowUTC time.Time) error {
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE jobs
+		 SET status = ?, error_message = ?, updated_at = ?
+		 WHERE id = ?`,
+		job.StatusPending,
+		errorMessage,
+		nowUTC.Format(time.RFC3339),
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("requeue job: %w", err)
+	}
+
+	return ensureRowsAffected(result, id, "requeue job")
+}
+
 func ensureRowsAffected(result sql.Result, id int64, action string) error {
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {

@@ -115,6 +115,60 @@ func TestJobRepository_MarkFailedIncrementsAttempts(t *testing.T) {
 	}
 }
 
+func TestJobRepository_RequeueMovesRunningBackToPending(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
+
+	mediaRepo := NewMediaRepository(sqlDB)
+	jobRepo := NewJobRepository(sqlDB)
+
+	mediaID := createTestMedia(t, ctx, mediaRepo)
+	nowUTC := time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC)
+
+	jobID, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeExtractAudio,
+		Status:       job.StatusRunning,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	})
+	if err != nil {
+		t.Fatalf("Create(job) error = %v", err)
+	}
+
+	jobs, err := jobRepo.ListByStatus(ctx, job.TypeExtractAudio, job.StatusRunning)
+	if err != nil {
+		t.Fatalf("ListByStatus() error = %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].ID != jobID {
+		t.Fatalf("ListByStatus() jobs = %#v, want one running job %d", jobs, jobID)
+	}
+
+	if err := jobRepo.Requeue(ctx, jobID, "worker restarted before job completion", nowUTC.Add(time.Minute)); err != nil {
+		t.Fatalf("Requeue() error = %v", err)
+	}
+
+	var status string
+	var attempts int
+	var errorMessage string
+	if err := sqlDB.QueryRowContext(ctx, "SELECT status, attempts, error_message FROM jobs WHERE id = ?", jobID).
+		Scan(&status, &attempts, &errorMessage); err != nil {
+		t.Fatalf("QueryRow(status) error = %v", err)
+	}
+	if status != string(job.StatusPending) {
+		t.Fatalf("status = %q, want %q", status, job.StatusPending)
+	}
+	if attempts != 0 {
+		t.Fatalf("attempts = %d, want 0", attempts)
+	}
+	if errorMessage != "worker restarted before job completion" {
+		t.Fatalf("error_message = %q, want recovery message", errorMessage)
+	}
+}
+
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
