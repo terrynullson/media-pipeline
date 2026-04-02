@@ -13,6 +13,7 @@ import (
 	"media-pipeline/internal/infra/db/repositories"
 	infraMedia "media-pipeline/internal/infra/media"
 	infraRuntime "media-pipeline/internal/infra/runtime"
+	infraTranscription "media-pipeline/internal/infra/transcription"
 )
 
 func main() {
@@ -41,15 +42,26 @@ func main() {
 
 	jobRepo := repositories.NewJobRepository(sqlDB)
 	mediaRepo := repositories.NewMediaRepository(sqlDB)
+	transcriptRepo := repositories.NewTranscriptRepository(sqlDB)
 	audioExtractor := infraMedia.NewFFmpegExtractor(cfg.FFmpegBinary)
+	transcribeScriptPath, err := infraRuntime.ResolvePath(cfg.TranscribeScript)
+	if err != nil {
+		logger.Error("resolve transcribe script path", slog.Any("error", err), slog.String("path", cfg.TranscribeScript))
+		os.Exit(1)
+	}
+	transcriber := infraTranscription.NewPythonTranscriber(cfg.PythonBinary, transcribeScriptPath)
 
 	processor := appworker.NewProcessor(
 		jobRepo,
 		mediaRepo,
+		transcriptRepo,
 		audioExtractor,
+		transcriber,
 		cfg.UploadDir,
 		cfg.AudioDir,
 		cfg.FFmpegTimeout(),
+		cfg.TranscribeTimeout(),
+		cfg.TranscribeLanguage,
 		logger,
 	)
 	runner := appworker.NewRunner(processor, cfg.WorkerPollInterval(), logger)
@@ -59,8 +71,11 @@ func main() {
 		slog.String("upload_dir", cfg.UploadDir),
 		slog.String("audio_dir", cfg.AudioDir),
 		slog.String("ffmpeg_binary", cfg.FFmpegBinary),
+		slog.String("python_binary", cfg.PythonBinary),
+		slog.String("transcribe_script", transcribeScriptPath),
 		slog.Duration("poll_interval", cfg.WorkerPollInterval()),
 		slog.Duration("ffmpeg_timeout", cfg.FFmpegTimeout()),
+		slog.Duration("transcribe_timeout", cfg.TranscribeTimeout()),
 	)
 
 	if err := runner.Run(ctx); err != nil {

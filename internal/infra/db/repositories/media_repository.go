@@ -22,8 +22,8 @@ func (r *MediaRepository) Create(ctx context.Context, m media.Media) (int64, err
 		ctx,
 		`INSERT INTO media (
 			original_name, stored_name, extension, mime_type,
-			size_bytes, storage_path, extracted_audio_path, status, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			size_bytes, storage_path, extracted_audio_path, transcript_text, status, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.OriginalName,
 		m.StoredName,
 		m.Extension,
@@ -31,6 +31,7 @@ func (r *MediaRepository) Create(ctx context.Context, m media.Media) (int64, err
 		m.SizeBytes,
 		m.StoragePath,
 		m.ExtractedAudioPath,
+		m.TranscriptText,
 		m.Status,
 		m.CreatedAtUTC.Format(time.RFC3339),
 		m.UpdatedAtUTC.Format(time.RFC3339),
@@ -59,7 +60,7 @@ func (r *MediaRepository) ListRecent(ctx context.Context, limit int) ([]media.Me
 	rows, err := r.db.QueryContext(
 		ctx,
 		`SELECT id, original_name, stored_name, extension, mime_type,
-			size_bytes, storage_path, extracted_audio_path, status, created_at, updated_at
+			size_bytes, storage_path, extracted_audio_path, transcript_text, status, created_at, updated_at
 		 FROM media
 		 ORDER BY datetime(created_at) DESC
 		 LIMIT ?`,
@@ -83,6 +84,7 @@ func (r *MediaRepository) ListRecent(ctx context.Context, limit int) ([]media.Me
 			&item.SizeBytes,
 			&item.StoragePath,
 			&item.ExtractedAudioPath,
+			&item.TranscriptText,
 			&item.Status,
 			&createdAt,
 			&updatedAt,
@@ -112,7 +114,7 @@ func (r *MediaRepository) GetByID(ctx context.Context, id int64) (media.Media, e
 	row := r.db.QueryRowContext(
 		ctx,
 		`SELECT id, original_name, stored_name, extension, mime_type,
-			size_bytes, storage_path, extracted_audio_path, status, created_at, updated_at
+			size_bytes, storage_path, extracted_audio_path, transcript_text, status, created_at, updated_at
 		 FROM media
 		 WHERE id = ?`,
 		id,
@@ -130,6 +132,7 @@ func (r *MediaRepository) GetByID(ctx context.Context, id int64) (media.Media, e
 		&item.SizeBytes,
 		&item.StoragePath,
 		&item.ExtractedAudioPath,
+		&item.TranscriptText,
 		&item.Status,
 		&createdAt,
 		&updatedAt,
@@ -155,11 +158,11 @@ func (r *MediaRepository) GetByID(ctx context.Context, id int64) (media.Media, e
 }
 
 func (r *MediaRepository) MarkProcessing(ctx context.Context, id int64, nowUTC time.Time) error {
-	return r.updateState(ctx, id, media.StatusProcessing, "", nowUTC)
+	return r.updateState(ctx, id, media.StatusProcessing, "", "", nowUTC)
 }
 
 func (r *MediaRepository) MarkUploaded(ctx context.Context, id int64, nowUTC time.Time) error {
-	return r.updateState(ctx, id, media.StatusUploaded, "", nowUTC)
+	return r.updateState(ctx, id, media.StatusUploaded, "", "", nowUTC)
 }
 
 func (r *MediaRepository) MarkAudioExtracted(ctx context.Context, id int64, extractedAudioPath string, nowUTC time.Time) error {
@@ -189,17 +192,80 @@ func (r *MediaRepository) MarkAudioExtracted(ctx context.Context, id int64, extr
 }
 
 func (r *MediaRepository) MarkFailed(ctx context.Context, id int64, nowUTC time.Time) error {
-	return r.updateState(ctx, id, media.StatusFailed, "", nowUTC)
+	return r.updateState(ctx, id, media.StatusFailed, "", "", nowUTC)
 }
 
-func (r *MediaRepository) updateState(ctx context.Context, id int64, status media.Status, extractedAudioPath string, nowUTC time.Time) error {
+func (r *MediaRepository) MarkAudioReady(ctx context.Context, id int64, nowUTC time.Time) error {
 	result, err := r.db.ExecContext(
 		ctx,
 		`UPDATE media
-		 SET status = ?, extracted_audio_path = ?, updated_at = ?
+		 SET status = ?, updated_at = ?
+		 WHERE id = ?`,
+		media.StatusAudioExtracted,
+		nowUTC.Format(time.RFC3339),
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("mark media audio ready: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("media audio ready rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("mark media audio ready: media %d not found", id)
+	}
+
+	return nil
+}
+
+func (r *MediaRepository) MarkTranscribing(ctx context.Context, id int64, nowUTC time.Time) error {
+	return r.updateState(ctx, id, media.StatusTranscribing, "", "", nowUTC)
+}
+
+func (r *MediaRepository) MarkTranscribed(ctx context.Context, id int64, transcriptText string, nowUTC time.Time) error {
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE media
+		 SET status = ?, transcript_text = ?, updated_at = ?
+		 WHERE id = ?`,
+		media.StatusTranscribed,
+		transcriptText,
+		nowUTC.Format(time.RFC3339),
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("mark media transcribed: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("media transcribed rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("mark media transcribed: media %d not found", id)
+	}
+
+	return nil
+}
+
+func (r *MediaRepository) updateState(
+	ctx context.Context,
+	id int64,
+	status media.Status,
+	extractedAudioPath string,
+	transcriptText string,
+	nowUTC time.Time,
+) error {
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE media
+		 SET status = ?, extracted_audio_path = ?, transcript_text = ?, updated_at = ?
 		 WHERE id = ?`,
 		status,
 		extractedAudioPath,
+		transcriptText,
 		nowUTC.Format(time.RFC3339),
 		id,
 	)

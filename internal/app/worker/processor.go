@@ -13,9 +13,11 @@ import (
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/ports"
+	"media-pipeline/internal/domain/transcript"
 )
 
 type JobRepository interface {
+	Create(ctx context.Context, j job.Job) (int64, error)
 	ClaimNextPending(ctx context.Context, jobType job.Type, nowUTC time.Time) (job.Job, bool, error)
 	MarkDone(ctx context.Context, id int64, nowUTC time.Time) error
 	MarkFailed(ctx context.Context, id int64, errorMessage string, nowUTC time.Time) error
@@ -27,43 +29,76 @@ type MediaRepository interface {
 	GetByID(ctx context.Context, id int64) (media.Media, error)
 	MarkProcessing(ctx context.Context, id int64, nowUTC time.Time) error
 	MarkAudioExtracted(ctx context.Context, id int64, extractedAudioPath string, nowUTC time.Time) error
+	MarkAudioReady(ctx context.Context, id int64, nowUTC time.Time) error
+	MarkTranscribing(ctx context.Context, id int64, nowUTC time.Time) error
+	MarkTranscribed(ctx context.Context, id int64, transcriptText string, nowUTC time.Time) error
 	MarkFailed(ctx context.Context, id int64, nowUTC time.Time) error
 	MarkUploaded(ctx context.Context, id int64, nowUTC time.Time) error
 }
 
+type TranscriptRepository interface {
+	Save(ctx context.Context, item transcript.Transcript) error
+}
+
 type Processor struct {
-	jobs           JobRepository
-	media          MediaRepository
-	audioExtractor ports.AudioExtractor
-	logger         *slog.Logger
-	uploadDir      string
-	audioDir       string
-	ffmpegTimeout  time.Duration
+	jobs              JobRepository
+	media             MediaRepository
+	transcripts       TranscriptRepository
+	audioExtractor    ports.AudioExtractor
+	transcriber       ports.Transcriber
+	logger            *slog.Logger
+	uploadDir         string
+	audioDir          string
+	ffmpegTimeout     time.Duration
+	transcribeTimeout time.Duration
+	defaultLanguage   string
 }
 
 func NewProcessor(
 	jobRepo JobRepository,
 	mediaRepo MediaRepository,
+	transcriptRepo TranscriptRepository,
 	audioExtractor ports.AudioExtractor,
+	transcriber ports.Transcriber,
 	uploadDir string,
 	audioDir string,
 	ffmpegTimeout time.Duration,
+	transcribeTimeout time.Duration,
+	defaultLanguage string,
 	logger *slog.Logger,
 ) *Processor {
 	return &Processor{
-		jobs:           jobRepo,
-		media:          mediaRepo,
-		audioExtractor: audioExtractor,
-		logger:         logger,
-		uploadDir:      uploadDir,
-		audioDir:       audioDir,
-		ffmpegTimeout:  ffmpegTimeout,
+		jobs:              jobRepo,
+		media:             mediaRepo,
+		transcripts:       transcriptRepo,
+		audioExtractor:    audioExtractor,
+		transcriber:       transcriber,
+		logger:            logger,
+		uploadDir:         uploadDir,
+		audioDir:          audioDir,
+		ffmpegTimeout:     ffmpegTimeout,
+		transcribeTimeout: transcribeTimeout,
+		defaultLanguage:   defaultLanguage,
 	}
 }
 
 func (p *Processor) ProcessNext(ctx context.Context) (bool, error) {
+	for _, jobType := range []job.Type{job.TypeExtractAudio, job.TypeTranscribe} {
+		processed, err := p.processNextByType(ctx, jobType)
+		if err != nil {
+			return false, err
+		}
+		if processed {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (p *Processor) processNextByType(ctx context.Context, jobType job.Type) (bool, error) {
 	nowUTC := time.Now().UTC()
-	claimedJob, ok, err := p.jobs.ClaimNextPending(ctx, job.TypeExtractAudio, nowUTC)
+	claimedJob, ok, err := p.jobs.ClaimNextPending(ctx, jobType, nowUTC)
 	if err != nil {
 		return false, fmt.Errorf("claim next pending job: %w", err)
 	}
@@ -78,24 +113,37 @@ func (p *Processor) ProcessNext(ctx context.Context) (bool, error) {
 	)
 	logger.Info("picked job")
 
+	switch claimedJob.Type {
+	case job.TypeExtractAudio:
+		p.processExtractAudioJob(ctx, claimedJob, logger)
+	case job.TypeTranscribe:
+		p.processTranscribeJob(ctx, claimedJob, logger)
+	default:
+		p.failJob(ctx, claimedJob, 0, fmt.Sprintf("unsupported job type %q", claimedJob.Type), logger)
+	}
+
+	return true, nil
+}
+
+func (p *Processor) processExtractAudioJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
 	mediaItem, err := p.media.GetByID(ctx, claimedJob.MediaID)
 	if err != nil {
 		failureMessage := fmt.Sprintf("load media %d: %v", claimedJob.MediaID, err)
 		p.failJob(ctx, claimedJob, 0, failureMessage, logger)
-		return true, nil
+		return
 	}
 
 	if err := p.media.MarkProcessing(ctx, mediaItem.ID, time.Now().UTC()); err != nil {
 		failureMessage := fmt.Sprintf("mark media %d processing: %v", mediaItem.ID, err)
 		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
-		return true, nil
+		return
 	}
 
 	inputPath, err := safeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
 	if err != nil {
 		failureMessage := fmt.Sprintf("resolve input path: %v", err)
 		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
-		return true, nil
+		return
 	}
 
 	ffmpegCtx, cancel := context.WithTimeout(ctx, p.ffmpegTimeout)
@@ -121,7 +169,7 @@ func (p *Processor) ProcessNext(ctx context.Context) (bool, error) {
 		)
 		failureMessage := buildFailureMessage("extract audio", err, extractResult.Stderr)
 		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
-		return true, nil
+		return
 	}
 	logger.Info("ffmpeg completed",
 		slog.String("audio_path", extractResult.OutputPath),
@@ -132,49 +180,132 @@ func (p *Processor) ProcessNext(ctx context.Context) (bool, error) {
 		_ = cleanupOutputFile(p.audioDir, extractResult.OutputPath)
 		failureMessage := fmt.Sprintf("persist extracted audio path: %v", err)
 		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
-		return true, nil
+		return
+	}
+
+	if err := p.enqueueNextJob(ctx, mediaItem.ID, job.TypeTranscribe); err != nil {
+		failureMessage := fmt.Sprintf("enqueue transcribe job: %v", err)
+		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
+		return
 	}
 
 	if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
 		_ = cleanupOutputFile(p.audioDir, extractResult.OutputPath)
 		failureMessage := fmt.Sprintf("mark job done: %v", err)
 		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
-		return true, nil
+		return
 	}
 
 	logger.Info("job completed",
 		slog.String("audio_path", extractResult.OutputPath),
 	)
-	return true, nil
+}
+
+func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
+	mediaItem, err := p.media.GetByID(ctx, claimedJob.MediaID)
+	if err != nil {
+		failureMessage := fmt.Sprintf("load media %d: %v", claimedJob.MediaID, err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, logger)
+		return
+	}
+
+	if strings.TrimSpace(mediaItem.ExtractedAudioPath) == "" {
+		failureMessage := fmt.Sprintf("media %d has empty extracted audio path", mediaItem.ID)
+		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
+		return
+	}
+
+	if err := p.media.MarkTranscribing(ctx, mediaItem.ID, time.Now().UTC()); err != nil {
+		failureMessage := fmt.Sprintf("mark media %d transcribing: %v", mediaItem.ID, err)
+		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
+		return
+	}
+
+	audioPath, err := safeJoinBasePath(p.audioDir, mediaItem.ExtractedAudioPath)
+	if err != nil {
+		failureMessage := fmt.Sprintf("resolve audio path: %v", err)
+		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
+		return
+	}
+
+	transcribeCtx, cancel := context.WithTimeout(ctx, p.transcribeTimeout)
+	defer cancel()
+
+	logger.Info("starting transcription",
+		slog.String("audio_path", audioPath),
+		slog.String("language", p.defaultLanguage),
+		slog.Duration("timeout", p.transcribeTimeout),
+	)
+
+	result, err := p.transcriber.Transcribe(transcribeCtx, ports.TranscribeInput{
+		AudioPath: audioPath,
+		Language:  p.defaultLanguage,
+	})
+	if err != nil {
+		if errors.Is(transcribeCtx.Err(), context.DeadlineExceeded) {
+			logger.Error("transcription timeout",
+				slog.String("audio_path", audioPath),
+				slog.String("stderr", strings.TrimSpace(result.Stderr)),
+			)
+		} else {
+			logger.Error("transcription failed",
+				slog.Any("error", err),
+				slog.String("stderr", strings.TrimSpace(result.Stderr)),
+			)
+		}
+
+		failureMessage := buildFailureMessage("transcribe audio", err, result.Stderr)
+		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
+		return
+	}
+
+	logger.Info("transcription completed",
+		slog.Int("segments", len(result.Segments)),
+		slog.String("stderr", strings.TrimSpace(result.Stderr)),
+	)
+
+	nowUTC := time.Now().UTC()
+	if err := p.transcripts.Save(ctx, transcript.Transcript{
+		MediaID:      mediaItem.ID,
+		Language:     p.defaultLanguage,
+		FullText:     result.FullText,
+		Segments:     toTranscriptSegments(result.Segments),
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		logger.Error("transcript persistence failed", slog.Any("error", err))
+		failureMessage := fmt.Sprintf("persist transcript: %v", err)
+		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
+		return
+	}
+	logger.Info("transcript persisted successfully", slog.Int64("media_id", mediaItem.ID))
+
+	if err := p.media.MarkTranscribed(ctx, mediaItem.ID, result.FullText, time.Now().UTC()); err != nil {
+		failureMessage := fmt.Sprintf("mark media transcribed: %v", err)
+		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
+		return
+	}
+
+	if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
+		failureMessage := fmt.Sprintf("mark job done: %v", err)
+		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
+		return
+	}
+
+	logger.Info("job completed", slog.Int("segments", len(result.Segments)))
 }
 
 func (p *Processor) RecoverInterruptedJobs(ctx context.Context) error {
-	runningJobs, err := p.jobs.ListByStatus(ctx, job.TypeExtractAudio, job.StatusRunning)
-	if err != nil {
-		return fmt.Errorf("list running jobs: %w", err)
-	}
-	if len(runningJobs) == 0 {
-		return nil
-	}
-
-	recoveryMessage := "worker restarted before job completion"
-	for _, currentJob := range runningJobs {
-		logger := p.logger.With(
-			slog.Int64("job_id", currentJob.ID),
-			slog.Int64("media_id", currentJob.MediaID),
-			slog.String("job_type", string(currentJob.Type)),
-		)
-
-		if err := p.media.MarkUploaded(ctx, currentJob.MediaID, time.Now().UTC()); err != nil {
-			logger.Error("recover media state failed", slog.Any("error", err))
-			continue
+	for _, recovery := range []struct {
+		jobType      job.Type
+		restoreState func(context.Context, int64, time.Time) error
+	}{
+		{jobType: job.TypeExtractAudio, restoreState: p.media.MarkUploaded},
+		{jobType: job.TypeTranscribe, restoreState: p.media.MarkAudioReady},
+	} {
+		if err := p.recoverInterruptedJobType(ctx, recovery.jobType, recovery.restoreState); err != nil {
+			return err
 		}
-		if err := p.jobs.Requeue(ctx, currentJob.ID, recoveryMessage, time.Now().UTC()); err != nil {
-			logger.Error("requeue interrupted job failed", slog.Any("error", err))
-			continue
-		}
-
-		logger.Warn("requeued interrupted job", slog.String("reason", recoveryMessage))
 	}
 
 	return nil
@@ -231,6 +362,73 @@ func cleanupOutputFile(audioDir string, relativePath string) error {
 	}
 
 	return nil
+}
+
+func (p *Processor) enqueueNextJob(ctx context.Context, mediaID int64, jobType job.Type) error {
+	nowUTC := time.Now().UTC()
+	if _, err := p.jobs.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         jobType,
+		Status:       job.StatusPending,
+		Attempts:     0,
+		ErrorMessage: "",
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		return fmt.Errorf("create %s job: %w", jobType, err)
+	}
+
+	return nil
+}
+
+func (p *Processor) recoverInterruptedJobType(
+	ctx context.Context,
+	jobType job.Type,
+	restoreState func(context.Context, int64, time.Time) error,
+) error {
+	runningJobs, err := p.jobs.ListByStatus(ctx, jobType, job.StatusRunning)
+	if err != nil {
+		return fmt.Errorf("list running jobs for %s: %w", jobType, err)
+	}
+	if len(runningJobs) == 0 {
+		return nil
+	}
+
+	recoveryMessage := "worker restarted before job completion"
+	for _, currentJob := range runningJobs {
+		logger := p.logger.With(
+			slog.Int64("job_id", currentJob.ID),
+			slog.Int64("media_id", currentJob.MediaID),
+			slog.String("job_type", string(currentJob.Type)),
+		)
+
+		if err := restoreState(ctx, currentJob.MediaID, time.Now().UTC()); err != nil {
+			logger.Error("recover media state failed", slog.Any("error", err))
+			continue
+		}
+		if err := p.jobs.Requeue(ctx, currentJob.ID, recoveryMessage, time.Now().UTC()); err != nil {
+			logger.Error("requeue interrupted job failed", slog.Any("error", err))
+			continue
+		}
+
+		logger.Warn("requeued interrupted job", slog.String("reason", recoveryMessage))
+	}
+
+	return nil
+}
+
+func toTranscriptSegments(items []ports.TranscriptionSegment) []transcript.Segment {
+	segments := make([]transcript.Segment, 0, len(items))
+	for _, item := range items {
+		segments = append(segments, transcript.Segment{
+			StartSec:   item.StartSec,
+			EndSec:     item.EndSec,
+			Text:       item.Text,
+			Confidence: item.Confidence,
+		})
+	}
+
+	return segments
 }
 
 func safeJoinBasePath(baseDir string, relativePath string) (string, error) {

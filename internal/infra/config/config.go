@@ -12,9 +12,13 @@ type Config struct {
 	UploadDir            string
 	AudioDir             string
 	FFmpegBinary         string
+	PythonBinary         string
+	TranscribeScript     string
+	TranscribeLanguage   string
 	MaxUploadSizeMB      int64
 	WorkerPollIntervalMS int64
 	FFmpegTimeoutSec     int64
+	TranscribeTimeoutSec int64
 }
 
 func Load() Config {
@@ -24,9 +28,13 @@ func Load() Config {
 		UploadDir:            getEnv("UPLOAD_DIR", "./data/uploads"),
 		AudioDir:             getEnv("AUDIO_DIR", "./data/audio"),
 		FFmpegBinary:         getEnv("FFMPEG_BINARY", "ffmpeg"),
+		PythonBinary:         getEnv("PYTHON_BINARY", "python"),
+		TranscribeScript:     getEnv("TRANSCRIBE_SCRIPT", "./scripts/transcribe.py"),
+		TranscribeLanguage:   getEnv("TRANSCRIBE_LANGUAGE", ""),
 		MaxUploadSizeMB:      getEnvInt64("MAX_UPLOAD_SIZE_MB", 200),
 		WorkerPollIntervalMS: getEnvInt64("WORKER_POLL_INTERVAL_MS", 2000),
 		FFmpegTimeoutSec:     getEnvInt64("FFMPEG_TIMEOUT_SEC", 120),
+		TranscribeTimeoutSec: getEnvInt64("TRANSCRIBE_TIMEOUT_SEC", 300),
 	}
 	if cfg.MaxUploadSizeMB <= 0 {
 		cfg.MaxUploadSizeMB = 200
@@ -36,6 +44,9 @@ func Load() Config {
 	}
 	if cfg.FFmpegTimeoutSec <= 0 {
 		cfg.FFmpegTimeoutSec = 120
+	}
+	if cfg.TranscribeTimeoutSec <= 0 {
+		cfg.TranscribeTimeoutSec = 300
 	}
 	return cfg
 }
@@ -50,6 +61,10 @@ func (c Config) WorkerPollInterval() time.Duration {
 
 func (c Config) FFmpegTimeout() time.Duration {
 	return time.Duration(c.FFmpegTimeoutSec) * time.Second
+}
+
+func (c Config) TranscribeTimeout() time.Duration {
+	return time.Duration(c.TranscribeTimeoutSec) * time.Second
 }
 
 func getEnv(key, fallback string) string {

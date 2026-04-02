@@ -8,6 +8,7 @@ type Status string
 
 const (
 	TypeExtractAudio Type = "extract_audio"
+	TypeTranscribe   Type = "transcribe"
 
 	StatusPending Status = "pending"
 	StatusRunning Status = "running"
