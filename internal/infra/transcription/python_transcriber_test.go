@@ -42,3 +42,31 @@ func TestParseTranscriptionOutputRejectsInvalidSegment(t *testing.T) {
 		t.Fatal("ParseTranscriptionOutput() error = nil, want validation error")
 	}
 }
+
+func TestParseTranscriptionOutputRejectsUnknownField(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`{
+		"full_text": "privet mir",
+		"segments": [
+			{"start_sec": 0, "end_sec": 1, "text": "privet", "speaker": "a"}
+		]
+	}`)
+
+	if _, err := ParseTranscriptionOutput(payload); err == nil {
+		t.Fatal("ParseTranscriptionOutput() error = nil, want unknown field error")
+	}
+}
+
+func TestParseTranscriptionOutputRejectsEmptySegments(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`{
+		"full_text": "privet mir",
+		"segments": []
+	}`)
+
+	if _, err := ParseTranscriptionOutput(payload); err == nil {
+		t.Fatal("ParseTranscriptionOutput() error = nil, want empty segments error")
+	}
+}

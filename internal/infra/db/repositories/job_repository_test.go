@@ -169,6 +169,38 @@ func TestJobRepository_RequeueMovesRunningBackToPending(t *testing.T) {
 	}
 }
 
+func TestJobRepository_ExistsActiveOrDone(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
+
+	mediaRepo := NewMediaRepository(sqlDB)
+	jobRepo := NewJobRepository(sqlDB)
+
+	mediaID := createTestMedia(t, ctx, mediaRepo)
+	nowUTC := time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC)
+
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeTranscribe,
+		Status:       job.StatusPending,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		t.Fatalf("Create(job) error = %v", err)
+	}
+
+	exists, err := jobRepo.ExistsActiveOrDone(ctx, mediaID, job.TypeTranscribe)
+	if err != nil {
+		t.Fatalf("ExistsActiveOrDone() error = %v", err)
+	}
+	if !exists {
+		t.Fatal("ExistsActiveOrDone() = false, want true")
+	}
+}
+
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 

@@ -202,6 +202,73 @@ func TestProcessor_ProcessNextTranscribePersistsTranscript(t *testing.T) {
 	}
 }
 
+func TestProcessor_ProcessNextExtractAudioDoesNotDuplicateTranscribeJob(t *testing.T) {
+	t.Parallel()
+
+	uploadDir := t.TempDir()
+	audioDir := t.TempDir()
+	storedPath := filepath.ToSlash(filepath.Join("2026-04-03", "video.mp4"))
+	inputPath := filepath.Join(uploadDir, filepath.FromSlash(storedPath))
+	if err := os.MkdirAll(filepath.Dir(inputPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(inputPath, []byte("video"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	jobRepo := &stubJobRepository{
+		claimByType: map[job.Type]claimResult{
+			job.TypeExtractAudio: {
+				job: job.Job{ID: 32, MediaID: 41, Type: job.TypeExtractAudio, Status: job.StatusRunning},
+				ok:  true,
+			},
+		},
+		existsActiveOrDone: map[job.Type]bool{
+			job.TypeTranscribe: true,
+		},
+	}
+	mediaRepo := &stubMediaRepository{
+		mediaByID: map[int64]media.Media{
+			41: {
+				ID:          41,
+				StoredName:  "video.mp4",
+				StoragePath: storedPath,
+				Status:      media.StatusUploaded,
+			},
+		},
+	}
+	audioExtractor := &stubAudioExtractor{
+		output: ports.ExtractAudioOutput{
+			OutputPath: filepath.ToSlash(filepath.Join("2026-04-03", "media_41_video.wav")),
+		},
+	}
+
+	processor := NewProcessor(
+		jobRepo,
+		mediaRepo,
+		&stubTranscriptRepository{},
+		audioExtractor,
+		&stubTranscriber{},
+		uploadDir,
+		audioDir,
+		10*time.Second,
+		10*time.Second,
+		"ru",
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	processed, err := processor.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessNext() error = %v", err)
+	}
+	if !processed {
+		t.Fatal("ProcessNext() processed = false, want true")
+	}
+	if len(jobRepo.createdJobs) != 0 {
+		t.Fatalf("created jobs = %#v, want no duplicate transcribe job", jobRepo.createdJobs)
+	}
+}
+
 func newTestProcessor(
 	jobRepo *stubJobRepository,
 	mediaRepo *stubMediaRepository,
@@ -228,6 +295,7 @@ type stubJobRepository struct {
 	claimByType         map[job.Type]claimResult
 	listByTypeAndStatus map[job.Type][]job.Job
 	createdJobs         []job.Job
+	existsActiveOrDone  map[job.Type]bool
 	markDoneIDs         []int64
 	markFailedCalls     []markFailedCall
 	requeued            []requeueCall
@@ -252,6 +320,10 @@ type markFailedCall struct {
 func (s *stubJobRepository) Create(_ context.Context, j job.Job) (int64, error) {
 	s.createdJobs = append(s.createdJobs, j)
 	return int64(len(s.createdJobs)), nil
+}
+
+func (s *stubJobRepository) ExistsActiveOrDone(_ context.Context, _ int64, jobType job.Type) (bool, error) {
+	return s.existsActiveOrDone[jobType], nil
 }
 
 func (s *stubJobRepository) ClaimNextPending(_ context.Context, jobType job.Type, _ time.Time) (job.Job, bool, error) {

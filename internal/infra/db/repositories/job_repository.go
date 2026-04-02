@@ -43,6 +43,32 @@ func (r *JobRepository) Create(ctx context.Context, j job.Job) (int64, error) {
 	return id, nil
 }
 
+func (r *JobRepository) ExistsActiveOrDone(ctx context.Context, mediaID int64, jobType job.Type) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(
+		ctx,
+		`SELECT 1
+		 FROM jobs
+		 WHERE media_id = ?
+		   AND type = ?
+		   AND status IN (?, ?, ?)
+		 LIMIT 1`,
+		mediaID,
+		jobType,
+		job.StatusPending,
+		job.StatusRunning,
+		job.StatusDone,
+	).Scan(&exists)
+	if err == nil {
+		return true, nil
+	}
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+
+	return false, fmt.Errorf("check existing job: %w", err)
+}
+
 func (r *JobRepository) ClaimNextPending(ctx context.Context, jobType job.Type, nowUTC time.Time) (job.Job, bool, error) {
 	row := r.db.QueryRowContext(
 		ctx,

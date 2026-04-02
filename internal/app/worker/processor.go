@@ -18,6 +18,7 @@ import (
 
 type JobRepository interface {
 	Create(ctx context.Context, j job.Job) (int64, error)
+	ExistsActiveOrDone(ctx context.Context, mediaID int64, jobType job.Type) (bool, error)
 	ClaimNextPending(ctx context.Context, jobType job.Type, nowUTC time.Time) (job.Job, bool, error)
 	MarkDone(ctx context.Context, id int64, nowUTC time.Time) error
 	MarkFailed(ctx context.Context, id int64, errorMessage string, nowUTC time.Time) error
@@ -242,26 +243,26 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 		Language:  p.defaultLanguage,
 	})
 	if err != nil {
+		diagnostics := transcriptionDiagnostics(err)
 		if errors.Is(transcribeCtx.Err(), context.DeadlineExceeded) {
 			logger.Error("transcription timeout",
 				slog.String("audio_path", audioPath),
-				slog.String("stderr", strings.TrimSpace(result.Stderr)),
+				slog.String("diagnostics", diagnostics),
 			)
 		} else {
 			logger.Error("transcription failed",
 				slog.Any("error", err),
-				slog.String("stderr", strings.TrimSpace(result.Stderr)),
+				slog.String("diagnostics", diagnostics),
 			)
 		}
 
-		failureMessage := buildFailureMessage("transcribe audio", err, result.Stderr)
+		failureMessage := buildFailureMessage("transcribe audio", err, diagnostics)
 		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
 		return
 	}
 
 	logger.Info("transcription completed",
 		slog.Int("segments", len(result.Segments)),
-		slog.String("stderr", strings.TrimSpace(result.Stderr)),
 	)
 
 	nowUTC := time.Now().UTC()
@@ -365,6 +366,14 @@ func cleanupOutputFile(audioDir string, relativePath string) error {
 }
 
 func (p *Processor) enqueueNextJob(ctx context.Context, mediaID int64, jobType job.Type) error {
+	exists, err := p.jobs.ExistsActiveOrDone(ctx, mediaID, jobType)
+	if err != nil {
+		return fmt.Errorf("check existing %s job: %w", jobType, err)
+	}
+	if exists {
+		return nil
+	}
+
 	nowUTC := time.Now().UTC()
 	if _, err := p.jobs.Create(ctx, job.Job{
 		MediaID:      mediaID,
@@ -429,6 +438,15 @@ func toTranscriptSegments(items []ports.TranscriptionSegment) []transcript.Segme
 	}
 
 	return segments
+}
+
+func transcriptionDiagnostics(err error) string {
+	transcriptionErr, ok := ports.AsTranscriptionError(err)
+	if !ok {
+		return ""
+	}
+
+	return strings.TrimSpace(transcriptionErr.Diagnostics)
 }
 
 func safeJoinBasePath(baseDir string, relativePath string) (string, error) {

@@ -6,21 +6,31 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os/exec"
 	"strings"
 
 	"media-pipeline/internal/domain/ports"
 )
 
+const maxScriptOutputBytes = 64 * 1024
+
 type PythonTranscriber struct {
 	pythonBinary string
 	scriptPath   string
+	logger       *slog.Logger
 }
 
-func NewPythonTranscriber(pythonBinary string, scriptPath string) *PythonTranscriber {
+func NewPythonTranscriber(pythonBinary string, scriptPath string, logger *slog.Logger) *PythonTranscriber {
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+
 	return &PythonTranscriber{
 		pythonBinary: pythonBinary,
 		scriptPath:   scriptPath,
+		logger:       logger,
 	}
 }
 
@@ -32,27 +42,72 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 
 	cmd := exec.CommandContext(ctx, t.pythonBinary, args...)
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
+	stdout := newLimitedBuffer(maxScriptOutputBytes)
+	stderr := newLimitedBuffer(maxScriptOutputBytes)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	t.logger.Info("python transcription script started",
+		slog.String("script_path", t.scriptPath),
+		slog.String("audio_path", in.AudioPath),
+		slog.String("language", in.Language),
+	)
+
 	if err := cmd.Run(); err != nil {
-		output := ports.TranscribeOutput{Stderr: stderr.String()}
+		diagnostics := stderr.String()
+		if stdout.Len() > 0 {
+			diagnostics = combineDiagnostics(diagnostics, "stdout: "+stdout.String())
+		}
+
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return output, fmt.Errorf("python transcription timed out: %w", ctx.Err())
+			t.logger.Error("python transcription script timed out",
+				slog.String("script_path", t.scriptPath),
+				slog.String("stderr", diagnostics),
+			)
+			return ports.TranscribeOutput{}, &ports.TranscriptionError{
+				Cause:       fmt.Errorf("python transcription timed out: %w", ctx.Err()),
+				Diagnostics: diagnostics,
+			}
 		}
 		if errors.Is(ctx.Err(), context.Canceled) {
-			return output, fmt.Errorf("python transcription canceled: %w", ctx.Err())
+			t.logger.Error("python transcription script canceled",
+				slog.String("script_path", t.scriptPath),
+				slog.String("stderr", diagnostics),
+			)
+			return ports.TranscribeOutput{}, &ports.TranscriptionError{
+				Cause:       fmt.Errorf("python transcription canceled: %w", ctx.Err()),
+				Diagnostics: diagnostics,
+			}
 		}
-		return output, fmt.Errorf("run python transcription: %w", err)
+		t.logger.Error("python transcription script failed",
+			slog.String("script_path", t.scriptPath),
+			slog.Any("error", err),
+			slog.String("stderr", diagnostics),
+		)
+		return ports.TranscribeOutput{}, &ports.TranscriptionError{
+			Cause:       fmt.Errorf("run python transcription: %w", err),
+			Diagnostics: diagnostics,
+		}
 	}
 
 	parsed, err := ParseTranscriptionOutput(stdout.Bytes())
 	if err != nil {
-		return ports.TranscribeOutput{Stderr: stderr.String()}, err
+		diagnostics := combineDiagnostics(stderr.String(), "stdout: "+stdout.String())
+		t.logger.Error("python transcription script returned invalid json",
+			slog.String("script_path", t.scriptPath),
+			slog.String("stderr", diagnostics),
+		)
+		return ports.TranscribeOutput{}, &ports.TranscriptionError{
+			Cause:       err,
+			Diagnostics: diagnostics,
+		}
 	}
-	parsed.Stderr = stderr.String()
+
+	t.logger.Info("python transcription script completed",
+		slog.String("script_path", t.scriptPath),
+		slog.Int("segments", len(parsed.Segments)),
+		slog.String("stderr", stderr.String()),
+	)
 
 	return parsed, nil
 }
@@ -70,14 +125,27 @@ type scriptSegment struct {
 }
 
 func ParseTranscriptionOutput(payload []byte) (ports.TranscribeOutput, error) {
+	trimmedPayload := bytes.TrimSpace(payload)
+	if len(trimmedPayload) == 0 {
+		return ports.TranscribeOutput{}, fmt.Errorf("decode transcription json: empty output")
+	}
+
 	var decoded scriptOutput
-	if err := json.Unmarshal(payload, &decoded); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(trimmedPayload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
 		return ports.TranscribeOutput{}, fmt.Errorf("decode transcription json: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return ports.TranscribeOutput{}, fmt.Errorf("decode transcription json: unexpected trailing data")
 	}
 
 	fullText := strings.TrimSpace(decoded.FullText)
 	if fullText == "" {
 		return ports.TranscribeOutput{}, fmt.Errorf("decode transcription json: full_text is required")
+	}
+	if len(decoded.Segments) == 0 {
+		return ports.TranscribeOutput{}, fmt.Errorf("decode transcription json: at least one segment is required")
 	}
 
 	segments := make([]ports.TranscriptionSegment, 0, len(decoded.Segments))
@@ -111,4 +179,62 @@ func validateSegment(index int, segment scriptSegment) error {
 	}
 
 	return nil
+}
+
+type limitedBuffer struct {
+	buffer    bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func newLimitedBuffer(limit int) limitedBuffer {
+	return limitedBuffer{limit: limit}
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if b.limit <= 0 {
+		b.truncated = true
+		return len(p), nil
+	}
+	remaining := b.limit - b.buffer.Len()
+	if remaining <= 0 {
+		b.truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		_, _ = b.buffer.Write(p[:remaining])
+		b.truncated = true
+		return len(p), nil
+	}
+
+	return b.buffer.Write(p)
+}
+
+func (b *limitedBuffer) Bytes() []byte {
+	return []byte(b.String())
+}
+
+func (b *limitedBuffer) Len() int {
+	return len(b.String())
+}
+
+func (b *limitedBuffer) String() string {
+	if !b.truncated {
+		return b.buffer.String()
+	}
+
+	return b.buffer.String() + "\n[truncated]"
+}
+
+func combineDiagnostics(parts ...string) string {
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		values = append(values, part)
+	}
+
+	return strings.Join(values, "\n")
 }

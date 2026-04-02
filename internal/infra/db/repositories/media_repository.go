@@ -158,11 +158,11 @@ func (r *MediaRepository) GetByID(ctx context.Context, id int64) (media.Media, e
 }
 
 func (r *MediaRepository) MarkProcessing(ctx context.Context, id int64, nowUTC time.Time) error {
-	return r.updateState(ctx, id, media.StatusProcessing, "", "", nowUTC)
+	return r.updateStatusOnly(ctx, id, media.StatusProcessing, nowUTC, "mark media processing")
 }
 
 func (r *MediaRepository) MarkUploaded(ctx context.Context, id int64, nowUTC time.Time) error {
-	return r.updateState(ctx, id, media.StatusUploaded, "", "", nowUTC)
+	return r.updateStatusOnly(ctx, id, media.StatusUploaded, nowUTC, "mark media uploaded")
 }
 
 func (r *MediaRepository) MarkAudioExtracted(ctx context.Context, id int64, extractedAudioPath string, nowUTC time.Time) error {
@@ -192,7 +192,7 @@ func (r *MediaRepository) MarkAudioExtracted(ctx context.Context, id int64, extr
 }
 
 func (r *MediaRepository) MarkFailed(ctx context.Context, id int64, nowUTC time.Time) error {
-	return r.updateState(ctx, id, media.StatusFailed, "", "", nowUTC)
+	return r.updateStatusOnly(ctx, id, media.StatusFailed, nowUTC, "mark media failed")
 }
 
 func (r *MediaRepository) MarkAudioReady(ctx context.Context, id int64, nowUTC time.Time) error {
@@ -221,7 +221,7 @@ func (r *MediaRepository) MarkAudioReady(ctx context.Context, id int64, nowUTC t
 }
 
 func (r *MediaRepository) MarkTranscribing(ctx context.Context, id int64, nowUTC time.Time) error {
-	return r.updateState(ctx, id, media.StatusTranscribing, "", "", nowUTC)
+	return r.updateStatusOnly(ctx, id, media.StatusTranscribing, nowUTC, "mark media transcribing")
 }
 
 func (r *MediaRepository) MarkTranscribed(ctx context.Context, id int64, transcriptText string, nowUTC time.Time) error {
@@ -250,35 +250,32 @@ func (r *MediaRepository) MarkTranscribed(ctx context.Context, id int64, transcr
 	return nil
 }
 
-func (r *MediaRepository) updateState(
+func (r *MediaRepository) updateStatusOnly(
 	ctx context.Context,
 	id int64,
 	status media.Status,
-	extractedAudioPath string,
-	transcriptText string,
 	nowUTC time.Time,
+	action string,
 ) error {
 	result, err := r.db.ExecContext(
 		ctx,
 		`UPDATE media
-		 SET status = ?, extracted_audio_path = ?, transcript_text = ?, updated_at = ?
+		 SET status = ?, updated_at = ?
 		 WHERE id = ?`,
 		status,
-		extractedAudioPath,
-		transcriptText,
 		nowUTC.Format(time.RFC3339),
 		id,
 	)
 	if err != nil {
-		return fmt.Errorf("update media state: %w", err)
+		return fmt.Errorf("%s: %w", action, err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("media state rows affected: %w", err)
+		return fmt.Errorf("%s rows affected: %w", action, err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("update media state: media %d not found", id)
+		return fmt.Errorf("%s: media %d not found", action, id)
 	}
 
 	return nil

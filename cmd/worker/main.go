@@ -49,7 +49,7 @@ func main() {
 		logger.Error("resolve transcribe script path", slog.Any("error", err), slog.String("path", cfg.TranscribeScript))
 		os.Exit(1)
 	}
-	transcriber := infraTranscription.NewPythonTranscriber(cfg.PythonBinary, transcribeScriptPath)
+	transcriber := infraTranscription.NewPythonTranscriber(cfg.PythonBinary, transcribeScriptPath, logger)
 
 	processor := appworker.NewProcessor(
 		jobRepo,
