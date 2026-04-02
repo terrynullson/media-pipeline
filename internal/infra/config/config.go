@@ -1,0 +1,73 @@
+package config
+
+import (
+	"os"
+	"strconv"
+	"time"
+)
+
+type Config struct {
+	AppPort              string
+	DBPath               string
+	UploadDir            string
+	AudioDir             string
+	FFmpegBinary         string
+	MaxUploadSizeMB      int64
+	WorkerPollIntervalMS int64
+	FFmpegTimeoutSec     int64
+}
+
+func Load() Config {
+	cfg := Config{
+		AppPort:              getEnv("APP_PORT", "8080"),
+		DBPath:               getEnv("DB_PATH", "./data/app.db"),
+		UploadDir:            getEnv("UPLOAD_DIR", "./data/uploads"),
+		AudioDir:             getEnv("AUDIO_DIR", "./data/audio"),
+		FFmpegBinary:         getEnv("FFMPEG_BINARY", "ffmpeg"),
+		MaxUploadSizeMB:      getEnvInt64("MAX_UPLOAD_SIZE_MB", 200),
+		WorkerPollIntervalMS: getEnvInt64("WORKER_POLL_INTERVAL_MS", 2000),
+		FFmpegTimeoutSec:     getEnvInt64("FFMPEG_TIMEOUT_SEC", 120),
+	}
+	if cfg.MaxUploadSizeMB <= 0 {
+		cfg.MaxUploadSizeMB = 200
+	}
+	if cfg.WorkerPollIntervalMS <= 0 {
+		cfg.WorkerPollIntervalMS = 2000
+	}
+	if cfg.FFmpegTimeoutSec <= 0 {
+		cfg.FFmpegTimeoutSec = 120
+	}
+	return cfg
+}
+
+func (c Config) MaxUploadSizeBytes() int64 {
+	return c.MaxUploadSizeMB * 1024 * 1024
+}
+
+func (c Config) WorkerPollInterval() time.Duration {
+	return time.Duration(c.WorkerPollIntervalMS) * time.Millisecond
+}
+
+func (c Config) FFmpegTimeout() time.Duration {
+	return time.Duration(c.FFmpegTimeoutSec) * time.Second
+}
+
+func getEnv(key, fallback string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	return v
+}
+
+func getEnvInt64(key string, fallback int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}

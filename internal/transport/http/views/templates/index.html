@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Media Pipeline</title>
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<main class="page">
+    <section class="hero">
+        <div>
+            <p class="eyebrow">Stage 1.1</p>
+            <h1>Media Pipeline</h1>
+            <p class="subtitle">Reliable file intake for the first processing stage. No workers, no ffmpeg, no extra product features.</p>
+        </div>
+        <div class="hero-meta">
+            <div class="meta-card">
+                <span class="meta-label">Upload limit</span>
+                <strong>{{.MaxUploadHuman}}</strong>
+            </div>
+            <div class="meta-card">
+                <span class="meta-label">Accepted formats</span>
+                <strong>.mp4 .mov .mkv .avi .webm .mp3 .wav .m4a .aac .flac</strong>
+            </div>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>Upload media</h2>
+        <p class="hint">The server keeps a streamed save path and creates a pending <code>extract_audio</code> job after a successful upload.</p>
+
+        {{if .Error}}
+        <div class="notice notice-error">{{.Error}}</div>
+        {{end}}
+        {{if .Success}}
+        <div class="notice notice-success">{{.Success}}</div>
+        {{end}}
+
+        <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form">
+            <label class="file-field">
+                <span>Select file</span>
+                <input type="file" name="media" required>
+            </label>
+            <button type="submit">Upload</button>
+        </form>
+    </section>
+
+    <section class="card">
+        <div class="section-header">
+            <div>
+                <h2>Recent uploads</h2>
+                <p class="hint">Newest items first. Timestamps are shown in UTC.</p>
+            </div>
+        </div>
+
+        {{if .Items}}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Original name</th>
+                    <th>Type</th>
+                    <th>Size</th>
+                    <th>Status</th>
+                    <th>Uploaded at (UTC)</th>
+                </tr>
+                </thead>
+                <tbody>
+                {{range .Items}}
+                <tr>
+                    <td>{{.ID}}</td>
+                    <td class="filename">{{.OriginalName}}</td>
+                    <td><span class="pill">{{.Extension}}</span></td>
+                    <td>{{.SizeHuman}}</td>
+                    <td>{{.Status}}</td>
+                    <td>{{.CreatedAtUTC}}</td>
+                </tr>
+                {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{else}}
+        <div class="empty-state">
+            <p>No uploads yet.</p>
+            <p class="hint">Upload one audio or video file to create the first media row and pending job.</p>
+        </div>
+        {{end}}
+    </section>
+</main>
+</body>
+</html>

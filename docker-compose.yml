@@ -1,0 +1,20 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env.example
+    volumes:
+      - ./data:/app/data
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/app/worker"]
+    env_file:
+      - .env.example
+    volumes:
+      - ./data:/app/data
