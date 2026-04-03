@@ -397,6 +397,43 @@ func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 	}
 }
 
+func TestUploadHandler_IndexShowsTranscriptLinkForTranscribingItem(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	ctx := context.Background()
+	mediaRepo := repositories.NewMediaRepository(app.db)
+
+	nowUTC := time.Date(2026, 4, 3, 18, 0, 0, 0, time.UTC)
+	mediaID, err := mediaRepo.Create(ctx, media.Media{
+		OriginalName: "in-progress.wav",
+		StoredName:   "in-progress.wav",
+		Extension:    ".wav",
+		MIMEType:     "audio/wav",
+		SizeBytes:    2048,
+		StoragePath:  "2026-04-03/in-progress.wav",
+		Status:       media.StatusTranscribing,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	})
+	if err != nil {
+		t.Fatalf("Create(media) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+
+	app.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	wantLink := "/media/" + strconv.FormatInt(mediaID, 10) + "/transcript"
+	if !strings.Contains(rec.Body.String(), wantLink) {
+		t.Fatalf("index page does not contain transcript link %q", wantLink)
+	}
+}
+
 func newTestRouter(t *testing.T) http.Handler {
 	return newTestApp(t).router
 }

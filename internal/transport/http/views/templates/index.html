@@ -128,7 +128,7 @@
                         <span>{{.Extension}}</span>
                     </div>
                     <div class="pipeline-item-actions">
-                        {{if .HasTranscript}}
+                        {{if .CanOpenTranscript}}
                         <a class="button-link" href="{{.TranscriptURL}}">Open transcript</a>
                         {{end}}
                         <form action="{{.DeleteURL}}" method="post" class="delete-media-form" data-media-id="{{.ID}}" data-media-name="{{.OriginalName}}">
@@ -255,7 +255,7 @@
                     <td>{{.CreatedAtUTC}}</td>
                     <td>
                         <div class="row-actions">
-                            {{if .HasTranscript}}
+                            {{if .CanOpenTranscript}}
                             <a class="button-link button-link-compact" href="{{.TranscriptURL}}">Open transcript</a>
                             {{end}}
                             <form action="{{.DeleteURL}}" method="post" class="delete-media-form" data-media-id="{{.ID}}" data-media-name="{{.OriginalName}}">
@@ -420,7 +420,7 @@
                     <span>${escapeHtml(item.Extension)}</span>
                 </div>
                 <div class="pipeline-item-actions">
-                    ${item.HasTranscript ? `<a class="button-link" href="${escapeHtml(item.TranscriptURL)}">Open transcript</a>` : ""}
+                    ${item.CanOpenTranscript ? `<a class="button-link" href="${escapeHtml(item.TranscriptURL)}">Open transcript</a>` : ""}
                     <form action="${escapeHtml(item.DeleteURL)}" method="post" class="delete-media-form" data-media-id="${item.ID}" data-media-name="${escapeHtml(item.OriginalName)}">
                         <button type="submit" class="button-danger">Delete</button>
                     </form>
@@ -451,7 +451,7 @@
                 <td>${escapeHtml(item.CreatedAtUTC)}</td>
                 <td>
                     <div class="row-actions">
-                        ${item.HasTranscript ? `<a class="button-link button-link-compact" href="${escapeHtml(item.TranscriptURL)}">Open transcript</a>` : ""}
+                        ${item.CanOpenTranscript ? `<a class="button-link button-link-compact" href="${escapeHtml(item.TranscriptURL)}">Open transcript</a>` : ""}
                         <form action="${escapeHtml(item.DeleteURL)}" method="post" class="delete-media-form" data-media-id="${item.ID}" data-media-name="${escapeHtml(item.OriginalName)}">
                             <button type="submit" class="button-danger button-danger-compact">Delete</button>
                         </form>

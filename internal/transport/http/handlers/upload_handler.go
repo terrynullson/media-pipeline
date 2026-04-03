@@ -48,22 +48,23 @@ type MediaDeletionService interface {
 }
 
 type MediaListItem struct {
-	ID            int64
-	OriginalName  string
-	Extension     string
-	SizeHuman     string
-	Status        media.Status
-	StatusLabel   string
-	StatusTone    string
-	StageLabel    string
-	StageValue    int
-	StageTotal    int
-	StagePercent  int
-	IsActive      bool
-	CreatedAtUTC  string
-	HasTranscript bool
-	TranscriptURL string
-	DeleteURL     string
+	ID                int64
+	OriginalName      string
+	Extension         string
+	SizeHuman         string
+	Status            media.Status
+	StatusLabel       string
+	StatusTone        string
+	StageLabel        string
+	StageValue        int
+	StageTotal        int
+	StagePercent      int
+	IsActive          bool
+	CreatedAtUTC      string
+	CanOpenTranscript bool
+	HasTranscript     bool
+	TranscriptURL     string
+	DeleteURL         string
 }
 
 type IndexViewData struct {
@@ -335,26 +336,40 @@ func (h *UploadHandler) buildMediaListItems(ctx context.Context) ([]MediaListIte
 	for _, item := range items {
 		statusLabel, statusTone, stageLabel, stageValue, active := describeMediaStatus(item.Status)
 		viewItems = append(viewItems, MediaListItem{
-			ID:            item.ID,
-			OriginalName:  item.OriginalName,
-			Extension:     item.Extension,
-			SizeHuman:     HumanSize(item.SizeBytes),
-			Status:        item.Status,
-			StatusLabel:   statusLabel,
-			StatusTone:    statusTone,
-			StageLabel:    stageLabel,
-			StageValue:    stageValue,
-			StageTotal:    5,
-			StagePercent:  stagePercent(stageValue, 5),
-			IsActive:      active,
-			CreatedAtUTC:  item.CreatedAtUTC.UTC().Format("2006-01-02 15:04:05"),
-			HasTranscript: strings.TrimSpace(item.TranscriptText) != "",
-			TranscriptURL: fmt.Sprintf("/media/%d/transcript", item.ID),
-			DeleteURL:     fmt.Sprintf("/media/%d/delete", item.ID),
+			ID:                item.ID,
+			OriginalName:      item.OriginalName,
+			Extension:         item.Extension,
+			SizeHuman:         HumanSize(item.SizeBytes),
+			Status:            item.Status,
+			StatusLabel:       statusLabel,
+			StatusTone:        statusTone,
+			StageLabel:        stageLabel,
+			StageValue:        stageValue,
+			StageTotal:        5,
+			StagePercent:      stagePercent(stageValue, 5),
+			IsActive:          active,
+			CreatedAtUTC:      item.CreatedAtUTC.UTC().Format("2006-01-02 15:04:05"),
+			HasTranscript:     strings.TrimSpace(item.TranscriptText) != "",
+			CanOpenTranscript: canOpenTranscript(item),
+			TranscriptURL:     fmt.Sprintf("/media/%d/transcript", item.ID),
+			DeleteURL:         fmt.Sprintf("/media/%d/delete", item.ID),
 		})
 	}
 
 	return viewItems, nil
+}
+
+func canOpenTranscript(item media.Media) bool {
+	if strings.TrimSpace(item.TranscriptText) != "" {
+		return true
+	}
+
+	switch item.Status {
+	case media.StatusTranscribing, media.StatusTranscribed, media.StatusFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func stagePercent(value int, total int) int {
