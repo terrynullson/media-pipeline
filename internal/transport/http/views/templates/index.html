@@ -32,7 +32,7 @@
                 <span class="settings-trigger-icon" aria-hidden="true">&#9881;</span>
                 <span>
                     <strong>Настройки распознавания</strong>
-                    <span class="settings-trigger-hint">Бэкенд, модель, устройство и остальные параметры теперь спрятаны здесь.</span>
+                    <span class="settings-trigger-hint">Откройте эту панель, чтобы поменять модель, устройство и другие параметры новых задач.</span>
                 </span>
             </summary>
             <div class="card settings-drawer-panel">
@@ -93,7 +93,7 @@
                     </label>
 
                     <label>
-                        <span>Beam size</span>
+                        <span>Лучей поиска</span>
                         <input type="number" name="beam_size" min="1" max="10" value="{{.SettingsForm.BeamSize}}">
                     </label>
 
@@ -104,7 +104,7 @@
 
                     <div class="settings-actions">
                         <button type="submit">Сохранить настройки</button>
-                        <p class="hint">Оставляйте технические значения вроде <code>cpu</code>, <code>cuda</code> и <code>faster-whisper</code> только там, где они действительно помогают в отладке.</p>
+                        <p class="hint">Эти настройки применяются только к новым задачам. Для CPU обычно подходят <code>int8</code> и <code>float32</code>, для CUDA — <code>float16</code> и <code>int8_float16</code>.</p>
                     </div>
                 </form>
             </div>
@@ -359,7 +359,7 @@
                 <h2>Последние загрузки</h2>
                 <p class="hint">Сначала идут самые новые файлы. Время показано в UTC.</p>
             </div>
-            <div class="inline-badge inline-badge-muted" id="recent-count">{{len .Items}} файл{{if ne (len .Items) 1}}(ов){{end}}</div>
+            <div class="inline-badge inline-badge-muted" id="recent-count">Файлов: {{len .Items}}</div>
         </div>
 
         <div class="table-wrap" id="recent-table-wrap" {{if eq (len .Items) 0}}hidden{{end}}>
@@ -597,7 +597,7 @@
     }
 
     function renderRecentTable(items) {
-        recentCount.textContent = `${items.length} файл(ов)`;
+        recentCount.textContent = `Файлов: ${items.length}`;
         if (!items || items.length === 0) {
             recentTableWrap.hidden = true;
             recentEmpty.hidden = false;

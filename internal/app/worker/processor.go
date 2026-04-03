@@ -898,6 +898,7 @@ func buildUserFacingStageError(jobType job.Type, err error, diagnostics string) 
 	if reason == "" {
 		reason = compactDiagnostic(err.Error(), 240)
 	}
+	reason = humanizeUserReason(jobType, reason)
 	if reason == "" {
 		reason = "не удалось определить причину"
 	}
@@ -925,6 +926,35 @@ func buildUserFacingStageError(jobType job.Type, err error, diagnostics string) 
 	default:
 		return reason
 	}
+}
+
+func humanizeUserReason(jobType job.Type, reason string) string {
+	trimmed := strings.TrimSpace(reason)
+	if trimmed == "" {
+		return ""
+	}
+
+	lower := strings.ToLower(trimmed)
+	if jobType == job.TypeTranscribe {
+		switch {
+		case strings.Contains(lower, "transcription backend returned empty text"):
+			return "модель вернула пустой результат"
+		case strings.Contains(lower, "no module named"):
+			return "не удалось запустить Python-зависимости распознавания"
+		case strings.Contains(lower, "out of memory"):
+			return "не хватило памяти для запуска модели"
+		case strings.Contains(lower, "cuda") && strings.Contains(lower, "not available"):
+			return "CUDA недоступна для этой модели"
+		case strings.Contains(lower, "exit status"):
+			return "процесс распознавания завершился с ошибкой"
+		}
+	}
+
+	if (jobType == job.TypeExtractAudio || jobType == job.TypeExtractScreenshots) && strings.Contains(lower, "exit status") {
+		return "ffmpeg завершился с ошибкой"
+	}
+
+	return trimmed
 }
 
 func buildInternalFailureMessage(prefix string, err error) string {

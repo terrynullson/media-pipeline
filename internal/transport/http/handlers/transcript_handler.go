@@ -290,7 +290,7 @@ func buildTranscriptSettings(settings *transcription.Settings) []TranscriptSetti
 		{Label: "Устройство", Value: settings.Device},
 		{Label: "Тип вычислений", Value: settings.ComputeType},
 		{Label: "Язык", Value: fallbackValue(settings.Language, "авто")},
-		{Label: "Ширина луча", Value: strconv.Itoa(settings.BeamSize)},
+		{Label: "Лучей поиска", Value: strconv.Itoa(settings.BeamSize)},
 		{Label: "VAD", Value: boolLabel(settings.VADEnabled)},
 	}
 }

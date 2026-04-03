@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -323,6 +324,99 @@ func TestProcessor_ProcessNextExtractAudioDoesNotDuplicateTranscribeJob(t *testi
 	}
 	if len(jobRepo.createdJobs) != 0 {
 		t.Fatalf("created jobs = %#v, want no duplicate transcribe job", jobRepo.createdJobs)
+	}
+}
+
+func TestProcessor_ProcessNextTranscribeFailureStoresReadableError(t *testing.T) {
+	t.Parallel()
+
+	audioDir := t.TempDir()
+	audioRelativePath := filepath.ToSlash(filepath.Join("2026-04-03", "media_51_audio.wav"))
+	audioPath := filepath.Join(audioDir, filepath.FromSlash(audioRelativePath))
+	if err := os.MkdirAll(filepath.Dir(audioPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(audioPath, []byte("audio"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	jobRepo := &stubJobRepository{
+		claimByType: map[job.Type]claimResult{
+			job.TypeTranscribe: {
+				job: job.Job{
+					ID:      41,
+					MediaID: 51,
+					Type:    job.TypeTranscribe,
+					Payload: mustEncodeTranscribePayload(t, job.TranscribePayload{
+						Settings: transcription.Settings{
+							Backend:     transcription.BackendFasterWhisper,
+							ModelName:   "small",
+							Device:      "cpu",
+							ComputeType: "int8",
+							Language:    "ru",
+							BeamSize:    3,
+							VADEnabled:  true,
+						},
+					}),
+					Status: job.StatusRunning,
+				},
+				ok: true,
+			},
+		},
+	}
+	mediaRepo := &stubMediaRepository{
+		mediaByID: map[int64]media.Media{
+			51: {
+				ID:                 51,
+				ExtractedAudioPath: audioRelativePath,
+				Status:             media.StatusAudioExtracted,
+			},
+		},
+	}
+	transcriber := &stubTranscriber{
+		err: &ports.TranscriptionError{
+			Cause:       errors.New("run python transcription: exit status 1"),
+			Diagnostics: "RuntimeError: transcription backend returned empty text",
+		},
+	}
+
+	processor := NewProcessor(
+		jobRepo,
+		mediaRepo,
+		&stubTranscriptRepository{},
+		&stubTriggerRuleRepository{},
+		&stubTriggerEventRepository{},
+		&stubTriggerScreenshotRepository{},
+		&stubSummaryRepository{},
+		&stubAudioExtractor{},
+		&stubScreenshotExtractor{},
+		transcriber,
+		&stubSummarizer{},
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
+		t.TempDir(),
+		audioDir,
+		t.TempDir(),
+		10*time.Second,
+		10*time.Second,
+		10*time.Second,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	processed, err := processor.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessNext() error = %v", err)
+	}
+	if !processed {
+		t.Fatal("ProcessNext() processed = false, want true")
+	}
+	if len(jobRepo.markFailedCalls) != 1 {
+		t.Fatalf("mark failed calls = %d, want 1", len(jobRepo.markFailedCalls))
+	}
+	if got := jobRepo.markFailedCalls[0].errorMessage; got != "Не удалось распознать текст: модель вернула пустой результат" {
+		t.Fatalf("errorMessage = %q, want readable transcription failure", got)
+	}
+	if len(mediaRepo.markFailedIDs) != 1 || mediaRepo.markFailedIDs[0] != 51 {
+		t.Fatalf("mark failed ids = %#v, want [51]", mediaRepo.markFailedIDs)
 	}
 }
 
