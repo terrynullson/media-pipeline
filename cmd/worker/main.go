@@ -60,6 +60,7 @@ func main() {
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
 	audioExtractor := infraMedia.NewFFmpegExtractor(cfg.FFmpegBinary)
+	audioDurationReader := infraMedia.NewWAVDurationReader()
 	screenshotExtractor := infraMedia.NewFFmpegScreenshotExtractor(cfg.FFmpegBinary)
 	summarizer := infraSummary.NewSimpleSummarizer()
 	transcribeScriptPath, err := infraRuntime.ResolvePath(cfg.TranscribeScript)
@@ -78,6 +79,7 @@ func main() {
 		triggerScreenshotRepo,
 		summaryRepo,
 		audioExtractor,
+		audioDurationReader,
 		screenshotExtractor,
 		transcriber,
 		summarizer,
@@ -103,7 +105,7 @@ func main() {
 		slog.Duration("poll_interval", cfg.WorkerPollInterval()),
 		slog.Duration("ffmpeg_timeout", cfg.FFmpegTimeout()),
 		slog.Duration("screenshot_timeout", cfg.ScreenshotTimeout()),
-		slog.Duration("transcribe_timeout", cfg.TranscribeTimeout()),
+		slog.Duration("transcribe_base_timeout", cfg.TranscribeTimeout()),
 	)
 
 	if err := runner.Run(ctx); err != nil {

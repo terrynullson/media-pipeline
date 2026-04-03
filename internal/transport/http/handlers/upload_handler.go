@@ -102,6 +102,7 @@ type IndexViewData struct {
 	SettingsError       string
 	SettingsSuccess     string
 	SettingsPanelOpen   bool
+	SettingsWarnings    []string
 	TriggerRuleError    string
 	TriggerRuleSuccess  string
 	MaxUploadMB         string
@@ -456,6 +457,7 @@ func (h *UploadHandler) renderIndex(
 		SettingsError:       settingsError,
 		SettingsSuccess:     settingsSuccess,
 		SettingsPanelOpen:   settingsError != "" || settingsSuccess != "",
+		SettingsWarnings:    buildSettingsWarnings(currentForm),
 		TriggerRuleError:    triggerRuleError,
 		TriggerRuleSuccess:  triggerRuleSuccess,
 		MaxUploadMB:         strconv.FormatInt(h.maxUploadSizeB/(1024*1024), 10),
@@ -642,6 +644,19 @@ func buildSettingsFormFromRequest(r *http.Request) *TranscriptionSettingsForm {
 		BeamSize:    beamSize,
 		VADEnabled:  r.FormValue("vad_enabled") == "on",
 	}
+}
+
+func buildSettingsWarnings(form TranscriptionSettingsForm) []string {
+	settings := transcription.NormalizeSettings(transcription.Settings{
+		Backend:     transcription.Backend(form.Backend),
+		ModelName:   form.ModelName,
+		Device:      form.Device,
+		ComputeType: form.ComputeType,
+		Language:    form.Language,
+		BeamSize:    form.BeamSize,
+		VADEnabled:  form.VADEnabled,
+	})
+	return transcription.BuildRuntimeSettingsWarnings(settings)
 }
 
 func backendOptions() []string {

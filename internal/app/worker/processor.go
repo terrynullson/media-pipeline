@@ -69,25 +69,26 @@ type SummaryRepository interface {
 }
 
 type Processor struct {
-	jobs                JobRepository
-	media               MediaRepository
-	transcripts         TranscriptRepository
-	triggerRules        TriggerRuleRepository
-	triggerEvents       TriggerEventRepository
-	triggerScreenshots  TriggerScreenshotRepository
-	summaries           SummaryRepository
-	audioExtractor      ports.AudioExtractor
-	screenshotExtractor ports.ScreenshotExtractor
-	transcriber         ports.Transcriber
-	summarizer          ports.Summarizer
-	profiles            TranscriptionProfileProvider
-	logger              *slog.Logger
-	uploadDir           string
-	audioDir            string
-	screenshotsDir      string
-	ffmpegTimeout       time.Duration
-	screenshotTimeout   time.Duration
-	transcribeTimeout   time.Duration
+	jobs                  JobRepository
+	media                 MediaRepository
+	transcripts           TranscriptRepository
+	triggerRules          TriggerRuleRepository
+	triggerEvents         TriggerEventRepository
+	triggerScreenshots    TriggerScreenshotRepository
+	summaries             SummaryRepository
+	audioExtractor        ports.AudioExtractor
+	audioDurations        ports.AudioDurationReader
+	screenshotExtractor   ports.ScreenshotExtractor
+	transcriber           ports.Transcriber
+	summarizer            ports.Summarizer
+	profiles              TranscriptionProfileProvider
+	logger                *slog.Logger
+	uploadDir             string
+	audioDir              string
+	screenshotsDir        string
+	ffmpegTimeout         time.Duration
+	screenshotTimeout     time.Duration
+	transcribeBaseTimeout time.Duration
 }
 
 func NewProcessor(
@@ -99,6 +100,7 @@ func NewProcessor(
 	triggerScreenshotRepo TriggerScreenshotRepository,
 	summaryRepo SummaryRepository,
 	audioExtractor ports.AudioExtractor,
+	audioDurationReader ports.AudioDurationReader,
 	screenshotExtractor ports.ScreenshotExtractor,
 	transcriber ports.Transcriber,
 	summarizer ports.Summarizer,
@@ -112,25 +114,26 @@ func NewProcessor(
 	logger *slog.Logger,
 ) *Processor {
 	return &Processor{
-		jobs:                jobRepo,
-		media:               mediaRepo,
-		transcripts:         transcriptRepo,
-		triggerRules:        triggerRuleRepo,
-		triggerEvents:       triggerEventRepo,
-		triggerScreenshots:  triggerScreenshotRepo,
-		summaries:           summaryRepo,
-		audioExtractor:      audioExtractor,
-		screenshotExtractor: screenshotExtractor,
-		transcriber:         transcriber,
-		summarizer:          summarizer,
-		profiles:            profiles,
-		logger:              logger,
-		uploadDir:           uploadDir,
-		audioDir:            audioDir,
-		screenshotsDir:      screenshotsDir,
-		ffmpegTimeout:       ffmpegTimeout,
-		screenshotTimeout:   screenshotTimeout,
-		transcribeTimeout:   transcribeTimeout,
+		jobs:                  jobRepo,
+		media:                 mediaRepo,
+		transcripts:           transcriptRepo,
+		triggerRules:          triggerRuleRepo,
+		triggerEvents:         triggerEventRepo,
+		triggerScreenshots:    triggerScreenshotRepo,
+		summaries:             summaryRepo,
+		audioExtractor:        audioExtractor,
+		audioDurations:        audioDurationReader,
+		screenshotExtractor:   screenshotExtractor,
+		transcriber:           transcriber,
+		summarizer:            summarizer,
+		profiles:              profiles,
+		logger:                logger,
+		uploadDir:             uploadDir,
+		audioDir:              audioDir,
+		screenshotsDir:        screenshotsDir,
+		ffmpegTimeout:         ffmpegTimeout,
+		screenshotTimeout:     screenshotTimeout,
+		transcribeBaseTimeout: transcribeTimeout,
 	}
 }
 
@@ -299,17 +302,56 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 		return
 	}
 
-	transcribeCtx, cancel := context.WithTimeout(ctx, p.transcribeTimeout)
-	defer cancel()
-
 	settings, err := p.resolveTranscriptionSettings(ctx, claimedJob, logger)
 	if err != nil {
 		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось прочитать настройки распознавания", err), true, jobLog, slog.Any("error", err))
 		return
 	}
 
+	if p.audioDurations == nil {
+		p.failJob(ctx, claimedJob, mediaItem.ID, "Не удалось определить длительность файла перед распознаванием текста.", true, jobLog)
+		return
+	}
+
+	audioDuration, err := p.audioDurations.ReadDuration(audioPath)
+	if err != nil {
+		p.failJob(
+			ctx,
+			claimedJob,
+			mediaItem.ID,
+			"Не удалось определить длительность файла перед распознаванием текста.",
+			true,
+			jobLog,
+			slog.Any("error", err),
+			slog.String("audio_path", audioPath),
+		)
+		return
+	}
+
+	policy := transcription.EvaluateRuntimePolicy(settings, audioDuration, p.transcribeBaseTimeout)
+	jobLog.logger.Info("transcription policy decided", attrsToAnySlice(transcriptionPolicyLogAttrs(policy))...)
+
+	if policy.Blocked {
+		policyAttrs := transcriptionPolicyLogAttrs(policy)
+		p.failJob(
+			ctx,
+			claimedJob,
+			mediaItem.ID,
+			buildTranscriptionBlockedFailure(policy),
+			true,
+			jobLog,
+			policyAttrs...,
+		)
+		return
+	}
+
+	transcribeCtx, cancel := context.WithTimeout(ctx, policy.EffectiveTimeout)
+	defer cancel()
+
 	jobLog.logger.Info("starting transcription",
 		slog.String("audio_path", audioPath),
+		slog.Duration("audio_duration", audioDuration),
+		slog.String("duration_class", string(policy.DurationClass)),
 		slog.String("backend", string(settings.Backend)),
 		slog.String("model_name", settings.ModelName),
 		slog.String("device", settings.Device),
@@ -317,7 +359,8 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 		slog.String("language", settings.Language),
 		slog.Int("beam_size", settings.BeamSize),
 		slog.Bool("vad_enabled", settings.VADEnabled),
-		slog.Duration("timeout", p.transcribeTimeout),
+		slog.Duration("base_timeout", policy.BaseTimeout),
+		slog.Duration("timeout", policy.EffectiveTimeout),
 	)
 
 	result, err := p.transcriber.Transcribe(transcribeCtx, ports.TranscribeInput{
@@ -326,16 +369,23 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 	})
 	if err != nil {
 		diagnostics := transcriptionDiagnostics(err)
+		failureMessage := buildUserFacingStageError(job.TypeTranscribe, err, diagnostics)
+		if errors.Is(err, context.DeadlineExceeded) {
+			failureMessage = buildTranscriptionTimeoutFailure(settings, policy)
+		}
 		p.failJob(
 			ctx,
 			claimedJob,
 			mediaItem.ID,
-			buildUserFacingStageError(job.TypeTranscribe, err, diagnostics),
+			failureMessage,
 			true,
 			jobLog,
 			slog.Any("error", err),
 			slog.String("diagnostics_excerpt", compactDiagnostic(diagnostics, 500)),
 			slog.String("audio_path", audioPath),
+			slog.Duration("audio_duration", audioDuration),
+			slog.String("duration_class", string(policy.DurationClass)),
+			slog.Duration("effective_timeout", policy.EffectiveTimeout),
 		)
 		return
 	}

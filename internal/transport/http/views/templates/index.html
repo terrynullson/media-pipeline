@@ -39,7 +39,7 @@
                 <div class="section-header">
                     <div>
                         <h2>Настройки распознавания</h2>
-                        <p class="hint">Эти настройки хранятся в SQLite. Каждая новая задача <code>transcribe</code> сохраняет свой снимок параметров.</p>
+                        <p class="hint">Эти настройки хранятся в SQLite. Каждая новая задача <code>transcribe</code> сохраняет свой снимок параметров, а лимит времени теперь подбирается по длительности файла, модели и устройству.</p>
                     </div>
                 </div>
 
@@ -48,6 +48,16 @@
                 {{end}}
                 {{if .SettingsSuccess}}
                 <div class="notice notice-success">{{.SettingsSuccess}}</div>
+                {{end}}
+                {{if .SettingsWarnings}}
+                <div class="notice notice-warning">
+                    <strong>Что важно знать</strong>
+                    <ul class="notice-list">
+                        {{range .SettingsWarnings}}
+                        <li>{{.}}</li>
+                        {{end}}
+                    </ul>
+                </div>
                 {{end}}
 
                 <form action="/settings/transcription" method="post" class="settings-form">
@@ -127,7 +137,7 @@
             <article class="step-card">
                 <span class="step-index">Шаг 2</span>
                 <strong>Настройте распознавание</strong>
-                <p>Параметры сохраняются в SQLite и применяются к новым задачам.</p>
+                <p>Параметры сохраняются в SQLite, а время ожидания распознавания теперь подбирается под файл автоматически.</p>
             </article>
             <article class="step-card">
                 <span class="step-index">Шаг 3</span>

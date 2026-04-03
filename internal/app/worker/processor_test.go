@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -99,6 +100,7 @@ func TestProcessor_ProcessNextExtractAudioEnqueuesTranscribe(t *testing.T) {
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		audioExtractor,
+		&stubAudioDurationReader{duration: time.Minute},
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
 		&stubSummarizer{},
@@ -205,6 +207,7 @@ func TestProcessor_ProcessNextTranscribePersistsTranscript(t *testing.T) {
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubAudioDurationReader{duration: 3 * time.Second},
 		&stubScreenshotExtractor{},
 		transcriber,
 		&stubSummarizer{},
@@ -302,6 +305,7 @@ func TestProcessor_ProcessNextExtractAudioDoesNotDuplicateTranscribeJob(t *testi
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		audioExtractor,
+		&stubAudioDurationReader{duration: time.Minute},
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
 		&stubSummarizer{},
@@ -389,6 +393,7 @@ func TestProcessor_ProcessNextTranscribeFailureStoresReadableError(t *testing.T)
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubAudioDurationReader{duration: 2 * time.Minute},
 		&stubScreenshotExtractor{},
 		transcriber,
 		&stubSummarizer{},
@@ -417,6 +422,279 @@ func TestProcessor_ProcessNextTranscribeFailureStoresReadableError(t *testing.T)
 	}
 	if len(mediaRepo.markFailedIDs) != 1 || mediaRepo.markFailedIDs[0] != 51 {
 		t.Fatalf("mark failed ids = %#v, want [51]", mediaRepo.markFailedIDs)
+	}
+}
+
+func TestProcessor_ProcessNextTranscribeLongSmallCPUUsesAdaptiveTimeout(t *testing.T) {
+	t.Parallel()
+
+	audioDir := t.TempDir()
+	audioRelativePath := filepath.ToSlash(filepath.Join("2026-04-03", "media_52_audio.wav"))
+	audioPath := filepath.Join(audioDir, filepath.FromSlash(audioRelativePath))
+	if err := os.MkdirAll(filepath.Dir(audioPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(audioPath, []byte("audio"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	jobRepo := &stubJobRepository{
+		claimByType: map[job.Type]claimResult{
+			job.TypeTranscribe: {
+				job: job.Job{
+					ID:      42,
+					MediaID: 52,
+					Type:    job.TypeTranscribe,
+					Payload: mustEncodeTranscribePayload(t, job.TranscribePayload{
+						Settings: transcription.Settings{
+							Backend:     transcription.BackendFasterWhisper,
+							ModelName:   "small",
+							Device:      "cpu",
+							ComputeType: "int8",
+							Language:    "ru",
+							BeamSize:    5,
+							VADEnabled:  true,
+						},
+					}),
+					Status: job.StatusRunning,
+				},
+				ok: true,
+			},
+		},
+	}
+	mediaRepo := &stubMediaRepository{
+		mediaByID: map[int64]media.Media{
+			52: {
+				ID:                 52,
+				ExtractedAudioPath: audioRelativePath,
+				Status:             media.StatusAudioExtracted,
+			},
+		},
+	}
+	transcriber := &stubTranscriber{
+		output: ports.TranscribeOutput{
+			FullText: "privet",
+			Segments: []ports.TranscriptionSegment{
+				{StartSec: 0, EndSec: 1, Text: "privet"},
+			},
+		},
+	}
+
+	processor := NewProcessor(
+		jobRepo,
+		mediaRepo,
+		&stubTranscriptRepository{},
+		&stubTriggerRuleRepository{},
+		&stubTriggerEventRepository{},
+		&stubTriggerScreenshotRepository{},
+		&stubSummaryRepository{},
+		&stubAudioExtractor{},
+		&stubAudioDurationReader{duration: 60 * time.Minute},
+		&stubScreenshotExtractor{},
+		transcriber,
+		&stubSummarizer{},
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
+		t.TempDir(),
+		audioDir,
+		t.TempDir(),
+		10*time.Second,
+		10*time.Second,
+		5*time.Minute,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	processed, err := processor.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessNext() error = %v", err)
+	}
+	if !processed {
+		t.Fatal("ProcessNext() processed = false, want true")
+	}
+	if !transcriber.deadlineSet {
+		t.Fatal("transcriber deadline was not set")
+	}
+	if remaining := time.Until(transcriber.deadline); remaining < 9*time.Hour {
+		t.Fatalf("adaptive timeout = %s, want at least 9h", remaining)
+	}
+}
+
+func TestProcessor_ProcessNextTranscribeBlocksUnrealisticPolicy(t *testing.T) {
+	t.Parallel()
+
+	audioDir := t.TempDir()
+	audioRelativePath := filepath.ToSlash(filepath.Join("2026-04-03", "media_53_audio.wav"))
+	audioPath := filepath.Join(audioDir, filepath.FromSlash(audioRelativePath))
+	if err := os.MkdirAll(filepath.Dir(audioPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(audioPath, []byte("audio"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	jobRepo := &stubJobRepository{
+		claimByType: map[job.Type]claimResult{
+			job.TypeTranscribe: {
+				job: job.Job{
+					ID:      43,
+					MediaID: 53,
+					Type:    job.TypeTranscribe,
+					Payload: mustEncodeTranscribePayload(t, job.TranscribePayload{
+						Settings: transcription.Settings{
+							Backend:     transcription.BackendFasterWhisper,
+							ModelName:   "small",
+							Device:      "cpu",
+							ComputeType: "int8",
+							Language:    "ru",
+							BeamSize:    5,
+							VADEnabled:  true,
+						},
+					}),
+					Status: job.StatusRunning,
+				},
+				ok: true,
+			},
+		},
+	}
+	mediaRepo := &stubMediaRepository{
+		mediaByID: map[int64]media.Media{
+			53: {
+				ID:                 53,
+				ExtractedAudioPath: audioRelativePath,
+				Status:             media.StatusAudioExtracted,
+			},
+		},
+	}
+	transcriber := &stubTranscriber{}
+
+	processor := NewProcessor(
+		jobRepo,
+		mediaRepo,
+		&stubTranscriptRepository{},
+		&stubTriggerRuleRepository{},
+		&stubTriggerEventRepository{},
+		&stubTriggerScreenshotRepository{},
+		&stubSummaryRepository{},
+		&stubAudioExtractor{},
+		&stubAudioDurationReader{duration: 2 * time.Hour},
+		&stubScreenshotExtractor{},
+		transcriber,
+		&stubSummarizer{},
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
+		t.TempDir(),
+		audioDir,
+		t.TempDir(),
+		10*time.Second,
+		10*time.Second,
+		5*time.Minute,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	processed, err := processor.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessNext() error = %v", err)
+	}
+	if !processed {
+		t.Fatal("ProcessNext() processed = false, want true")
+	}
+	if transcriber.callCount != 0 {
+		t.Fatalf("transcriber callCount = %d, want 0", transcriber.callCount)
+	}
+	if len(jobRepo.markFailedCalls) != 1 {
+		t.Fatalf("mark failed calls = %d, want 1", len(jobRepo.markFailedCalls))
+	}
+	if got := jobRepo.markFailedCalls[0].errorMessage; !strings.Contains(got, "задача не запускается автоматически") {
+		t.Fatalf("errorMessage = %q, want clear policy rejection", got)
+	}
+}
+
+func TestProcessor_ProcessNextTranscribeTimeoutFailureIncludesPolicyContext(t *testing.T) {
+	t.Parallel()
+
+	audioDir := t.TempDir()
+	audioRelativePath := filepath.ToSlash(filepath.Join("2026-04-03", "media_54_audio.wav"))
+	audioPath := filepath.Join(audioDir, filepath.FromSlash(audioRelativePath))
+	if err := os.MkdirAll(filepath.Dir(audioPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(audioPath, []byte("audio"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	jobRepo := &stubJobRepository{
+		claimByType: map[job.Type]claimResult{
+			job.TypeTranscribe: {
+				job: job.Job{
+					ID:      44,
+					MediaID: 54,
+					Type:    job.TypeTranscribe,
+					Payload: mustEncodeTranscribePayload(t, job.TranscribePayload{
+						Settings: transcription.Settings{
+							Backend:     transcription.BackendFasterWhisper,
+							ModelName:   "small",
+							Device:      "cpu",
+							ComputeType: "int8",
+							Language:    "ru",
+							BeamSize:    5,
+							VADEnabled:  true,
+						},
+					}),
+					Status: job.StatusRunning,
+				},
+				ok: true,
+			},
+		},
+	}
+	mediaRepo := &stubMediaRepository{
+		mediaByID: map[int64]media.Media{
+			54: {
+				ID:                 54,
+				ExtractedAudioPath: audioRelativePath,
+				Status:             media.StatusAudioExtracted,
+			},
+		},
+	}
+	transcriber := &stubTranscriber{
+		err: &ports.TranscriptionError{
+			Cause:       fmt.Errorf("python transcription timed out: %w", context.DeadlineExceeded),
+			Diagnostics: "",
+		},
+	}
+
+	processor := NewProcessor(
+		jobRepo,
+		mediaRepo,
+		&stubTranscriptRepository{},
+		&stubTriggerRuleRepository{},
+		&stubTriggerEventRepository{},
+		&stubTriggerScreenshotRepository{},
+		&stubSummaryRepository{},
+		&stubAudioExtractor{},
+		&stubAudioDurationReader{duration: 60 * time.Minute},
+		&stubScreenshotExtractor{},
+		transcriber,
+		&stubSummarizer{},
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
+		t.TempDir(),
+		audioDir,
+		t.TempDir(),
+		10*time.Second,
+		10*time.Second,
+		5*time.Minute,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	processed, err := processor.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessNext() error = %v", err)
+	}
+	if !processed {
+		t.Fatal("ProcessNext() processed = false, want true")
+	}
+	if len(jobRepo.markFailedCalls) != 1 {
+		t.Fatalf("mark failed calls = %d, want 1", len(jobRepo.markFailedCalls))
+	}
+	if got := jobRepo.markFailedCalls[0].errorMessage; got != "Не удалось распознать текст: модель small на CPU (int8) для длинного файла превысила адаптивный лимит 9 ч 15 мин." {
+		t.Fatalf("errorMessage = %q, want contextual timeout message", got)
 	}
 }
 
@@ -460,6 +738,7 @@ func TestProcessor_ProcessNextAnalyzeTriggersPersistsEvents(t *testing.T) {
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubAudioDurationReader{duration: time.Minute},
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
 		&stubSummarizer{},
@@ -557,6 +836,7 @@ func TestProcessor_ProcessNextExtractScreenshotsPersistsRows(t *testing.T) {
 		triggerScreenshotRepo,
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubAudioDurationReader{duration: time.Minute},
 		screenshotExtractor,
 		&stubTranscriber{},
 		&stubSummarizer{},
@@ -618,6 +898,7 @@ func TestProcessor_ProcessNextExtractScreenshotsSkipsAudioOnlyMedia(t *testing.T
 		triggerScreenshotRepo,
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubAudioDurationReader{duration: time.Minute},
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
 		&stubSummarizer{},
@@ -697,6 +978,7 @@ func TestProcessor_ProcessNextGenerateSummaryPersistsSummary(t *testing.T) {
 		triggerScreenshotRepo,
 		summaryRepo,
 		&stubAudioExtractor{},
+		&stubAudioDurationReader{duration: time.Minute},
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
 		summarizer,
@@ -747,6 +1029,7 @@ func newTestProcessor(
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		audioExtractor,
+		&stubAudioDurationReader{duration: time.Minute},
 		&stubScreenshotExtractor{},
 		transcriber,
 		&stubSummarizer{},
@@ -1008,6 +1291,20 @@ func (s *stubAudioExtractor) Extract(context.Context, ports.ExtractAudioInput) (
 	return s.output, s.err
 }
 
+type stubAudioDurationReader struct {
+	duration time.Duration
+	err      error
+	lastPath string
+}
+
+func (s *stubAudioDurationReader) ReadDuration(audioPath string) (time.Duration, error) {
+	s.lastPath = audioPath
+	if s.err != nil {
+		return 0, s.err
+	}
+	return s.duration, nil
+}
+
 type stubScreenshotExtractor struct {
 	outputByEventID map[int64]ports.ExtractScreenshotOutput
 	err             error
@@ -1030,13 +1327,21 @@ func (s *stubScreenshotExtractor) Extract(_ context.Context, in ports.ExtractScr
 }
 
 type stubTranscriber struct {
-	output    ports.TranscribeOutput
-	err       error
-	lastInput ports.TranscribeInput
+	output      ports.TranscribeOutput
+	err         error
+	lastInput   ports.TranscribeInput
+	callCount   int
+	deadline    time.Time
+	deadlineSet bool
 }
 
-func (s *stubTranscriber) Transcribe(_ context.Context, in ports.TranscribeInput) (ports.TranscribeOutput, error) {
+func (s *stubTranscriber) Transcribe(ctx context.Context, in ports.TranscribeInput) (ports.TranscribeOutput, error) {
+	s.callCount++
 	s.lastInput = in
+	if deadline, ok := ctx.Deadline(); ok {
+		s.deadline = deadline
+		s.deadlineSet = true
+	}
 	return s.output, s.err
 }
 

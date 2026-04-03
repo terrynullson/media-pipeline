@@ -40,6 +40,7 @@ type TranscriptPageViewData struct {
 	DeleteURL           string
 	HasTranscript       bool
 	Settings            []TranscriptSettingItem
+	SettingsWarnings    []string
 	SettingsUnavailable bool
 	FullTextParagraphs  []string
 	Segments            []TranscriptSegmentView
@@ -150,6 +151,7 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		DeleteURL:           fmt.Sprintf("/media/%d/delete", result.Media.ID),
 		HasTranscript:       result.HasTranscript,
 		Settings:            buildTranscriptSettings(result.Settings),
+		SettingsWarnings:    buildTranscriptSettingsWarnings(result.Settings),
 		SettingsUnavailable: result.SettingsUnavailable,
 	}
 	if result.HasTranscript {
@@ -293,6 +295,13 @@ func buildTranscriptSettings(settings *transcription.Settings) []TranscriptSetti
 		{Label: "Лучей поиска", Value: strconv.Itoa(settings.BeamSize)},
 		{Label: "VAD", Value: boolLabel(settings.VADEnabled)},
 	}
+}
+
+func buildTranscriptSettingsWarnings(settings *transcription.Settings) []string {
+	if settings == nil {
+		return nil
+	}
+	return transcription.BuildRuntimeSettingsWarnings(*settings)
 }
 
 func buildTranscriptSegments(items []transcript.Segment) []TranscriptSegmentView {

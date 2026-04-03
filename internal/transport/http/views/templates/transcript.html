@@ -108,6 +108,16 @@
                     </div>
                     {{end}}
                 </dl>
+                {{if .SettingsWarnings}}
+                <div class="notice notice-warning transcript-inline-notice">
+                    <strong>Подсказка по конфигурации</strong>
+                    <ul class="notice-list">
+                        {{range .SettingsWarnings}}
+                        <li>{{.}}</li>
+                        {{end}}
+                    </ul>
+                </div>
+                {{end}}
                 {{else if .SettingsUnavailable}}
                 <div class="notice notice-error transcript-inline-notice">Задача распознавания найдена, но сохранённые настройки не удалось прочитать.</div>
                 {{else}}

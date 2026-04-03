@@ -402,6 +402,7 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 		"00:00:01.400",
 		"Уверенность 0.87",
 		"small",
+		"Для длинных файлов модель small на CPU может работать очень долго.",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("transcript page body missing %q", want)
@@ -685,6 +686,41 @@ func TestUploadHandler_IndexShowsSettingsBehindGearAndFailedStage(t *testing.T) 
 		"Ошибка на шаге: Распознавание текста",
 		"Причина: Не удалось распознать текст: модель small вернула ошибку.",
 		"Подробности смотрите в логах worker.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("index body missing %q", want)
+		}
+	}
+}
+
+func TestUploadHandler_IndexShowsAdaptiveSettingsWarningForHeavyCPUProfile(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+
+	form := strings.NewReader("backend=faster-whisper&model_name=small&device=cpu&compute_type=float32&language=ru&beam_size=5&vad_enabled=on")
+	saveReq := httptest.NewRequest(http.MethodPost, "/settings/transcription", form)
+	saveReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	saveRec := httptest.NewRecorder()
+	app.router.ServeHTTP(saveRec, saveReq)
+
+	if saveRec.Code != http.StatusSeeOther {
+		t.Fatalf("save settings status = %d, want %d", saveRec.Code, http.StatusSeeOther)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	app.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"лимит времени теперь подбирается по длительности файла",
+		"Для длинных файлов модель small на CPU может работать очень долго.",
+		"Если доступна CUDA, для такой модели лучше использовать её вместо CPU.",
+		"Режим float32 на CPU обычно медленнее, чем int8.",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index body missing %q", want)
