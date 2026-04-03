@@ -75,7 +75,7 @@ def validate_config(config):
         raise RuntimeError(f"unsupported device: {config['device']}")
     valid_compute_types = {
         "cpu": {"int8", "float32"},
-        "cuda": {"float16", "int8_float16"},
+        "cuda": {"float16", "int8_float16", "int8_float32"},
     }
     if config["compute_type"] not in valid_compute_types[config["device"]]:
         raise RuntimeError(

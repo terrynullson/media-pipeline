@@ -57,3 +57,19 @@ func TestNormalizeSettingsTreatsAutoLanguageAsEmpty(t *testing.T) {
 		t.Fatalf("normalized backend = %q, want %q", normalized.Backend, BackendFasterWhisper)
 	}
 }
+
+func TestValidateSettingsAllowsCUDAInt8Float32(t *testing.T) {
+	t.Parallel()
+
+	err := ValidateSettings(Settings{
+		Backend:     BackendFasterWhisper,
+		ModelName:   "base",
+		Device:      "cuda",
+		ComputeType: "int8_float32",
+		BeamSize:    5,
+		VADEnabled:  true,
+	})
+	if err != nil {
+		t.Fatalf("ValidateSettings() error = %v", err)
+	}
+}

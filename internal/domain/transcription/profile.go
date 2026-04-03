@@ -81,7 +81,7 @@ func SupportedComputeTypes(device string) []string {
 	case "cpu":
 		return []string{"int8", "float32"}
 	case "cuda":
-		return []string{"float16", "int8_float16"}
+		return []string{"float16", "int8_float16", "int8_float32"}
 	default:
 		return nil
 	}

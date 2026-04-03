@@ -225,16 +225,21 @@ func fallbackTranscriptionSettings(
 	}
 
 	diagnostics := strings.ToLower(strings.TrimSpace(transcriptionErr.Diagnostics))
-	if settings.Device != "cuda" || settings.ComputeType != "float16" {
-		return transcription.Settings{}, false
-	}
-	if !strings.Contains(diagnostics, "requested float16 compute type") {
+	if settings.Device != "cuda" {
 		return transcription.Settings{}, false
 	}
 
 	fallback := settings
-	fallback.ComputeType = "int8_float16"
-	return fallback, true
+	switch {
+	case settings.ComputeType == "float16" && strings.Contains(diagnostics, "requested float16 compute type"):
+		fallback.ComputeType = "int8_float16"
+		return fallback, true
+	case settings.ComputeType == "int8_float16" && strings.Contains(diagnostics, "requested int8_float16 compute type"):
+		fallback.ComputeType = "int8_float32"
+		return fallback, true
+	default:
+		return transcription.Settings{}, false
+	}
 }
 
 type transcriptionProgressFile struct {
