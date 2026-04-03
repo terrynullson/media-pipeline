@@ -66,7 +66,7 @@
                 </div>
 
                 <div class="upload-picker-row">
-                    <button type="button" class="button-secondary" id="media-file-button">Выбрать файл</button>
+                    <label for="media-file-input" class="button-secondary" id="media-file-button">Выбрать файл</label>
                     <span class="file-picker-meta" id="dropzone-meta">Готово к загрузке</span>
                 </div>
 
@@ -147,11 +147,8 @@
                                 <strong class="pipeline-item-title">{{.OriginalName}}</strong>
                                 <span class="status-chip status-chip-{{.StatusTone}}">{{.StatusLabel}}</span>
                             </div>
-                            <p class="history-summary-meta">{{.Extension}} · {{.CreatedAtUTC}} UTC</p>
+                            <p class="history-summary-meta">{{.CreatedAtUTC}} UTC</p>
                             <p class="history-summary-stage">{{.StageLabel}}</p>
-                            <div class="stage-meter{{if .IsActive}} stage-meter-active{{end}}{{if eq .StatusTone "error"}} stage-meter-error{{end}}" aria-hidden="true">
-                                <span class="stage-meter-fill" style="width: {{.StagePercent}}%;"></span>
-                            </div>
                         </div>
                         <div class="history-summary-actions">
                             {{if .CanOpenTranscript}}
@@ -739,6 +736,9 @@
 
     trigger.addEventListener("click", openPicker);
     button.addEventListener("click", (event) => {
+        if (button.tagName === "LABEL") {
+            return;
+        }
         event.preventDefault();
         event.stopPropagation();
         openPicker();
@@ -949,6 +949,106 @@
     if (sheet.classList.contains("is-open")) {
         overlay.hidden = false;
         document.body.classList.add("sheet-open");
+    }
+})();
+
+(() => {
+    const mark = document.querySelector(".floating-mark");
+    if (!mark) {
+        return;
+    }
+
+    const mobileQuery = window.matchMedia("(max-width: 900px)");
+    let x = 0;
+    let y = 0;
+    let vx = 140;
+    let vy = 104;
+    let rafId = 0;
+    let lastTime = 0;
+
+    function clampPosition() {
+        const rect = mark.getBoundingClientRect();
+        const maxX = Math.max(0, window.innerWidth - rect.width);
+        const maxY = Math.max(0, window.innerHeight - rect.height);
+        x = Math.min(Math.max(x, 0), maxX);
+        y = Math.min(Math.max(y, 0), maxY);
+        mark.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    }
+
+    function resetPosition() {
+        const rect = mark.getBoundingClientRect();
+        x = Math.max(0, Math.min(window.innerWidth * 0.08, window.innerWidth - rect.width));
+        y = Math.max(0, Math.min(window.innerHeight * 0.14, window.innerHeight - rect.height));
+        clampPosition();
+    }
+
+    function tick(timestamp) {
+        if (mobileQuery.matches) {
+            rafId = 0;
+            return;
+        }
+
+        if (!lastTime) {
+            lastTime = timestamp;
+        }
+        const dt = Math.min((timestamp - lastTime) / 1000, 0.032);
+        lastTime = timestamp;
+
+        const rect = mark.getBoundingClientRect();
+        const maxX = Math.max(0, window.innerWidth - rect.width);
+        const maxY = Math.max(0, window.innerHeight - rect.height);
+
+        x += vx * dt;
+        y += vy * dt;
+
+        if (x <= 0) {
+            x = 0;
+            vx = Math.abs(vx);
+        } else if (x >= maxX) {
+            x = maxX;
+            vx = -Math.abs(vx);
+        }
+
+        if (y <= 0) {
+            y = 0;
+            vy = Math.abs(vy);
+        } else if (y >= maxY) {
+            y = maxY;
+            vy = -Math.abs(vy);
+        }
+
+        mark.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+        rafId = window.requestAnimationFrame(tick);
+    }
+
+    function start() {
+        if (mobileQuery.matches) {
+            mark.style.transform = "";
+            if (rafId) {
+                window.cancelAnimationFrame(rafId);
+                rafId = 0;
+            }
+            return;
+        }
+        if (rafId) {
+            window.cancelAnimationFrame(rafId);
+        }
+        lastTime = 0;
+        resetPosition();
+        rafId = window.requestAnimationFrame(tick);
+    }
+
+    window.addEventListener("resize", start);
+    if (typeof mobileQuery.addEventListener === "function") {
+        mobileQuery.addEventListener("change", start);
+    } else if (typeof mobileQuery.addListener === "function") {
+        mobileQuery.addListener(start);
+    }
+
+    if (document.readyState === "complete") {
+        start();
+    } else {
+        window.addEventListener("load", start, { once: true });
     }
 })();
 </script>

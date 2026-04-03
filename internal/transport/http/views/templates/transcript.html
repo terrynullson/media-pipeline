@@ -6,27 +6,15 @@
     <title>{{.MediaName}} · Расшифровка</title>
     <link rel="stylesheet" href="/static/css/app.css">
 </head>
-<body>
-<main class="page page-transcript">
-    <section class="hero hero-transcript">
-        <div class="hero-copy">
-            <p class="eyebrow">Этап 6</p>
-            <h1 class="hero-title-transcript">Расшифровка файла</h1>
-            <p class="subtitle">Здесь собраны текст расшифровки, таймлайн по сегментам, триггеры, скриншоты и саммари по запросу.</p>
-        </div>
-        <div class="hero-meta hero-meta-actions">
-            <div class="meta-card">
-                <span class="meta-label">Файл</span>
-                <strong>{{.MediaName}}</strong>
-            </div>
-            <div class="meta-card meta-card-actions">
-                <a class="button-link button-link-strong" href="/">Назад к пайплайну</a>
-                <form action="{{.DeleteURL}}" method="post" class="transcript-delete-form">
-                    <button type="submit" class="button-danger">Удалить файл</button>
-                </form>
-            </div>
-        </div>
-    </section>
+<body class="page-home-body">
+<div class="floating-mark" aria-hidden="true">
+    <img src="/static/img/floating-mark.svg" alt="">
+</div>
+<main class="page page-home page-transcript">
+    <header class="topbar">
+        <div class="topbar-brand">Media Pipeline</div>
+        <a class="button-link button-link-compact" href="/">К списку</a>
+    </header>
 
     {{if .PageNotice}}
         {{if eq .PageNoticeTone "error"}}
@@ -38,17 +26,14 @@
 
     <section class="transcript-layout">
         <aside class="card transcript-sidebar">
-            <div class="section-header">
+            <div class="section-header section-header-tight">
                 <div>
-                    <h2>Сведения о файле</h2>
-                    <p class="hint">Метаданные показаны рядом с расшифровкой, чтобы длинный материал было проще читать и проверять.</p>
+                    <h1>{{.MediaName}}</h1>
+                    <p class="hint">Результат и статус пайплайна для этого файла.</p>
                 </div>
             </div>
+
             <dl class="detail-grid">
-                <div class="detail-item">
-                    <dt>Имя</dt>
-                    <dd>{{.MediaName}}</dd>
-                </div>
                 <div class="detail-item">
                     <dt>Размер</dt>
                     <dd>{{.SizeHuman}}</dd>
@@ -61,137 +46,28 @@
                     <dt>Статус</dt>
                     <dd><span class="status-chip status-chip-{{.StatusTone}}">{{.StatusLabel}}</span></dd>
                 </div>
-            </dl>
-
-            <div class="settings-panel">
-                <div class="section-header">
-                    <div>
-                        <h2>Состояние пайплайна</h2>
-                        <p class="hint">Здесь видно, какие шаги уже завершены, какой шаг выполняется сейчас и где именно произошла ошибка.</p>
-                    </div>
-                </div>
                 <div class="detail-item">
-                    <dt>Текущий статус</dt>
+                    <dt>Состояние</dt>
                     <dd>{{.PipelineStageLabel}}</dd>
                 </div>
                 <div class="detail-item">
-                    <dt>Прогресс</dt>
+                    <dt>Этап</dt>
                     <dd>Шаг {{.PipelineStageValue}} из {{.PipelineStageTotal}}</dd>
                 </div>
-                <div class="step-detail-list step-detail-list-sidebar">
-                    {{range .PipelineSteps}}
-                    <div class="step-detail step-detail-{{.Tone}}{{if .IsCurrent}} is-current{{end}}{{if .IsFailed}} is-failed{{end}}">
-                        <div class="step-detail-head">
-                            <strong>{{.Label}}</strong>
-                            <span>{{.StatusLabel}}</span>
-                        </div>
-                        <p class="step-detail-meta">{{.TimingText}}</p>
-                        {{if .ProgressVisible}}
-                        <div class="step-progress-mini" aria-hidden="true">
-                            <span class="step-progress-mini-fill" style="width: {{.ProgressPercent}}%;"></span>
-                        </div>
-                        <p class="step-detail-progress">{{.ProgressLabel}}</p>
-                        {{end}}
-                    </div>
-                    {{end}}
-                </div>
-                {{if .PipelineFailedStep}}
-                <div class="pipeline-problem pipeline-problem-sidebar">
-                    <strong>Ошибка на шаге: {{.PipelineFailedStep}}</strong>
-                    <p>Причина: {{.PipelineError}}</p>
-                    <p class="hint">{{.PipelineErrorHint}}</p>
-                </div>
-                {{end}}
+            </dl>
+
+            <div class="transcript-sidebar-actions">
+                <a class="button-link" href="/">Назад</a>
+                <form action="{{.DeleteURL}}" method="post" class="transcript-delete-form">
+                    <button type="submit" class="button-danger">Удалить</button>
+                </form>
             </div>
 
-            <div class="settings-panel">
-                <div class="section-header">
-                    <div>
-                        <h2>Параметры запуска</h2>
-                        <p class="hint">Это снимок настроек, который был сохранён в задаче <code>transcribe</code> в момент её создания.</p>
-                    </div>
-                </div>
-                {{if .Settings}}
-                <dl class="settings-grid">
-                    {{range .Settings}}
-                    <div class="settings-item">
-                        <dt>{{.Label}}</dt>
-                        <dd>{{.Value}}</dd>
-                    </div>
-                    {{end}}
-                </dl>
-                {{if .SettingsWarnings}}
-                <div class="notice notice-warning transcript-inline-notice">
-                    <strong>Подсказка по конфигурации</strong>
-                    <ul class="notice-list">
-                        {{range .SettingsWarnings}}
-                        <li>{{.}}</li>
-                        {{end}}
-                    </ul>
-                </div>
-                {{end}}
-                {{else if .SettingsUnavailable}}
-                <div class="notice notice-error transcript-inline-notice">Задача распознавания найдена, но сохранённые настройки не удалось прочитать.</div>
-                {{else}}
-                <div class="empty-state transcript-empty">
-                    <p>Для этого файла не найден сохранённый снимок настроек распознавания.</p>
-                </div>
-                {{end}}
-            </div>
-
-            {{if .RuntimePolicy.Visible}}
-            <div class="settings-panel">
-                <div class="section-header">
-                    <div>
-                        <h2>{{.RuntimePolicy.Title}}</h2>
-                        <p class="hint">Оценка строится по длительности аудио, модели, устройству и типу вычислений до запуска распознавания.</p>
-                    </div>
-                </div>
-                <div class="notice notice-{{.RuntimePolicy.Tone}} transcript-inline-notice">
-                    <strong>{{.RuntimePolicy.Summary}}</strong>
-                    {{if .RuntimePolicy.DurationLabel}}
-                    <dl class="settings-grid">
-                        <div class="settings-item">
-                            <dt>Длительность аудио</dt>
-                            <dd>{{.RuntimePolicy.DurationLabel}}</dd>
-                        </div>
-                        <div class="settings-item">
-                            <dt>Класс файла</dt>
-                            <dd>{{.RuntimePolicy.DurationClass}}</dd>
-                        </div>
-                        <div class="settings-item">
-                            <dt>Расчётный лимит</dt>
-                            <dd>{{.RuntimePolicy.EffectiveTimeout}}</dd>
-                        </div>
-                    </dl>
-                    {{end}}
-                    {{if .RuntimePolicy.Warnings}}
-                    <ul class="notice-list">
-                        {{range .RuntimePolicy.Warnings}}
-                        <li>{{.}}</li>
-                        {{end}}
-                    </ul>
-                    {{end}}
-                </div>
-            </div>
-            {{end}}
-
-            {{if .RuntimeSnapshot}}
-            <div class="settings-panel">
-                <div class="section-header">
-                    <div>
-                        <h2>Техническая среда</h2>
-                        <p class="hint">Минимальный снимок окружения на момент загрузки. Данные сохраняются для будущих audit/auth сценариев.</p>
-                    </div>
-                </div>
-                <dl class="settings-grid">
-                    {{range .RuntimeSnapshot}}
-                    <div class="settings-item">
-                        <dt>{{.Label}}</dt>
-                        <dd>{{.Value}}</dd>
-                    </div>
-                    {{end}}
-                </dl>
+            {{if .PipelineFailedStep}}
+            <div class="pipeline-problem pipeline-problem-sidebar">
+                <strong>Ошибка на шаге: {{.PipelineFailedStep}}</strong>
+                <p>Причина: {{.PipelineError}}</p>
+                <p class="hint">{{.PipelineErrorHint}}</p>
             </div>
             {{end}}
         </aside>
@@ -202,7 +78,7 @@
                 <div class="section-header section-header-wide">
                     <div>
                         <h2>Саммари</h2>
-                        <p class="hint">Краткое саммари создаётся только по кнопке. Автоматически после расшифровки оно не запускается.</p>
+                        <p class="hint">Короткий итог по материалу.</p>
                     </div>
                     <span class="status-chip status-chip-{{.SummaryStatusTone}}">{{.SummaryStatusLabel}}</span>
                 </div>
@@ -239,7 +115,7 @@
                         {{end}}
                     </ul>
                     {{end}}
-                    <p class="hint">Источник: {{.SummaryProvider}} {{if .SummaryUpdatedAtUTC}}В· обновлено {{.SummaryUpdatedAtUTC}} UTC{{end}}</p>
+                    <p class="hint">Источник: {{.SummaryProvider}} {{if .SummaryUpdatedAtUTC}}· обновлено {{.SummaryUpdatedAtUTC}} UTC{{end}}</p>
                 </div>
                 {{end}}
 
@@ -254,11 +130,11 @@
                 <div class="section-header section-header-wide transcript-header">
                     <div>
                         <h2>Расшифровка</h2>
-                        <p class="hint">Переключайтесь между удобным текстом для чтения и точным таймлайном по сегментам прямо на этой странице.</p>
+                        <p class="hint">Полный текст или сегменты с таймкодами.</p>
                     </div>
                     <div class="transcript-mode-switch" role="tablist" aria-label="Режим просмотра расшифровки">
                         <button type="button" class="tab-button is-active" data-transcript-tab="full-text" role="tab" aria-selected="true">Полный текст</button>
-                        <button type="button" class="tab-button" data-transcript-tab="timeline" role="tab" aria-selected="false">Таймлайн / сегменты</button>
+                        <button type="button" class="tab-button" data-transcript-tab="timeline" role="tab" aria-selected="false">Таймлайн</button>
                     </div>
                 </div>
 
@@ -295,7 +171,7 @@
                 <div class="section-header section-header-wide">
                     <div>
                         <h2>Совпадения по триггерам</h2>
-                        <p class="hint">Включённые правила прогоняются по сегментам расшифровки и сохраняют понятные объяснимые совпадения.</p>
+                        <p class="hint">Совпадения по включённым правилам.</p>
                     </div>
                     <span class="status-chip status-chip-{{.TriggerStatusTone}}">{{.TriggerStatusLabel}}</span>
                 </div>
@@ -348,12 +224,13 @@
                     {{end}}
                 </div>
                 {{end}}
+            </div>
             {{else}}
             <div class="card">
                 <div class="section-header">
                     <div>
                         <h2>Расшифровка пока не готова</h2>
-                        <p class="hint">Для этого файла ещё нет сохранённого текста и сегментов. Когда распознавание завершится, здесь появятся оба режима просмотра.</p>
+                        <p class="hint">Текст и сегменты появятся после завершения обработки.</p>
                     </div>
                 </div>
                 <div class="empty-state transcript-empty">
@@ -363,11 +240,135 @@
                     <p>Причина: {{.PipelineError}}</p>
                     <p class="hint">{{.PipelineErrorHint}}</p>
                     {{else}}
-                    <p class="hint">Можно вернуться на главную страницу и наблюдать за карточкой прогресса пайплайна.</p>
+                    <p class="hint">Можно вернуться на главную страницу и наблюдать за прогрессом.</p>
                     {{end}}
                 </div>
             </div>
             {{end}}
+
+            <details class="card technical-accordion">
+                <summary class="technical-accordion-summary">
+                    <div>
+                        <h2>Технические детали</h2>
+                        <p class="hint">Pipeline, параметры запуска и снимок среды.</p>
+                    </div>
+                    <span class="technical-accordion-indicator" aria-hidden="true">+</span>
+                </summary>
+                <div class="technical-accordion-body">
+                    <section class="settings-panel technical-panel">
+                        <div class="section-header section-header-tight">
+                            <div>
+                                <h3>Детали пайплайна</h3>
+                            </div>
+                        </div>
+                        <div class="step-detail-list step-detail-list-sidebar">
+                            {{range .PipelineSteps}}
+                            <div class="step-detail step-detail-{{.Tone}}{{if .IsCurrent}} is-current{{end}}{{if .IsFailed}} is-failed{{end}}">
+                                <div class="step-detail-head">
+                                    <strong>{{.Label}}</strong>
+                                    <span>{{.StatusLabel}}</span>
+                                </div>
+                                <p class="step-detail-meta">{{.TimingText}}</p>
+                                {{if .ProgressVisible}}
+                                <div class="step-progress-mini" aria-hidden="true">
+                                    <span class="step-progress-mini-fill" style="width: {{.ProgressPercent}}%;"></span>
+                                </div>
+                                <p class="step-detail-progress">{{.ProgressLabel}}</p>
+                                {{end}}
+                            </div>
+                            {{end}}
+                        </div>
+                    </section>
+
+                    <section class="settings-panel technical-panel">
+                        <div class="section-header section-header-tight">
+                            <div>
+                                <h3>Параметры запуска</h3>
+                            </div>
+                        </div>
+                        {{if .Settings}}
+                        <dl class="settings-grid">
+                            {{range .Settings}}
+                            <div class="settings-item">
+                                <dt>{{.Label}}</dt>
+                                <dd>{{.Value}}</dd>
+                            </div>
+                            {{end}}
+                        </dl>
+                        {{if .SettingsWarnings}}
+                        <div class="notice notice-warning transcript-inline-notice">
+                            <strong>Подсказка по конфигурации</strong>
+                            <ul class="notice-list">
+                                {{range .SettingsWarnings}}
+                                <li>{{.}}</li>
+                                {{end}}
+                            </ul>
+                        </div>
+                        {{end}}
+                        {{else if .SettingsUnavailable}}
+                        <div class="notice notice-error transcript-inline-notice">Задача распознавания найдена, но сохранённые настройки не удалось прочитать.</div>
+                        {{else}}
+                        <div class="empty-state transcript-empty">
+                            <p>Снимок настроек не найден.</p>
+                        </div>
+                        {{end}}
+                    </section>
+
+                    {{if .RuntimePolicy.Visible}}
+                    <section class="settings-panel technical-panel">
+                        <div class="section-header section-header-tight">
+                            <div>
+                                <h3>Политика времени</h3>
+                            </div>
+                        </div>
+                        <div class="notice notice-{{.RuntimePolicy.Tone}} transcript-inline-notice">
+                            <strong>{{.RuntimePolicy.Summary}}</strong>
+                            {{if .RuntimePolicy.DurationLabel}}
+                            <dl class="settings-grid">
+                                <div class="settings-item">
+                                    <dt>Длительность аудио</dt>
+                                    <dd>{{.RuntimePolicy.DurationLabel}}</dd>
+                                </div>
+                                <div class="settings-item">
+                                    <dt>Класс файла</dt>
+                                    <dd>{{.RuntimePolicy.DurationClass}}</dd>
+                                </div>
+                                <div class="settings-item">
+                                    <dt>Расчётный лимит</dt>
+                                    <dd>{{.RuntimePolicy.EffectiveTimeout}}</dd>
+                                </div>
+                            </dl>
+                            {{end}}
+                            {{if .RuntimePolicy.Warnings}}
+                            <ul class="notice-list">
+                                {{range .RuntimePolicy.Warnings}}
+                                <li>{{.}}</li>
+                                {{end}}
+                            </ul>
+                            {{end}}
+                        </div>
+                    </section>
+                    {{end}}
+
+                    {{if .RuntimeSnapshot}}
+                    <section class="settings-panel technical-panel">
+                        <div class="section-header section-header-tight">
+                            <div>
+                                <h3>Снимок среды</h3>
+                            </div>
+                        </div>
+                        <dl class="settings-grid">
+                            {{range .RuntimeSnapshot}}
+                            <div class="settings-item">
+                                <dt>{{.Label}}</dt>
+                                <dd>{{.Value}}</dd>
+                            </div>
+                            {{end}}
+                        </dl>
+                    </section>
+                    {{end}}
+                </div>
+            </details>
         </section>
     </section>
 </main>
@@ -404,6 +405,115 @@
     }
 
     activateTab("full-text");
+})();
+
+(() => {
+    const mark = document.querySelector(".floating-mark");
+    if (!mark) {
+        return;
+    }
+
+    const mobileQuery = window.matchMedia("(max-width: 900px)");
+    let x = 0;
+    let y = 0;
+    let vx = 168;
+    let vy = 126;
+    let rafId = 0;
+    let lastTime = 0;
+    let hitFlashUntil = 0;
+
+    function applyPosition() {
+        mark.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    }
+
+    function setFlash(active) {
+        mark.classList.toggle("is-hit", active);
+    }
+
+    function resetPosition() {
+        const rect = mark.getBoundingClientRect();
+        x = Math.max(0, Math.min(window.innerWidth * 0.08, window.innerWidth - rect.width));
+        y = Math.max(0, Math.min(window.innerHeight * 0.16, window.innerHeight - rect.height));
+        applyPosition();
+    }
+
+    function bounce(axis, maxValue) {
+        if (axis === "x") {
+            x = Math.min(Math.max(x, 0), maxValue);
+            vx = x <= 0 ? Math.abs(vx) : -Math.abs(vx);
+        } else {
+            y = Math.min(Math.max(y, 0), maxValue);
+            vy = y <= 0 ? Math.abs(vy) : -Math.abs(vy);
+        }
+        hitFlashUntil = performance.now() + 140;
+        setFlash(true);
+    }
+
+    function tick(timestamp) {
+        if (mobileQuery.matches) {
+            rafId = 0;
+            return;
+        }
+        if (!lastTime) {
+            lastTime = timestamp;
+        }
+
+        const dt = Math.min((timestamp - lastTime) / 1000, 0.032);
+        lastTime = timestamp;
+
+        const rect = mark.getBoundingClientRect();
+        const maxX = Math.max(0, window.innerWidth - rect.width);
+        const maxY = Math.max(0, window.innerHeight - rect.height);
+
+        x += vx * dt;
+        y += vy * dt;
+
+        if (x <= 0 || x >= maxX) {
+            bounce("x", maxX);
+        }
+        if (y <= 0 || y >= maxY) {
+            bounce("y", maxY);
+        }
+
+        if (hitFlashUntil && timestamp >= hitFlashUntil) {
+            hitFlashUntil = 0;
+            setFlash(false);
+        }
+
+        applyPosition();
+        rafId = window.requestAnimationFrame(tick);
+    }
+
+    function start() {
+        if (mobileQuery.matches) {
+            mark.style.transform = "";
+            setFlash(false);
+            if (rafId) {
+                window.cancelAnimationFrame(rafId);
+                rafId = 0;
+            }
+            return;
+        }
+        if (rafId) {
+            window.cancelAnimationFrame(rafId);
+        }
+        lastTime = 0;
+        resetPosition();
+        rafId = window.requestAnimationFrame(tick);
+    }
+
+    window.addEventListener("resize", start);
+    if (typeof mobileQuery.addEventListener === "function") {
+        mobileQuery.addEventListener("change", start);
+    } else if (typeof mobileQuery.addListener === "function") {
+        mobileQuery.addListener(start);
+    }
+
+    if (document.readyState === "complete") {
+        start();
+    } else {
+        window.addEventListener("load", start, { once: true });
+    }
 })();
 </script>
 </body>

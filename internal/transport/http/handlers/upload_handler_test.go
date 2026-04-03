@@ -437,10 +437,10 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"Расшифровка файла",
 		"timeline.mp4",
+		"Результат и статус пайплайна для этого файла.",
 		"Полный текст",
-		"Таймлайн / сегменты",
+		"Таймлайн",
 		"Совпадения по триггерам",
 		"Саммари",
 		"Сделать заново",
@@ -451,9 +451,9 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 		"00:00:00.000",
 		"00:00:01.400",
 		"Уверенность 0.87",
+		"Технические детали",
 		"small",
 		"Для длинных файлов модель small на CPU может работать очень долго.",
-		"Техническая среда",
 		"test-agent",
 	} {
 		if !strings.Contains(body, want) {
@@ -846,11 +846,12 @@ func TestUploadHandler_TranscriptPageShowsPipelineFailureDetails(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"Состояние пайплайна",
+		"Состояние",
 		"Ошибка на шаге: Распознавание текста",
 		"Причина: Не удалось распознать текст: faster-whisper завершился с ошибкой small model.",
 		"Подробности смотрите в логах worker.",
-		"Оценка времени запуска",
+		"Технические детали",
+		"Политика времени",
 		"Для этого файла лимит распознавания автоматически увеличен до 9 ч 15 мин.",
 		"Длительность аудио",
 		"1 ч",
