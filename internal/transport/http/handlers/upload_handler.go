@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"html/template"
@@ -12,17 +13,25 @@ import (
 
 	"media-pipeline/internal/app/command"
 	"media-pipeline/internal/domain/media"
+	"media-pipeline/internal/domain/transcription"
 	"media-pipeline/internal/observability"
 )
 
 type UploadHandler struct {
 	uploadUC         *command.UploadMediaUseCase
+	transcriptionSvc TranscriptionSettingsService
 	tmpl             *template.Template
 	maxUploadSizeB   int64
 	maxRequestBodyB  int64
 	maxFormMemoryB   int64
 	listItemsMaxSize int
+	maxSettingsBodyB int64
 	logger           *slog.Logger
+}
+
+type TranscriptionSettingsService interface {
+	GetCurrent(ctx context.Context) (transcription.Profile, error)
+	SaveCurrent(ctx context.Context, profile transcription.Profile) (transcription.Profile, error)
 }
 
 type MediaListItem struct {
@@ -35,14 +44,39 @@ type MediaListItem struct {
 }
 
 type IndexViewData struct {
-	Items          []MediaListItem
-	Error          string
-	Success        string
-	MaxUploadMB    string
-	MaxUploadHuman string
+	Items               []MediaListItem
+	UploadError         string
+	UploadSuccess       string
+	SettingsError       string
+	SettingsSuccess     string
+	MaxUploadMB         string
+	MaxUploadHuman      string
+	SettingsForm        TranscriptionSettingsForm
+	BackendOptions      []string
+	ModelOptions        []string
+	DeviceOptions       []string
+	CurrentComputeTypes []string
+	CPUComputeTypes     []string
+	CUDAComputeTypes    []string
 }
 
-func NewUploadHandler(uploadUC *command.UploadMediaUseCase, templatePath string, maxUploadSizeB int64, logger *slog.Logger) (*UploadHandler, error) {
+type TranscriptionSettingsForm struct {
+	Backend     string
+	ModelName   string
+	Device      string
+	ComputeType string
+	Language    string
+	BeamSize    int
+	VADEnabled  bool
+}
+
+func NewUploadHandler(
+	uploadUC *command.UploadMediaUseCase,
+	transcriptionSvc TranscriptionSettingsService,
+	templatePath string,
+	maxUploadSizeB int64,
+	logger *slog.Logger,
+) (*UploadHandler, error) {
 	tmpl, err := template.New("index.html").Funcs(template.FuncMap{
 		"humanSize": HumanSize,
 	}).ParseFiles(templatePath)
@@ -52,11 +86,13 @@ func NewUploadHandler(uploadUC *command.UploadMediaUseCase, templatePath string,
 
 	return &UploadHandler{
 		uploadUC:         uploadUC,
+		transcriptionSvc: transcriptionSvc,
 		tmpl:             tmpl,
 		maxUploadSizeB:   maxUploadSizeB,
 		maxRequestBodyB:  maxUploadSizeB + (1 << 20),
 		maxFormMemoryB:   32 << 20,
 		listItemsMaxSize: 100,
+		maxSettingsBodyB: 1 << 20,
 		logger:           logger,
 	}, nil
 }
@@ -66,8 +102,12 @@ func (h *UploadHandler) Index(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("status") == "uploaded" {
 		successMessage = "Upload completed. Media record and pending job were created."
 	}
+	settingsSuccess := ""
+	if r.URL.Query().Get("status") == "settings_saved" {
+		settingsSuccess = "Transcription settings were saved."
+	}
 
-	h.renderIndex(w, r, "", successMessage)
+	h.renderIndex(w, r, "", successMessage, "", settingsSuccess, nil)
 }
 
 func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
@@ -81,12 +121,12 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			logger.Warn("upload request rejected: request body too large", slog.Any("error", err))
-			h.renderIndex(w, r, "File is too large. Please check the upload limit and try again.", "")
+			h.renderIndex(w, r, "File is too large. Please check the upload limit and try again.", "", "", "", nil)
 			return
 		}
 
 		logger.Warn("upload request rejected: invalid multipart form", slog.Any("error", err))
-		h.renderIndex(w, r, "Could not read the upload form. Please choose the file again.", "")
+		h.renderIndex(w, r, "Could not read the upload form. Please choose the file again.", "", "", "", nil)
 		return
 	}
 	defer func() {
@@ -98,17 +138,17 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	file, fileHeader, err := r.FormFile("media")
 	if err != nil {
 		logger.Warn("upload request rejected: media field missing", slog.Any("error", err))
-		h.renderIndex(w, r, "Please choose a file in the media field.", "")
+		h.renderIndex(w, r, "Please choose a file in the media field.", "", "", "", nil)
 		return
 	}
 	defer file.Close()
 
 	if strings.TrimSpace(fileHeader.Filename) == "" {
-		h.renderIndex(w, r, "File name is required.", "")
+		h.renderIndex(w, r, "File name is required.", "", "", "", nil)
 		return
 	}
 	if fileHeader.Size == 0 {
-		h.renderIndex(w, r, "Empty upload is not allowed.", "")
+		h.renderIndex(w, r, "Empty upload is not allowed.", "", "", "", nil)
 		return
 	}
 
@@ -125,7 +165,7 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logger.Warn("upload failed", slog.Any("error", err), slog.String("filename", fileHeader.Filename))
-		h.renderIndex(w, r, userFacingUploadError(err), "")
+		h.renderIndex(w, r, userFacingUploadError(err), "", "", "", nil)
 		return
 	}
 
@@ -133,11 +173,59 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/?status=uploaded", http.StatusSeeOther)
 }
 
-func (h *UploadHandler) renderIndex(w http.ResponseWriter, r *http.Request, errMessage, successMessage string) {
+func (h *UploadHandler) SaveTranscriptionSettings(w http.ResponseWriter, r *http.Request) {
+	logger := observability.LoggerFromContext(r.Context(), h.logger).With(
+		slog.String("method", r.Method),
+		slog.String("path", r.URL.Path),
+	)
+
+	r.Body = http.MaxBytesReader(w, r.Body, h.maxSettingsBodyB)
+	if err := r.ParseForm(); err != nil {
+		logger.Warn("settings request rejected: invalid form", slog.Any("error", err))
+		h.renderIndex(w, r, "", "", "Could not read the settings form. Please try again.", "", buildSettingsFormFromRequest(r))
+		return
+	}
+
+	profile, form, err := parseTranscriptionProfileForm(r)
+	if err != nil {
+		h.renderIndex(w, r, "", "", err.Error(), "", &form)
+		return
+	}
+
+	if _, err := h.transcriptionSvc.SaveCurrent(r.Context(), profile); err != nil {
+		logger.Warn("save transcription settings failed", slog.Any("error", err))
+		h.renderIndex(w, r, "", "", "Could not save settings: "+err.Error(), "", &form)
+		return
+	}
+
+	logger.Info("transcription settings saved",
+		slog.String("backend", string(profile.Backend)),
+		slog.String("model_name", profile.ModelName),
+		slog.String("device", profile.Device),
+		slog.String("compute_type", profile.ComputeType),
+	)
+	http.Redirect(w, r, "/?status=settings_saved", http.StatusSeeOther)
+}
+
+func (h *UploadHandler) renderIndex(
+	w http.ResponseWriter,
+	r *http.Request,
+	uploadError string,
+	uploadSuccess string,
+	settingsError string,
+	settingsSuccess string,
+	settingsForm *TranscriptionSettingsForm,
+) {
 	items, err := h.uploadUC.ListRecent(r.Context(), h.listItemsMaxSize)
 	if err != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("load media list failed", slog.Any("error", err))
 		http.Error(w, "failed to load media list", http.StatusInternalServerError)
+		return
+	}
+	currentProfile, err := h.transcriptionSvc.GetCurrent(r.Context())
+	if err != nil {
+		observability.LoggerFromContext(r.Context(), h.logger).Error("load transcription settings failed", slog.Any("error", err))
+		http.Error(w, "failed to load transcription settings", http.StatusInternalServerError)
 		return
 	}
 
@@ -153,13 +241,31 @@ func (h *UploadHandler) renderIndex(w http.ResponseWriter, r *http.Request, errM
 		})
 	}
 
+	currentForm := buildSettingsForm(currentProfile)
+	if settingsForm != nil {
+		currentForm = *settingsForm
+	}
+	computeTypes := transcription.SupportedComputeTypes(strings.ToLower(strings.TrimSpace(currentForm.Device)))
+	if len(computeTypes) == 0 {
+		computeTypes = transcription.SupportedComputeTypes("cpu")
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data := IndexViewData{
-		Items:          viewItems,
-		Error:          errMessage,
-		Success:        successMessage,
-		MaxUploadMB:    strconv.FormatInt(h.maxUploadSizeB/(1024*1024), 10),
-		MaxUploadHuman: HumanSize(h.maxUploadSizeB),
+		Items:               viewItems,
+		UploadError:         uploadError,
+		UploadSuccess:       uploadSuccess,
+		SettingsError:       settingsError,
+		SettingsSuccess:     settingsSuccess,
+		MaxUploadMB:         strconv.FormatInt(h.maxUploadSizeB/(1024*1024), 10),
+		MaxUploadHuman:      HumanSize(h.maxUploadSizeB),
+		SettingsForm:        currentForm,
+		BackendOptions:      backendOptions(),
+		ModelOptions:        transcription.SupportedModels(),
+		DeviceOptions:       transcription.SupportedDevices(),
+		CurrentComputeTypes: computeTypes,
+		CPUComputeTypes:     transcription.SupportedComputeTypes("cpu"),
+		CUDAComputeTypes:    transcription.SupportedComputeTypes("cuda"),
 	}
 	if execErr := h.tmpl.ExecuteTemplate(w, "index.html", data); execErr != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("render index template failed", slog.Any("error", execErr))
@@ -199,4 +305,66 @@ func normalizeMIMEType(value string) string {
 	}
 
 	return mediaType
+}
+
+func parseTranscriptionProfileForm(r *http.Request) (transcription.Profile, TranscriptionSettingsForm, error) {
+	form := buildSettingsFormFromRequest(r)
+	beamSize, err := strconv.Atoi(strings.TrimSpace(r.FormValue("beam_size")))
+	if err != nil {
+		return transcription.Profile{}, *form, fmt.Errorf("Beam size must be a whole number.")
+	}
+	form.BeamSize = beamSize
+
+	profile := transcription.Profile{
+		Backend:     transcription.Backend(strings.TrimSpace(r.FormValue("backend"))),
+		ModelName:   strings.TrimSpace(r.FormValue("model_name")),
+		Device:      strings.TrimSpace(r.FormValue("device")),
+		ComputeType: strings.TrimSpace(r.FormValue("compute_type")),
+		Language:    strings.TrimSpace(r.FormValue("language")),
+		BeamSize:    beamSize,
+		VADEnabled:  r.FormValue("vad_enabled") == "on",
+		IsDefault:   true,
+	}
+	profile = transcription.NormalizeProfile(profile)
+	normalizedForm := buildSettingsForm(profile)
+
+	if err := transcription.ValidateProfile(profile); err != nil {
+		return transcription.Profile{}, normalizedForm, err
+	}
+
+	return profile, normalizedForm, nil
+}
+
+func buildSettingsForm(profile transcription.Profile) TranscriptionSettingsForm {
+	return TranscriptionSettingsForm{
+		Backend:     string(profile.Backend),
+		ModelName:   profile.ModelName,
+		Device:      profile.Device,
+		ComputeType: profile.ComputeType,
+		Language:    profile.Language,
+		BeamSize:    profile.BeamSize,
+		VADEnabled:  profile.VADEnabled,
+	}
+}
+
+func buildSettingsFormFromRequest(r *http.Request) *TranscriptionSettingsForm {
+	beamSize, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("beam_size")))
+	return &TranscriptionSettingsForm{
+		Backend:     strings.TrimSpace(r.FormValue("backend")),
+		ModelName:   strings.TrimSpace(r.FormValue("model_name")),
+		Device:      strings.TrimSpace(r.FormValue("device")),
+		ComputeType: strings.TrimSpace(r.FormValue("compute_type")),
+		Language:    strings.TrimSpace(r.FormValue("language")),
+		BeamSize:    beamSize,
+		VADEnabled:  r.FormValue("vad_enabled") == "on",
+	}
+}
+
+func backendOptions() []string {
+	items := transcription.SupportedBackends()
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		values = append(values, string(item))
+	}
+	return values
 }

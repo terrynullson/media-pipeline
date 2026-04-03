@@ -13,6 +13,7 @@ import (
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/ports"
 	"media-pipeline/internal/domain/transcript"
+	"media-pipeline/internal/domain/transcription"
 )
 
 func TestProcessor_RecoverInterruptedJobs(t *testing.T) {
@@ -91,11 +92,11 @@ func TestProcessor_ProcessNextExtractAudioEnqueuesTranscribe(t *testing.T) {
 		&stubTranscriptRepository{},
 		audioExtractor,
 		&stubTranscriber{},
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("ru")},
 		uploadDir,
 		audioDir,
 		10*time.Second,
 		10*time.Second,
-		"ru",
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
@@ -112,6 +113,13 @@ func TestProcessor_ProcessNextExtractAudioEnqueuesTranscribe(t *testing.T) {
 	}
 	if len(jobRepo.createdJobs) != 1 || jobRepo.createdJobs[0].Type != job.TypeTranscribe {
 		t.Fatalf("created jobs = %#v, want one transcribe job", jobRepo.createdJobs)
+	}
+	payload, err := job.DecodeTranscribePayload(jobRepo.createdJobs[0].Payload)
+	if err != nil {
+		t.Fatalf("DecodeTranscribePayload() error = %v", err)
+	}
+	if payload.Settings.ModelName != "tiny" || payload.Settings.Device != "cpu" {
+		t.Fatalf("transcribe payload settings = %#v, want default profile snapshot", payload.Settings)
 	}
 	if len(jobRepo.markDoneIDs) != 1 || jobRepo.markDoneIDs[0] != 30 {
 		t.Fatalf("mark done ids = %#v, want [30]", jobRepo.markDoneIDs)
@@ -134,8 +142,24 @@ func TestProcessor_ProcessNextTranscribePersistsTranscript(t *testing.T) {
 	jobRepo := &stubJobRepository{
 		claimByType: map[job.Type]claimResult{
 			job.TypeTranscribe: {
-				job: job.Job{ID: 31, MediaID: 50, Type: job.TypeTranscribe, Status: job.StatusRunning},
-				ok:  true,
+				job: job.Job{
+					ID:      31,
+					MediaID: 50,
+					Type:    job.TypeTranscribe,
+					Payload: mustEncodeTranscribePayload(t, job.TranscribePayload{
+						Settings: transcription.Settings{
+							Backend:     transcription.BackendFasterWhisper,
+							ModelName:   "base",
+							Device:      "cpu",
+							ComputeType: "int8",
+							Language:    "ru",
+							BeamSize:    4,
+							VADEnabled:  true,
+						},
+					}),
+					Status: job.StatusRunning,
+				},
+				ok: true,
 			},
 		},
 	}
@@ -166,11 +190,11 @@ func TestProcessor_ProcessNextTranscribePersistsTranscript(t *testing.T) {
 		transcriptRepo,
 		&stubAudioExtractor{},
 		transcriber,
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
 		t.TempDir(),
 		audioDir,
 		10*time.Second,
 		10*time.Second,
-		"ru",
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
@@ -184,6 +208,9 @@ func TestProcessor_ProcessNextTranscribePersistsTranscript(t *testing.T) {
 
 	if len(mediaRepo.markTranscribingIDs) != 1 || mediaRepo.markTranscribingIDs[0] != 50 {
 		t.Fatalf("mark transcribing ids = %#v, want [50]", mediaRepo.markTranscribingIDs)
+	}
+	if transcriber.lastInput.Settings.ModelName != "base" || transcriber.lastInput.Settings.BeamSize != 4 {
+		t.Fatalf("transcriber input settings = %#v, want payload settings", transcriber.lastInput.Settings)
 	}
 	if len(transcriptRepo.saved) != 1 {
 		t.Fatalf("saved transcripts = %d, want 1", len(transcriptRepo.saved))
@@ -249,11 +276,11 @@ func TestProcessor_ProcessNextExtractAudioDoesNotDuplicateTranscribeJob(t *testi
 		&stubTranscriptRepository{},
 		audioExtractor,
 		&stubTranscriber{},
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("ru")},
 		uploadDir,
 		audioDir,
 		10*time.Second,
 		10*time.Second,
-		"ru",
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
@@ -282,11 +309,11 @@ func newTestProcessor(
 		transcriptRepo,
 		audioExtractor,
 		transcriber,
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
 		"./data/uploads",
 		"./data/audio",
 		10*time.Second,
 		10*time.Second,
-		"",
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 }
@@ -430,10 +457,32 @@ func (s *stubAudioExtractor) Extract(context.Context, ports.ExtractAudioInput) (
 }
 
 type stubTranscriber struct {
-	output ports.TranscribeOutput
-	err    error
+	output    ports.TranscribeOutput
+	err       error
+	lastInput ports.TranscribeInput
 }
 
-func (s *stubTranscriber) Transcribe(context.Context, ports.TranscribeInput) (ports.TranscribeOutput, error) {
+func (s *stubTranscriber) Transcribe(_ context.Context, in ports.TranscribeInput) (ports.TranscribeOutput, error) {
+	s.lastInput = in
 	return s.output, s.err
+}
+
+type stubTranscriptionProfileProvider struct {
+	profile transcription.Profile
+	err     error
+}
+
+func (s *stubTranscriptionProfileProvider) GetCurrent(context.Context) (transcription.Profile, error) {
+	return s.profile, s.err
+}
+
+func mustEncodeTranscribePayload(t *testing.T, payload job.TranscribePayload) string {
+	t.Helper()
+
+	raw, err := job.EncodeTranscribePayload(payload)
+	if err != nil {
+		t.Fatalf("EncodeTranscribePayload() error = %v", err)
+	}
+
+	return raw
 }

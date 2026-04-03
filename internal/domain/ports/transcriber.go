@@ -3,6 +3,8 @@ package ports
 import (
 	"context"
 	"errors"
+
+	"media-pipeline/internal/domain/transcription"
 )
 
 type TranscriptionSegment struct {
@@ -14,7 +16,7 @@ type TranscriptionSegment struct {
 
 type TranscribeInput struct {
 	AudioPath string
-	Language  string
+	Settings  transcription.Settings
 }
 
 type TranscribeOutput struct {

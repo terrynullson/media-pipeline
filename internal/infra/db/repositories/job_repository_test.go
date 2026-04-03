@@ -29,6 +29,7 @@ func TestJobRepository_ClaimNextPendingAndMarkDone(t *testing.T) {
 	if _, err := jobRepo.Create(ctx, job.Job{
 		MediaID:      mediaID,
 		Type:         job.TypeExtractAudio,
+		Payload:      `{"example":true}`,
 		Status:       job.StatusPending,
 		CreatedAtUTC: nowUTC,
 		UpdatedAtUTC: nowUTC,
@@ -45,6 +46,9 @@ func TestJobRepository_ClaimNextPendingAndMarkDone(t *testing.T) {
 	}
 	if claimedJob.Status != job.StatusRunning {
 		t.Fatalf("claimed status = %q, want %q", claimedJob.Status, job.StatusRunning)
+	}
+	if claimedJob.Payload != `{"example":true}` {
+		t.Fatalf("claimed payload = %q, want persisted payload", claimedJob.Payload)
 	}
 
 	if err := jobRepo.MarkDone(ctx, claimedJob.ID, nowUTC.Add(2*time.Minute)); err != nil {

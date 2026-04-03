@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"media-pipeline/internal/domain/ports"
+	"media-pipeline/internal/domain/transcription"
 )
 
 const maxScriptOutputBytes = 64 * 1024
@@ -35,9 +36,19 @@ func NewPythonTranscriber(pythonBinary string, scriptPath string, logger *slog.L
 }
 
 func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeInput) (ports.TranscribeOutput, error) {
-	args := []string{t.scriptPath, "--audio-path", in.AudioPath}
-	if strings.TrimSpace(in.Language) != "" {
-		args = append(args, "--language", in.Language)
+	settings := transcription.NormalizeSettings(in.Settings)
+	args := []string{
+		t.scriptPath,
+		"--audio-path", in.AudioPath,
+		"--backend", string(settings.Backend),
+		"--model-name", settings.ModelName,
+		"--device", settings.Device,
+		"--compute-type", settings.ComputeType,
+		"--beam-size", fmt.Sprintf("%d", settings.BeamSize),
+		"--vad-enabled", fmt.Sprintf("%t", settings.VADEnabled),
+	}
+	if strings.TrimSpace(settings.Language) != "" {
+		args = append(args, "--language", settings.Language)
 	}
 
 	cmd := exec.CommandContext(ctx, t.pythonBinary, args...)
@@ -50,7 +61,13 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 	t.logger.Info("python transcription script started",
 		slog.String("script_path", t.scriptPath),
 		slog.String("audio_path", in.AudioPath),
-		slog.String("language", in.Language),
+		slog.String("backend", string(settings.Backend)),
+		slog.String("model_name", settings.ModelName),
+		slog.String("device", settings.Device),
+		slog.String("compute_type", settings.ComputeType),
+		slog.String("language", settings.Language),
+		slog.Int("beam_size", settings.BeamSize),
+		slog.Bool("vad_enabled", settings.VADEnabled),
 	)
 
 	if err := cmd.Run(); err != nil {

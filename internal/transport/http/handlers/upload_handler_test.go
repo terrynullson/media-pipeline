@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"media-pipeline/internal/app/command"
+	transcriptionapp "media-pipeline/internal/app/transcription"
+	domaintranscription "media-pipeline/internal/domain/transcription"
 	"media-pipeline/internal/infra/db"
 	"media-pipeline/internal/infra/db/repositories"
 	infraRuntime "media-pipeline/internal/infra/runtime"
@@ -52,6 +54,10 @@ func TestUploadHandler_UploadHappyPath(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	profileService := transcriptionapp.NewService(
+		repositories.NewTranscriptionProfileRepository(sqlDB),
+		domaintranscription.DefaultProfile("ru"),
+	)
 	uploadUC := command.NewUploadMediaUseCase(
 		repositories.NewMediaRepository(sqlDB),
 		repositories.NewJobRepository(sqlDB),
@@ -59,7 +65,7 @@ func TestUploadHandler_UploadHappyPath(t *testing.T) {
 		10*1024*1024,
 		logger,
 	)
-	handler, err := handlers.NewUploadHandler(uploadUC, templatePath, 10*1024*1024, logger)
+	handler, err := handlers.NewUploadHandler(uploadUC, profileService, templatePath, 10*1024*1024, logger)
 	if err != nil {
 		t.Fatalf("NewUploadHandler() error = %v", err)
 	}
@@ -132,6 +138,10 @@ func TestUploadHandler_InvalidUpload(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	profileService := transcriptionapp.NewService(
+		repositories.NewTranscriptionProfileRepository(sqlDB),
+		domaintranscription.DefaultProfile("ru"),
+	)
 	uploadUC := command.NewUploadMediaUseCase(
 		repositories.NewMediaRepository(sqlDB),
 		repositories.NewJobRepository(sqlDB),
@@ -139,7 +149,7 @@ func TestUploadHandler_InvalidUpload(t *testing.T) {
 		10*1024*1024,
 		logger,
 	)
-	handler, err := handlers.NewUploadHandler(uploadUC, templatePath, 10*1024*1024, logger)
+	handler, err := handlers.NewUploadHandler(uploadUC, profileService, templatePath, 10*1024*1024, logger)
 	if err != nil {
 		t.Fatalf("NewUploadHandler() error = %v", err)
 	}

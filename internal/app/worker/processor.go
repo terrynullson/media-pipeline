@@ -14,6 +14,7 @@ import (
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/ports"
 	"media-pipeline/internal/domain/transcript"
+	"media-pipeline/internal/domain/transcription"
 )
 
 type JobRepository interface {
@@ -41,18 +42,22 @@ type TranscriptRepository interface {
 	Save(ctx context.Context, item transcript.Transcript) error
 }
 
+type TranscriptionProfileProvider interface {
+	GetCurrent(ctx context.Context) (transcription.Profile, error)
+}
+
 type Processor struct {
 	jobs              JobRepository
 	media             MediaRepository
 	transcripts       TranscriptRepository
 	audioExtractor    ports.AudioExtractor
 	transcriber       ports.Transcriber
+	profiles          TranscriptionProfileProvider
 	logger            *slog.Logger
 	uploadDir         string
 	audioDir          string
 	ffmpegTimeout     time.Duration
 	transcribeTimeout time.Duration
-	defaultLanguage   string
 }
 
 func NewProcessor(
@@ -61,11 +66,11 @@ func NewProcessor(
 	transcriptRepo TranscriptRepository,
 	audioExtractor ports.AudioExtractor,
 	transcriber ports.Transcriber,
+	profiles TranscriptionProfileProvider,
 	uploadDir string,
 	audioDir string,
 	ffmpegTimeout time.Duration,
 	transcribeTimeout time.Duration,
-	defaultLanguage string,
 	logger *slog.Logger,
 ) *Processor {
 	return &Processor{
@@ -74,12 +79,12 @@ func NewProcessor(
 		transcripts:       transcriptRepo,
 		audioExtractor:    audioExtractor,
 		transcriber:       transcriber,
+		profiles:          profiles,
 		logger:            logger,
 		uploadDir:         uploadDir,
 		audioDir:          audioDir,
 		ffmpegTimeout:     ffmpegTimeout,
 		transcribeTimeout: transcribeTimeout,
-		defaultLanguage:   defaultLanguage,
 	}
 }
 
@@ -184,7 +189,7 @@ func (p *Processor) processExtractAudioJob(ctx context.Context, claimedJob job.J
 		return
 	}
 
-	if err := p.enqueueNextJob(ctx, mediaItem.ID, job.TypeTranscribe); err != nil {
+	if err := p.enqueueTranscribeJob(ctx, mediaItem.ID); err != nil {
 		failureMessage := fmt.Sprintf("enqueue transcribe job: %v", err)
 		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
 		return
@@ -232,15 +237,28 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 	transcribeCtx, cancel := context.WithTimeout(ctx, p.transcribeTimeout)
 	defer cancel()
 
+	settings, err := p.resolveTranscriptionSettings(ctx, claimedJob, logger)
+	if err != nil {
+		failureMessage := fmt.Sprintf("resolve transcription settings: %v", err)
+		p.failJob(ctx, claimedJob, mediaItem.ID, failureMessage, logger)
+		return
+	}
+
 	logger.Info("starting transcription",
 		slog.String("audio_path", audioPath),
-		slog.String("language", p.defaultLanguage),
+		slog.String("backend", string(settings.Backend)),
+		slog.String("model_name", settings.ModelName),
+		slog.String("device", settings.Device),
+		slog.String("compute_type", settings.ComputeType),
+		slog.String("language", settings.Language),
+		slog.Int("beam_size", settings.BeamSize),
+		slog.Bool("vad_enabled", settings.VADEnabled),
 		slog.Duration("timeout", p.transcribeTimeout),
 	)
 
 	result, err := p.transcriber.Transcribe(transcribeCtx, ports.TranscribeInput{
 		AudioPath: audioPath,
-		Language:  p.defaultLanguage,
+		Settings:  settings,
 	})
 	if err != nil {
 		diagnostics := transcriptionDiagnostics(err)
@@ -268,7 +286,7 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 	nowUTC := time.Now().UTC()
 	if err := p.transcripts.Save(ctx, transcript.Transcript{
 		MediaID:      mediaItem.ID,
-		Language:     p.defaultLanguage,
+		Language:     settings.Language,
 		FullText:     result.FullText,
 		Segments:     toTranscriptSegments(result.Segments),
 		CreatedAtUTC: nowUTC,
@@ -388,6 +406,70 @@ func (p *Processor) enqueueNextJob(ctx context.Context, mediaID int64, jobType j
 	}
 
 	return nil
+}
+
+func (p *Processor) enqueueTranscribeJob(ctx context.Context, mediaID int64) error {
+	profile, err := p.profiles.GetCurrent(ctx)
+	if err != nil {
+		return fmt.Errorf("get current transcription profile: %w", err)
+	}
+
+	payload, err := job.EncodeTranscribePayload(job.TranscribePayload{
+		Settings: transcription.NormalizeSettings(profile.Settings()),
+	})
+	if err != nil {
+		return fmt.Errorf("encode transcribe payload: %w", err)
+	}
+
+	exists, err := p.jobs.ExistsActiveOrDone(ctx, mediaID, job.TypeTranscribe)
+	if err != nil {
+		return fmt.Errorf("check existing %s job: %w", job.TypeTranscribe, err)
+	}
+	if exists {
+		return nil
+	}
+
+	nowUTC := time.Now().UTC()
+	if _, err := p.jobs.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeTranscribe,
+		Payload:      payload,
+		Status:       job.StatusPending,
+		Attempts:     0,
+		ErrorMessage: "",
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		return fmt.Errorf("create %s job: %w", job.TypeTranscribe, err)
+	}
+
+	return nil
+}
+
+func (p *Processor) resolveTranscriptionSettings(
+	ctx context.Context,
+	currentJob job.Job,
+	logger *slog.Logger,
+) (transcription.Settings, error) {
+	if strings.TrimSpace(currentJob.Payload) != "" {
+		payload, err := job.DecodeTranscribePayload(currentJob.Payload)
+		if err != nil {
+			return transcription.Settings{}, err
+		}
+		if err := transcription.ValidateSettings(payload.Settings); err != nil {
+			return transcription.Settings{}, err
+		}
+
+		return transcription.NormalizeSettings(payload.Settings), nil
+	}
+
+	logger.Warn("transcribe job payload is empty, falling back to current transcription profile")
+	profile, err := p.profiles.GetCurrent(ctx)
+	if err != nil {
+		return transcription.Settings{}, fmt.Errorf("get fallback transcription profile: %w", err)
+	}
+
+	return transcription.NormalizeSettings(profile.Settings()), nil
 }
 
 func (p *Processor) recoverInterruptedJobType(

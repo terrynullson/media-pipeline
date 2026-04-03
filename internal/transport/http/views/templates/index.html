@@ -10,9 +10,9 @@
 <main class="page">
     <section class="hero">
         <div>
-            <p class="eyebrow">Stage 1.1</p>
+            <p class="eyebrow">Stage 3</p>
             <h1>Media Pipeline</h1>
-            <p class="subtitle">Reliable file intake for the first processing stage. No workers, no ffmpeg, no extra product features.</p>
+            <p class="subtitle">Local upload entrypoint for the Stage 3 pipeline with worker-based audio extraction and transcription.</p>
         </div>
         <div class="hero-meta">
             <div class="meta-card">
@@ -28,13 +28,13 @@
 
     <section class="card">
         <h2>Upload media</h2>
-        <p class="hint">The server keeps a streamed save path and creates a pending <code>extract_audio</code> job after a successful upload.</p>
+        <p class="hint">The server stores the upload and creates a pending <code>extract_audio</code> job. The worker then extracts audio and creates a <code>transcribe</code> job.</p>
 
-        {{if .Error}}
-        <div class="notice notice-error">{{.Error}}</div>
+        {{if .UploadError}}
+        <div class="notice notice-error">{{.UploadError}}</div>
         {{end}}
-        {{if .Success}}
-        <div class="notice notice-success">{{.Success}}</div>
+        {{if .UploadSuccess}}
+        <div class="notice notice-success">{{.UploadSuccess}}</div>
         {{end}}
 
         <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form">
@@ -43,6 +43,80 @@
                 <input type="file" name="media" required>
             </label>
             <button type="submit">Upload</button>
+        </form>
+    </section>
+
+    <section class="card">
+        <div class="section-header">
+            <div>
+                <h2>Transcription settings</h2>
+                <p class="hint">These settings are saved in SQLite. Every new <code>transcribe</code> job stores its own snapshot, so future edits do not rewrite old jobs.</p>
+            </div>
+        </div>
+
+        {{if .SettingsError}}
+        <div class="notice notice-error">{{.SettingsError}}</div>
+        {{end}}
+        {{if .SettingsSuccess}}
+        <div class="notice notice-success">{{.SettingsSuccess}}</div>
+        {{end}}
+
+        <form action="/settings/transcription" method="post" class="settings-form">
+            <label>
+                <span>Backend</span>
+                <select name="backend">
+                    {{range .BackendOptions}}
+                    <option value="{{.}}" {{if eq $.SettingsForm.Backend .}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+            </label>
+
+            <label>
+                <span>Model</span>
+                <select name="model_name">
+                    {{range .ModelOptions}}
+                    <option value="{{.}}" {{if eq $.SettingsForm.ModelName .}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+            </label>
+
+            <label>
+                <span>Device</span>
+                <select name="device" id="device-select">
+                    {{range .DeviceOptions}}
+                    <option value="{{.}}" {{if eq $.SettingsForm.Device .}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+            </label>
+
+            <label>
+                <span>Compute type</span>
+                <select name="compute_type" id="compute-type-select" data-selected="{{.SettingsForm.ComputeType}}">
+                    {{range .CurrentComputeTypes}}
+                    <option value="{{.}}" {{if eq $.SettingsForm.ComputeType .}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+            </label>
+
+            <label>
+                <span>Language</span>
+                <input type="text" name="language" value="{{.SettingsForm.Language}}" placeholder="ru or blank for auto">
+            </label>
+
+            <label>
+                <span>Beam size</span>
+                <input type="number" name="beam_size" min="1" max="10" value="{{.SettingsForm.BeamSize}}">
+            </label>
+
+            <label class="checkbox-field">
+                <input type="checkbox" name="vad_enabled" {{if .SettingsForm.VADEnabled}}checked{{end}}>
+                <span>Enable VAD filter</span>
+            </label>
+
+            <div class="settings-actions">
+                <button type="submit">Save settings</button>
+                <p class="hint">CPU supports <code>int8</code> and <code>float32</code>. CUDA supports <code>float16</code> and <code>int8_float16</code>.</p>
+            </div>
         </form>
     </section>
 
@@ -89,5 +163,47 @@
         {{end}}
     </section>
 </main>
+<script>
+(() => {
+    const deviceSelect = document.getElementById("device-select");
+    const computeTypeSelect = document.getElementById("compute-type-select");
+    if (!deviceSelect || !computeTypeSelect) {
+        return;
+    }
+
+    const optionsByDevice = {
+        cpu: [{{range $index, $value := .CPUComputeTypes}}{{if $index}}, {{end}}"{{$value}}"{{end}}],
+        cuda: [{{range $index, $value := .CUDAComputeTypes}}{{if $index}}, {{end}}"{{$value}}"{{end}}]
+    };
+
+    function renderComputeTypes() {
+        const currentDevice = deviceSelect.value;
+        const available = optionsByDevice[currentDevice] || optionsByDevice.cpu || [];
+        const selected = computeTypeSelect.dataset.selected || computeTypeSelect.value;
+
+        computeTypeSelect.innerHTML = "";
+        available.forEach((item) => {
+            const option = document.createElement("option");
+            option.value = item;
+            option.textContent = item;
+            if (item === selected) {
+                option.selected = true;
+            }
+            computeTypeSelect.appendChild(option);
+        });
+
+        if (!available.includes(computeTypeSelect.value) && available.length > 0) {
+            computeTypeSelect.value = available[0];
+        }
+        computeTypeSelect.dataset.selected = computeTypeSelect.value;
+    }
+
+    deviceSelect.addEventListener("change", renderComputeTypes);
+    computeTypeSelect.addEventListener("change", () => {
+        computeTypeSelect.dataset.selected = computeTypeSelect.value;
+    });
+    renderComputeTypes();
+})();
+</script>
 </body>
 </html>

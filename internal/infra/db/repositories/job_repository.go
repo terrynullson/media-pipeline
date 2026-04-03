@@ -21,10 +21,11 @@ func (r *JobRepository) Create(ctx context.Context, j job.Job) (int64, error) {
 	result, err := r.db.ExecContext(
 		ctx,
 		`INSERT INTO jobs (
-			media_id, type, status, attempts, error_message, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			media_id, type, payload, status, attempts, error_message, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		j.MediaID,
 		j.Type,
+		j.Payload,
 		j.Status,
 		j.Attempts,
 		j.ErrorMessage,
@@ -81,7 +82,7 @@ func (r *JobRepository) ClaimNextPending(ctx context.Context, jobType job.Type, 
 		 	ORDER BY datetime(created_at) ASC, id ASC
 		 	LIMIT 1
 		 )
-		 RETURNING id, media_id, type, status, attempts, error_message, created_at, updated_at`,
+		 RETURNING id, media_id, type, payload, status, attempts, error_message, created_at, updated_at`,
 		job.StatusRunning,
 		nowUTC.Format(time.RFC3339),
 		job.StatusPending,
@@ -95,6 +96,7 @@ func (r *JobRepository) ClaimNextPending(ctx context.Context, jobType job.Type, 
 		&claimed.ID,
 		&claimed.MediaID,
 		&claimed.Type,
+		&claimed.Payload,
 		&claimed.Status,
 		&claimed.Attempts,
 		&claimed.ErrorMessage,
@@ -160,7 +162,7 @@ func (r *JobRepository) MarkFailed(ctx context.Context, id int64, errorMessage s
 func (r *JobRepository) ListByStatus(ctx context.Context, jobType job.Type, status job.Status) ([]job.Job, error) {
 	rows, err := r.db.QueryContext(
 		ctx,
-		`SELECT id, media_id, type, status, attempts, error_message, created_at, updated_at
+		`SELECT id, media_id, type, payload, status, attempts, error_message, created_at, updated_at
 		 FROM jobs
 		 WHERE type = ? AND status = ?
 		 ORDER BY datetime(created_at) ASC, id ASC`,
@@ -181,6 +183,7 @@ func (r *JobRepository) ListByStatus(ctx context.Context, jobType job.Type, stat
 			&item.ID,
 			&item.MediaID,
 			&item.Type,
+			&item.Payload,
 			&item.Status,
 			&item.Attempts,
 			&item.ErrorMessage,

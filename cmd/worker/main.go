@@ -7,7 +7,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	transcriptionapp "media-pipeline/internal/app/transcription"
 	appworker "media-pipeline/internal/app/worker"
+	domaintranscription "media-pipeline/internal/domain/transcription"
 	"media-pipeline/internal/infra/config"
 	"media-pipeline/internal/infra/db"
 	"media-pipeline/internal/infra/db/repositories"
@@ -43,6 +45,8 @@ func main() {
 	jobRepo := repositories.NewJobRepository(sqlDB)
 	mediaRepo := repositories.NewMediaRepository(sqlDB)
 	transcriptRepo := repositories.NewTranscriptRepository(sqlDB)
+	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
+	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
 	audioExtractor := infraMedia.NewFFmpegExtractor(cfg.FFmpegBinary)
 	transcribeScriptPath, err := infraRuntime.ResolvePath(cfg.TranscribeScript)
 	if err != nil {
@@ -57,11 +61,11 @@ func main() {
 		transcriptRepo,
 		audioExtractor,
 		transcriber,
+		profileService,
 		cfg.UploadDir,
 		cfg.AudioDir,
 		cfg.FFmpegTimeout(),
 		cfg.TranscribeTimeout(),
-		cfg.TranscribeLanguage,
 		logger,
 	)
 	runner := appworker.NewRunner(processor, cfg.WorkerPollInterval(), logger)

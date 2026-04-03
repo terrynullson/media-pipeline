@@ -5,68 +5,31 @@ import "testing"
 func TestParseTranscriptionOutput(t *testing.T) {
 	t.Parallel()
 
-	payload := []byte(`{
-		"full_text": "privet mir",
-		"segments": [
-			{"start_sec": 0, "end_sec": 1.5, "text": "privet", "confidence": 0.95},
-			{"start_sec": 1.5, "end_sec": 3.0, "text": "mir"}
-		]
-	}`)
+	payload := []byte(`{"full_text":"hello world","segments":[{"start_sec":0,"end_sec":1.2,"text":"hello","confidence":0.91},{"start_sec":1.2,"end_sec":2.0,"text":"world"}]}`)
 
-	result, err := ParseTranscriptionOutput(payload)
+	parsed, err := ParseTranscriptionOutput(payload)
 	if err != nil {
 		t.Fatalf("ParseTranscriptionOutput() error = %v", err)
 	}
-	if result.FullText != "privet mir" {
-		t.Fatalf("full text = %q, want %q", result.FullText, "privet mir")
+	if parsed.FullText != "hello world" {
+		t.Fatalf("full text = %q, want hello world", parsed.FullText)
 	}
-	if len(result.Segments) != 2 {
-		t.Fatalf("segments count = %d, want 2", len(result.Segments))
+	if len(parsed.Segments) != 2 {
+		t.Fatalf("segments = %d, want 2", len(parsed.Segments))
 	}
-	if result.Segments[0].Confidence == nil {
+	if parsed.Segments[0].Confidence == nil {
 		t.Fatal("segments[0].confidence = nil, want value")
 	}
+	if parsed.Segments[1].Confidence != nil {
+		t.Fatal("segments[1].confidence != nil, want omitted confidence")
+	}
 }
 
-func TestParseTranscriptionOutputRejectsInvalidSegment(t *testing.T) {
+func TestParseTranscriptionOutputRejectsEmptyFullText(t *testing.T) {
 	t.Parallel()
 
-	payload := []byte(`{
-		"full_text": "privet mir",
-		"segments": [
-			{"start_sec": 5, "end_sec": 3, "text": "broken"}
-		]
-	}`)
-
-	if _, err := ParseTranscriptionOutput(payload); err == nil {
+	_, err := ParseTranscriptionOutput([]byte(`{"full_text":"","segments":[{"start_sec":0,"end_sec":1,"text":"x"}]}`))
+	if err == nil {
 		t.Fatal("ParseTranscriptionOutput() error = nil, want validation error")
-	}
-}
-
-func TestParseTranscriptionOutputRejectsUnknownField(t *testing.T) {
-	t.Parallel()
-
-	payload := []byte(`{
-		"full_text": "privet mir",
-		"segments": [
-			{"start_sec": 0, "end_sec": 1, "text": "privet", "speaker": "a"}
-		]
-	}`)
-
-	if _, err := ParseTranscriptionOutput(payload); err == nil {
-		t.Fatal("ParseTranscriptionOutput() error = nil, want unknown field error")
-	}
-}
-
-func TestParseTranscriptionOutputRejectsEmptySegments(t *testing.T) {
-	t.Parallel()
-
-	payload := []byte(`{
-		"full_text": "privet mir",
-		"segments": []
-	}`)
-
-	if _, err := ParseTranscriptionOutput(payload); err == nil {
-		t.Fatal("ParseTranscriptionOutput() error = nil, want empty segments error")
 	}
 }

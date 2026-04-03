@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"media-pipeline/internal/app/command"
+	transcriptionapp "media-pipeline/internal/app/transcription"
+	domaintranscription "media-pipeline/internal/domain/transcription"
 	"media-pipeline/internal/infra/config"
 	"media-pipeline/internal/infra/db"
 	"media-pipeline/internal/infra/db/repositories"
@@ -40,7 +42,9 @@ func main() {
 
 	mediaRepo := repositories.NewMediaRepository(sqlDB)
 	jobRepo := repositories.NewJobRepository(sqlDB)
+	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
 	fileStorage := storage.NewLocalStorage(cfg.UploadDir)
+	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
 
 	uploadUC := command.NewUploadMediaUseCase(mediaRepo, jobRepo, fileStorage, cfg.MaxUploadSizeBytes(), logger)
 	templatePath, err := infraRuntime.ResolvePath("internal/transport/http/views/templates/index.html")
@@ -50,6 +54,7 @@ func main() {
 	}
 	uploadHandler, err := handlers.NewUploadHandler(
 		uploadUC,
+		profileService,
 		templatePath,
 		cfg.MaxUploadSizeBytes(),
 		logger,
