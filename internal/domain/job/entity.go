@@ -20,6 +20,7 @@ const (
 	TypeTranscribe         Type = "transcribe"
 	TypeAnalyzeTriggers    Type = "analyze_triggers"
 	TypeExtractScreenshots Type = "extract_screenshots"
+	TypeGenerateSummary    Type = "generate_summary"
 
 	StatusPending Status = "pending"
 	StatusRunning Status = "running"

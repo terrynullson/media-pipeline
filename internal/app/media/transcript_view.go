@@ -7,6 +7,7 @@ import (
 
 	"media-pipeline/internal/domain/job"
 	domainmedia "media-pipeline/internal/domain/media"
+	domainsummary "media-pipeline/internal/domain/summary"
 	"media-pipeline/internal/domain/transcript"
 	"media-pipeline/internal/domain/transcription"
 	domaintrigger "media-pipeline/internal/domain/trigger"
@@ -32,11 +33,16 @@ type TriggerScreenshotReader interface {
 	ListByMediaID(ctx context.Context, mediaID int64) ([]domaintrigger.Screenshot, error)
 }
 
+type SummaryReader interface {
+	GetByMediaID(ctx context.Context, mediaID int64) (domainsummary.Summary, bool, error)
+}
+
 type TranscriptViewUseCase struct {
 	mediaRepo      TranscriptMediaReader
 	transcriptRepo TranscriptReader
 	triggerEvents  TriggerEventReader
 	screenshots    TriggerScreenshotReader
+	summaries      SummaryReader
 	jobRepo        TranscriptJobReader
 }
 
@@ -48,6 +54,9 @@ type TranscriptViewResult struct {
 	TriggerScreenshots  map[int64]domaintrigger.Screenshot
 	AnalyzeJob          *job.Job
 	ScreenshotJob       *job.Job
+	Summary             domainsummary.Summary
+	HasSummary          bool
+	SummaryJob          *job.Job
 	Settings            *transcription.Settings
 	SettingsUnavailable bool
 }
@@ -57,6 +66,7 @@ func NewTranscriptViewUseCase(
 	transcriptRepo TranscriptReader,
 	triggerEventRepo TriggerEventReader,
 	triggerScreenshotRepo TriggerScreenshotReader,
+	summaryRepo SummaryReader,
 	jobRepo TranscriptJobReader,
 ) *TranscriptViewUseCase {
 	return &TranscriptViewUseCase{
@@ -64,6 +74,7 @@ func NewTranscriptViewUseCase(
 		transcriptRepo: transcriptRepo,
 		triggerEvents:  triggerEventRepo,
 		screenshots:    triggerScreenshotRepo,
+		summaries:      summaryRepo,
 		jobRepo:        jobRepo,
 	}
 }
@@ -116,6 +127,23 @@ func (u *TranscriptViewUseCase) Load(ctx context.Context, mediaID int64) (Transc
 	}
 	if ok {
 		result.ScreenshotJob = &screenshotJob
+	}
+
+	summaryItem, ok, err := u.summaries.GetByMediaID(ctx, mediaID)
+	if err != nil {
+		return TranscriptViewResult{}, fmt.Errorf("load summary for media %d: %w", mediaID, err)
+	}
+	if ok {
+		result.Summary = summaryItem
+		result.HasSummary = true
+	}
+
+	summaryJob, ok, err := u.jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeGenerateSummary)
+	if err != nil {
+		return TranscriptViewResult{}, fmt.Errorf("load summary job for media %d: %w", mediaID, err)
+	}
+	if ok {
+		result.SummaryJob = &summaryJob
 	}
 
 	currentJob, ok, err := u.jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeTranscribe)

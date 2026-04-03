@@ -13,6 +13,7 @@ import (
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/ports"
+	domainsummary "media-pipeline/internal/domain/summary"
 	"media-pipeline/internal/domain/transcript"
 	"media-pipeline/internal/domain/transcription"
 	domaintrigger "media-pipeline/internal/domain/trigger"
@@ -55,11 +56,16 @@ type TriggerEventRepository interface {
 
 type TriggerScreenshotRepository interface {
 	ReplaceForMedia(ctx context.Context, mediaID int64, items []domaintrigger.Screenshot) error
+	ListByMediaID(ctx context.Context, mediaID int64) ([]domaintrigger.Screenshot, error)
 	ListPathsByMediaID(ctx context.Context, mediaID int64) ([]string, error)
 }
 
 type TranscriptionProfileProvider interface {
 	GetCurrent(ctx context.Context) (transcription.Profile, error)
+}
+
+type SummaryRepository interface {
+	Save(ctx context.Context, item domainsummary.Summary) error
 }
 
 type Processor struct {
@@ -69,9 +75,11 @@ type Processor struct {
 	triggerRules        TriggerRuleRepository
 	triggerEvents       TriggerEventRepository
 	triggerScreenshots  TriggerScreenshotRepository
+	summaries           SummaryRepository
 	audioExtractor      ports.AudioExtractor
 	screenshotExtractor ports.ScreenshotExtractor
 	transcriber         ports.Transcriber
+	summarizer          ports.Summarizer
 	profiles            TranscriptionProfileProvider
 	logger              *slog.Logger
 	uploadDir           string
@@ -89,9 +97,11 @@ func NewProcessor(
 	triggerRuleRepo TriggerRuleRepository,
 	triggerEventRepo TriggerEventRepository,
 	triggerScreenshotRepo TriggerScreenshotRepository,
+	summaryRepo SummaryRepository,
 	audioExtractor ports.AudioExtractor,
 	screenshotExtractor ports.ScreenshotExtractor,
 	transcriber ports.Transcriber,
+	summarizer ports.Summarizer,
 	profiles TranscriptionProfileProvider,
 	uploadDir string,
 	audioDir string,
@@ -108,9 +118,11 @@ func NewProcessor(
 		triggerRules:        triggerRuleRepo,
 		triggerEvents:       triggerEventRepo,
 		triggerScreenshots:  triggerScreenshotRepo,
+		summaries:           summaryRepo,
 		audioExtractor:      audioExtractor,
 		screenshotExtractor: screenshotExtractor,
 		transcriber:         transcriber,
+		summarizer:          summarizer,
 		profiles:            profiles,
 		logger:              logger,
 		uploadDir:           uploadDir,
@@ -128,6 +140,7 @@ func (p *Processor) ProcessNext(ctx context.Context) (bool, error) {
 		job.TypeTranscribe,
 		job.TypeAnalyzeTriggers,
 		job.TypeExtractScreenshots,
+		job.TypeGenerateSummary,
 	} {
 		processed, err := p.processNextByType(ctx, jobType)
 		if err != nil {
@@ -167,6 +180,8 @@ func (p *Processor) processNextByType(ctx context.Context, jobType job.Type) (bo
 		p.processAnalyzeTriggersJob(ctx, claimedJob, logger)
 	case job.TypeExtractScreenshots:
 		p.processExtractScreenshotsJob(ctx, claimedJob, logger)
+	case job.TypeGenerateSummary:
+		p.processGenerateSummaryJob(ctx, claimedJob, logger)
 	default:
 		p.failJob(ctx, claimedJob, 0, fmt.Sprintf("unsupported job type %q", claimedJob.Type), true, logger)
 	}
@@ -543,6 +558,67 @@ func (p *Processor) processExtractScreenshotsJob(ctx context.Context, claimedJob
 	logger.Info("screenshot extraction completed", slog.Int("screenshots", len(screenshots)))
 }
 
+func (p *Processor) processGenerateSummaryJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
+	transcriptItem, ok, err := p.transcripts.GetByMediaID(ctx, claimedJob.MediaID)
+	if err != nil {
+		failureMessage := fmt.Sprintf("load transcript for summary media %d: %v", claimedJob.MediaID, err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+	if !ok || strings.TrimSpace(transcriptItem.FullText) == "" {
+		failureMessage := fmt.Sprintf("transcript for summary media %d was not found", claimedJob.MediaID)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+
+	triggerEvents, err := p.triggerEvents.ListByMediaID(ctx, claimedJob.MediaID)
+	if err != nil {
+		failureMessage := fmt.Sprintf("load trigger events for summary: %v", err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+
+	triggerScreenshots, err := p.triggerScreenshots.ListByMediaID(ctx, claimedJob.MediaID)
+	if err != nil {
+		failureMessage := fmt.Sprintf("load trigger screenshots for summary: %v", err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+
+	summaryOutput, err := p.summarizer.Generate(ctx, ports.SummaryInput{
+		MediaID:            claimedJob.MediaID,
+		Transcript:         transcriptItem,
+		TriggerEvents:      triggerEvents,
+		TriggerScreenshots: triggerScreenshots,
+	})
+	if err != nil {
+		failureMessage := fmt.Sprintf("generate summary: %v", err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+
+	nowUTC := time.Now().UTC()
+	summaryItem := ports.ToDomainSummary(claimedJob.MediaID, summaryOutput)
+	summaryItem.CreatedAtUTC = nowUTC
+	summaryItem.UpdatedAtUTC = nowUTC
+	if err := p.summaries.Save(ctx, summaryItem); err != nil {
+		failureMessage := fmt.Sprintf("persist summary: %v", err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+
+	if err := p.jobs.MarkDone(ctx, claimedJob.ID, nowUTC); err != nil {
+		failureMessage := fmt.Sprintf("mark job done: %v", err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+
+	logger.Info("summary generation completed",
+		slog.Int("highlights", len(summaryOutput.Highlights)),
+		slog.String("provider", summaryOutput.Provider),
+	)
+}
+
 func (p *Processor) RecoverInterruptedJobs(ctx context.Context) error {
 	for _, recovery := range []struct {
 		jobType      job.Type
@@ -552,6 +628,7 @@ func (p *Processor) RecoverInterruptedJobs(ctx context.Context) error {
 		{jobType: job.TypeTranscribe, restoreState: p.media.MarkAudioReady},
 		{jobType: job.TypeAnalyzeTriggers},
 		{jobType: job.TypeExtractScreenshots},
+		{jobType: job.TypeGenerateSummary},
 	} {
 		if err := p.recoverInterruptedJobType(ctx, recovery.jobType, recovery.restoreState); err != nil {
 			return err

@@ -51,20 +51,20 @@ func NormalizeRule(rule Rule) Rule {
 
 func ValidateRule(rule Rule) error {
 	if strings.TrimSpace(rule.Name) == "" {
-		return fmt.Errorf("rule name is required")
+		return fmt.Errorf("название правила обязательно")
 	}
 	if strings.TrimSpace(rule.Category) == "" {
-		return fmt.Errorf("rule category is required")
+		return fmt.Errorf("категория правила обязательна")
 	}
 	if strings.TrimSpace(rule.Pattern) == "" {
-		return fmt.Errorf("rule pattern is required")
+		return fmt.Errorf("шаблон правила обязателен")
 	}
 
 	switch rule.MatchMode {
 	case MatchModeContains, MatchModeExact:
 		return nil
 	default:
-		return fmt.Errorf("unsupported match mode %q", rule.MatchMode)
+		return fmt.Errorf("неподдерживаемый режим совпадения %q", rule.MatchMode)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"media-pipeline/internal/infra/db/repositories"
 	infraMedia "media-pipeline/internal/infra/media"
 	infraRuntime "media-pipeline/internal/infra/runtime"
+	infraSummary "media-pipeline/internal/infra/summary"
 	infraTranscription "media-pipeline/internal/infra/transcription"
 )
 
@@ -48,10 +49,12 @@ func main() {
 	triggerRuleRepo := repositories.NewTriggerRuleRepository(sqlDB)
 	triggerEventRepo := repositories.NewTriggerEventRepository(sqlDB)
 	triggerScreenshotRepo := repositories.NewTriggerScreenshotRepository(sqlDB)
+	summaryRepo := repositories.NewSummaryRepository(sqlDB)
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
 	audioExtractor := infraMedia.NewFFmpegExtractor(cfg.FFmpegBinary)
 	screenshotExtractor := infraMedia.NewFFmpegScreenshotExtractor(cfg.FFmpegBinary)
+	summarizer := infraSummary.NewSimpleSummarizer()
 	transcribeScriptPath, err := infraRuntime.ResolvePath(cfg.TranscribeScript)
 	if err != nil {
 		logger.Error("resolve transcribe script path", slog.Any("error", err), slog.String("path", cfg.TranscribeScript))
@@ -66,9 +69,11 @@ func main() {
 		triggerRuleRepo,
 		triggerEventRepo,
 		triggerScreenshotRepo,
+		summaryRepo,
 		audioExtractor,
 		screenshotExtractor,
 		transcriber,
+		summarizer,
 		profileService,
 		cfg.UploadDir,
 		cfg.AudioDir,

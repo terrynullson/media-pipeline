@@ -28,6 +28,7 @@ type UploadHandler struct {
 	transcriptionSvc TranscriptionSettingsService
 	triggerRulesSvc  TriggerRulesService
 	transcriptViewUC TranscriptViewService
+	summaryRequestUC SummaryRequestService
 	deleteMediaUC    MediaDeletionService
 	tmpl             *template.Template
 	maxUploadSizeB   int64
@@ -52,6 +53,10 @@ type TriggerRulesService interface {
 	Create(ctx context.Context, rule domaintrigger.Rule) (domaintrigger.Rule, error)
 	SetEnabled(ctx context.Context, id int64, enabled bool) error
 	Delete(ctx context.Context, id int64) error
+}
+
+type SummaryRequestService interface {
+	Request(ctx context.Context, mediaID int64) (mediaapp.RequestSummaryResult, error)
 }
 
 type MediaDeletionService interface {
@@ -137,6 +142,7 @@ func NewUploadHandler(
 	transcriptionSvc TranscriptionSettingsService,
 	triggerRulesSvc TriggerRulesService,
 	transcriptViewUC TranscriptViewService,
+	summaryRequestUC SummaryRequestService,
 	deleteMediaUC MediaDeletionService,
 	templatesDir string,
 	maxUploadSizeB int64,
@@ -156,6 +162,7 @@ func NewUploadHandler(
 		transcriptionSvc: transcriptionSvc,
 		triggerRulesSvc:  triggerRulesSvc,
 		transcriptViewUC: transcriptViewUC,
+		summaryRequestUC: summaryRequestUC,
 		deleteMediaUC:    deleteMediaUC,
 		tmpl:             tmpl,
 		maxUploadSizeB:   maxUploadSizeB,
@@ -172,19 +179,19 @@ func (h *UploadHandler) Index(w http.ResponseWriter, r *http.Request) {
 	triggerRuleSuccess := ""
 	switch r.URL.Query().Get("status") {
 	case "uploaded":
-		successMessage = "Upload completed. Media record and pending job were created."
+		successMessage = "Файл загружен. Запись создана, задача на извлечение аудио поставлена в очередь."
 	case "deleted":
-		successMessage = "Media item was deleted. Related records were removed and file cleanup was attempted."
+		successMessage = "Файл удалён. Связанные записи очищены, временные файлы тоже были удалены."
 	case "trigger_rule_saved":
-		triggerRuleSuccess = "Trigger rule was created."
+		triggerRuleSuccess = "Правило триггера создано."
 	case "trigger_rule_updated":
-		triggerRuleSuccess = "Trigger rule status was updated."
+		triggerRuleSuccess = "Статус правила триггера обновлён."
 	case "trigger_rule_deleted":
-		triggerRuleSuccess = "Trigger rule was deleted."
+		triggerRuleSuccess = "Правило триггера удалено."
 	}
 	settingsSuccess := ""
 	if r.URL.Query().Get("status") == "settings_saved" {
-		settingsSuccess = "Transcription settings were saved."
+		settingsSuccess = "Настройки распознавания сохранены."
 	}
 
 	h.renderIndex(w, r, "", successMessage, "", settingsSuccess, "", triggerRuleSuccess, nil, nil)
@@ -201,12 +208,12 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			logger.Warn("upload request rejected: request body too large", slog.Any("error", err))
-			h.renderUploadFailure(w, r, h.uploadLimitMessage("File is too large."))
+			h.renderUploadFailure(w, r, h.uploadLimitMessage("Файл слишком большой."))
 			return
 		}
 
 		logger.Warn("upload request rejected: invalid multipart form", slog.Any("error", err))
-		h.renderUploadFailure(w, r, "Could not read the upload form. Please choose the file again.")
+		h.renderUploadFailure(w, r, "Не удалось прочитать форму загрузки. Выберите файл ещё раз.")
 		return
 	}
 	defer func() {
@@ -218,17 +225,17 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	file, fileHeader, err := r.FormFile("media")
 	if err != nil {
 		logger.Warn("upload request rejected: media field missing", slog.Any("error", err))
-		h.renderUploadFailure(w, r, "Please choose a file in the media field.")
+		h.renderUploadFailure(w, r, "Выберите файл для загрузки.")
 		return
 	}
 	defer file.Close()
 
 	if strings.TrimSpace(fileHeader.Filename) == "" {
-		h.renderUploadFailure(w, r, "File name is required.")
+		h.renderUploadFailure(w, r, "Имя файла обязательно.")
 		return
 	}
 	if fileHeader.Size == 0 {
-		h.renderUploadFailure(w, r, "Empty upload is not allowed.")
+		h.renderUploadFailure(w, r, "Пустой файл загружать нельзя.")
 		return
 	}
 
@@ -254,7 +261,7 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		h.writeJSON(w, http.StatusCreated, map[string]any{
 			"status":  "uploaded",
 			"mediaId": result.MediaID,
-			"message": "Upload completed. Media record and pending job were created.",
+			"message": "Файл загружен. Запись создана, задача поставлена в очередь.",
 		})
 		return
 	}
@@ -265,7 +272,7 @@ func (h *UploadHandler) MediaStatuses(w http.ResponseWriter, r *http.Request) {
 	items, err := h.buildMediaListItems(r.Context())
 	if err != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("load media statuses failed", slog.Any("error", err))
-		http.Error(w, "failed to load media statuses", http.StatusInternalServerError)
+		http.Error(w, "не удалось загрузить статусы файлов", http.StatusInternalServerError)
 		return
 	}
 
@@ -295,7 +302,7 @@ func (h *UploadHandler) SaveTranscriptionSettings(w http.ResponseWriter, r *http
 	r.Body = http.MaxBytesReader(w, r.Body, h.maxSettingsBodyB)
 	if err := r.ParseForm(); err != nil {
 		logger.Warn("settings request rejected: invalid form", slog.Any("error", err))
-		h.renderIndex(w, r, "", "", "Could not read the settings form. Please try again.", "", "", "", buildSettingsFormFromRequest(r), nil)
+		h.renderIndex(w, r, "", "", "Не удалось прочитать форму настроек. Попробуйте ещё раз.", "", "", "", buildSettingsFormFromRequest(r), nil)
 		return
 	}
 
@@ -307,7 +314,7 @@ func (h *UploadHandler) SaveTranscriptionSettings(w http.ResponseWriter, r *http
 
 	if _, err := h.transcriptionSvc.SaveCurrent(r.Context(), profile); err != nil {
 		logger.Warn("save transcription settings failed", slog.Any("error", err))
-		h.renderIndex(w, r, "", "", "Could not save settings: "+err.Error(), "", "", "", &form, nil)
+		h.renderIndex(w, r, "", "", "Не удалось сохранить настройки: "+err.Error(), "", "", "", &form, nil)
 		return
 	}
 
@@ -329,7 +336,7 @@ func (h *UploadHandler) CreateTriggerRule(w http.ResponseWriter, r *http.Request
 	r.Body = http.MaxBytesReader(w, r.Body, h.maxSettingsBodyB)
 	if err := r.ParseForm(); err != nil {
 		logger.Warn("trigger rule request rejected: invalid form", slog.Any("error", err))
-		h.renderIndex(w, r, "", "", "", "", "Could not read the trigger rule form. Please try again.", "", nil, buildTriggerRuleFormFromRequest(r))
+		h.renderIndex(w, r, "", "", "", "", "Не удалось прочитать форму правила триггера. Попробуйте ещё раз.", "", nil, buildTriggerRuleFormFromRequest(r))
 		return
 	}
 
@@ -341,7 +348,7 @@ func (h *UploadHandler) CreateTriggerRule(w http.ResponseWriter, r *http.Request
 
 	if _, err := h.triggerRulesSvc.Create(r.Context(), rule); err != nil {
 		logger.Warn("create trigger rule failed", slog.Any("error", err))
-		h.renderIndex(w, r, "", "", "", "", "Could not save trigger rule: "+err.Error(), "", nil, &form)
+		h.renderIndex(w, r, "", "", "", "", "Не удалось сохранить правило триггера: "+err.Error(), "", nil, &form)
 		return
 	}
 
@@ -356,13 +363,13 @@ func (h *UploadHandler) ToggleTriggerRule(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := r.ParseForm(); err != nil {
-		h.renderIndex(w, r, "", "", "", "", "Could not read the trigger rule action.", "", nil, nil)
+		h.renderIndex(w, r, "", "", "", "", "Не удалось прочитать действие для правила триггера.", "", nil, nil)
 		return
 	}
 
 	enabled := r.FormValue("enabled") == "true"
 	if err := h.triggerRulesSvc.SetEnabled(r.Context(), ruleID, enabled); err != nil {
-		h.renderIndex(w, r, "", "", "", "", "Could not update trigger rule: "+err.Error(), "", nil, nil)
+		h.renderIndex(w, r, "", "", "", "", "Не удалось обновить правило триггера: "+err.Error(), "", nil, nil)
 		return
 	}
 
@@ -377,7 +384,7 @@ func (h *UploadHandler) DeleteTriggerRule(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.triggerRulesSvc.Delete(r.Context(), ruleID); err != nil {
-		h.renderIndex(w, r, "", "", "", "", "Could not delete trigger rule: "+err.Error(), "", nil, nil)
+		h.renderIndex(w, r, "", "", "", "", "Не удалось удалить правило триггера: "+err.Error(), "", nil, nil)
 		return
 	}
 
@@ -399,19 +406,19 @@ func (h *UploadHandler) renderIndex(
 	viewItems, err := h.buildMediaListItems(r.Context())
 	if err != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("load media list failed", slog.Any("error", err))
-		http.Error(w, "failed to load media list", http.StatusInternalServerError)
+		http.Error(w, "не удалось загрузить список файлов", http.StatusInternalServerError)
 		return
 	}
 	currentProfile, err := h.transcriptionSvc.GetCurrent(r.Context())
 	if err != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("load transcription settings failed", slog.Any("error", err))
-		http.Error(w, "failed to load transcription settings", http.StatusInternalServerError)
+		http.Error(w, "не удалось загрузить настройки распознавания", http.StatusInternalServerError)
 		return
 	}
 	triggerRules, err := h.triggerRulesSvc.List(r.Context())
 	if err != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("load trigger rules failed", slog.Any("error", err))
-		http.Error(w, "failed to load trigger rules", http.StatusInternalServerError)
+		http.Error(w, "не удалось загрузить правила триггеров", http.StatusInternalServerError)
 		return
 	}
 	currentForm := buildSettingsForm(currentProfile)
@@ -451,7 +458,7 @@ func (h *UploadHandler) renderIndex(
 	}
 	if execErr := h.tmpl.ExecuteTemplate(w, "index.html", data); execErr != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("render index template failed", slog.Any("error", execErr))
-		http.Error(w, "failed to render page", http.StatusInternalServerError)
+		http.Error(w, "не удалось отрисовать страницу", http.StatusInternalServerError)
 	}
 }
 
@@ -512,19 +519,19 @@ func stagePercent(value int, total int) int {
 func describeMediaStatus(status media.Status) (statusLabel string, statusTone string, stageLabel string, stageValue int, active bool) {
 	switch status {
 	case media.StatusUploaded:
-		return "Uploaded", "uploaded", "Waiting for audio extraction", 1, false
+		return "Загружен", "uploaded", "Ожидает извлечения аудио", 1, false
 	case media.StatusProcessing:
-		return "Extracting audio", "running", "Extracting audio", 2, true
+		return "Извлекаем аудио", "running", "Идёт извлечение аудио", 2, true
 	case media.StatusAudioExtracted:
-		return "Audio ready", "ready", "Audio extracted, waiting for transcription", 3, false
+		return "Аудио готово", "ready", "Аудио извлечено, ждём распознавание", 3, false
 	case media.StatusTranscribing:
-		return "Transcribing", "running", "Transcribing audio", 4, true
+		return "Распознаём текст", "running", "Идёт распознавание аудио", 4, true
 	case media.StatusTranscribed:
-		return "Transcribed", "success", "Transcription completed", 5, false
+		return "Готово", "success", "Распознавание завершено", 5, false
 	case media.StatusFailed:
-		return "Failed", "error", "Processing failed", 0, false
+		return "Ошибка", "error", "Обработка завершилась ошибкой", 0, false
 	default:
-		return string(status), "neutral", "Unknown status", 0, false
+		return string(status), "neutral", "Неизвестный статус", 0, false
 	}
 }
 
@@ -542,7 +549,7 @@ func (h *UploadHandler) writeJSON(w http.ResponseWriter, statusCode int, payload
 }
 
 func (h *UploadHandler) uploadLimitMessage(prefix string) string {
-	return fmt.Sprintf("%s Maximum supported size is %s.", strings.TrimSpace(prefix), HumanSize(h.maxUploadSizeB))
+	return fmt.Sprintf("%s Максимальный размер файла: %s.", strings.TrimSpace(prefix), HumanSize(h.maxUploadSizeB))
 }
 
 func (h *UploadHandler) userFacingUploadError(err error) string {
@@ -553,20 +560,20 @@ func (h *UploadHandler) userFacingUploadError(err error) string {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "unsupported file format"):
-		return "Unsupported file extension. Only the listed media formats are allowed."
+		return "Неподдерживаемое расширение файла. Разрешены только указанные аудио- и видеоформаты."
 	case strings.Contains(msg, "content type is not supported"):
-		return "Uploaded content does not look like audio or video."
+		return "Файл не похож на аудио или видео."
 	case strings.Contains(msg, "empty file"):
-		return "Empty upload is not allowed."
+		return "Пустой файл загружать нельзя."
 	case strings.Contains(msg, "exceeds max size"):
-		return h.uploadLimitMessage("File exceeds the upload limit.")
+		return h.uploadLimitMessage("Файл превышает допустимый размер.")
 	case strings.Contains(msg, "upload canceled"):
-		return "Upload was canceled before completion."
+		return "Загрузка была отменена до завершения."
 	default:
 		if errors.Is(err, http.ErrMissingFile) {
-			return "Please choose a file to upload."
+			return "Выберите файл для загрузки."
 		}
-		return "Upload failed: " + msg
+		return "Ошибка загрузки: " + msg
 	}
 }
 
@@ -583,7 +590,7 @@ func parseTranscriptionProfileForm(r *http.Request) (transcription.Profile, Tran
 	form := buildSettingsFormFromRequest(r)
 	beamSize, err := strconv.Atoi(strings.TrimSpace(r.FormValue("beam_size")))
 	if err != nil {
-		return transcription.Profile{}, *form, fmt.Errorf("Beam size must be a whole number.")
+		return transcription.Profile{}, *form, fmt.Errorf("Поле beam_size должно быть целым числом.")
 	}
 	form.BeamSize = beamSize
 
@@ -689,14 +696,14 @@ func buildTriggerRuleViews(items []domaintrigger.Rule) []TriggerRuleView {
 			Enabled:      item.Enabled,
 			ToggleURL:    fmt.Sprintf("/trigger-rules/%d/toggle", item.ID),
 			DeleteURL:    fmt.Sprintf("/trigger-rules/%d/delete", item.ID),
-			EnabledLabel: "Disabled",
+			EnabledLabel: "Выключено",
 			EnabledTone:  "neutral",
-			ToggleLabel:  "Enable",
+			ToggleLabel:  "Включить",
 		}
 		if item.Enabled {
-			view.EnabledLabel = "Enabled"
+			view.EnabledLabel = "Включено"
 			view.EnabledTone = "success"
-			view.ToggleLabel = "Disable"
+			view.ToggleLabel = "Выключить"
 		}
 		views = append(views, view)
 	}

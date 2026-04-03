@@ -1,56 +1,64 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>{{.MediaName}} · Transcript</title>
+    <title>{{.MediaName}} · Расшифровка</title>
     <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
 <main class="page page-transcript">
     <section class="hero hero-transcript">
         <div class="hero-copy">
-            <p class="eyebrow">Stage 5</p>
-            <h1 class="hero-title-transcript">Transcript Viewer</h1>
-            <p class="subtitle">A readable transcript view for one media item, with transcript text, timeline segments, trigger phrase matches, and screenshot previews.</p>
+            <p class="eyebrow">Этап 6</p>
+            <h1 class="hero-title-transcript">Расшифровка файла</h1>
+            <p class="subtitle">Здесь собраны текст расшифровки, таймлайн по сегментам, триггеры, скриншоты и саммари по запросу.</p>
         </div>
         <div class="hero-meta hero-meta-actions">
             <div class="meta-card">
-                <span class="meta-label">Media item</span>
+                <span class="meta-label">Файл</span>
                 <strong>{{.MediaName}}</strong>
             </div>
             <div class="meta-card meta-card-actions">
-                <a class="button-link button-link-strong" href="/">Back to pipeline</a>
+                <a class="button-link button-link-strong" href="/">Назад к пайплайну</a>
                 <form action="{{.DeleteURL}}" method="post" class="transcript-delete-form">
-                    <button type="submit" class="button-danger">Delete media</button>
+                    <button type="submit" class="button-danger">Удалить файл</button>
                 </form>
             </div>
         </div>
     </section>
 
+    {{if .PageNotice}}
+        {{if eq .PageNoticeTone "error"}}
+        <div class="notice notice-error">{{.PageNotice}}</div>
+        {{else}}
+        <div class="notice notice-success">{{.PageNotice}}</div>
+        {{end}}
+    {{end}}
+
     <section class="transcript-layout">
         <aside class="card transcript-sidebar">
             <div class="section-header">
                 <div>
-                    <h2>Media details</h2>
-                    <p class="hint">The page keeps the metadata close to the transcript so a long result stays understandable.</p>
+                    <h2>Сведения о файле</h2>
+                    <p class="hint">Метаданные показаны рядом с расшифровкой, чтобы длинный материал было проще читать и проверять.</p>
                 </div>
             </div>
             <dl class="detail-grid">
                 <div class="detail-item">
-                    <dt>Name</dt>
+                    <dt>Имя</dt>
                     <dd>{{.MediaName}}</dd>
                 </div>
                 <div class="detail-item">
-                    <dt>Size</dt>
+                    <dt>Размер</dt>
                     <dd>{{.SizeHuman}}</dd>
                 </div>
                 <div class="detail-item">
-                    <dt>Created</dt>
+                    <dt>Создан</dt>
                     <dd>{{.CreatedAtUTC}} UTC</dd>
                 </div>
                 <div class="detail-item">
-                    <dt>Status</dt>
+                    <dt>Статус</dt>
                     <dd><span class="status-chip status-chip-{{.StatusTone}}">{{.StatusLabel}}</span></dd>
                 </div>
             </dl>
@@ -58,8 +66,8 @@
             <div class="settings-panel">
                 <div class="section-header">
                     <div>
-                        <h2>Run settings</h2>
-                        <p class="hint">These are the settings snapshot attached to the transcribe job when it was created.</p>
+                        <h2>Параметры запуска</h2>
+                        <p class="hint">Это снимок настроек, который был сохранён в задаче <code>transcribe</code> в момент её создания.</p>
                     </div>
                 </div>
                 {{if .Settings}}
@@ -72,10 +80,10 @@
                     {{end}}
                 </dl>
                 {{else if .SettingsUnavailable}}
-                <div class="notice notice-error transcript-inline-notice">The transcribe job payload exists, but its saved settings could not be decoded.</div>
+                <div class="notice notice-error transcript-inline-notice">Задача распознавания найдена, но сохранённые настройки не удалось прочитать.</div>
                 {{else}}
                 <div class="empty-state transcript-empty">
-                    <p>No saved transcription settings were found for this media item.</p>
+                    <p>Для этого файла не найден сохранённый снимок настроек распознавания.</p>
                 </div>
                 {{end}}
             </div>
@@ -83,15 +91,55 @@
 
         <section class="transcript-main">
             {{if .HasTranscript}}
+            <div class="card summary-card">
+                <div class="section-header section-header-wide">
+                    <div>
+                        <h2>Саммари</h2>
+                        <p class="hint">Краткое саммари создаётся только по кнопке. Автоматически после расшифровки оно не запускается.</p>
+                    </div>
+                    <span class="status-chip status-chip-{{.SummaryStatusTone}}">{{.SummaryStatusLabel}}</span>
+                </div>
+
+                {{if .SummaryNotice}}
+                    {{if eq .SummaryNoticeTone "error"}}
+                    <div class="notice notice-error">{{.SummaryNotice}}</div>
+                    {{else}}
+                    <div class="empty-state transcript-empty">
+                        <p>{{.SummaryNotice}}</p>
+                    </div>
+                    {{end}}
+                {{end}}
+
+                {{if .HasSummary}}
+                <div class="summary-body">
+                    <p class="summary-text">{{.SummaryText}}</p>
+                    {{if .SummaryHighlights}}
+                    <ul class="summary-highlights">
+                        {{range .SummaryHighlights}}
+                        <li>{{.}}</li>
+                        {{end}}
+                    </ul>
+                    {{end}}
+                    <p class="hint">Источник: {{.SummaryProvider}} {{if .SummaryUpdatedAtUTC}}В· обновлено {{.SummaryUpdatedAtUTC}} UTC{{end}}</p>
+                </div>
+                {{end}}
+
+                {{if .ShowSummaryAction}}
+                <form action="{{.SummaryActionURL}}" method="post" class="summary-action-form">
+                    <button type="submit">{{.SummaryActionLabel}}</button>
+                </form>
+                {{end}}
+            </div>
+
             <div class="card transcript-viewer">
                 <div class="section-header section-header-wide transcript-header">
                     <div>
-                        <h2>Transcript</h2>
-                        <p class="hint">Switch between readable prose and precise segment timing without leaving the page.</p>
+                        <h2>Расшифровка</h2>
+                        <p class="hint">Переключайтесь между удобным текстом для чтения и точным таймлайном по сегментам прямо на этой странице.</p>
                     </div>
-                    <div class="transcript-mode-switch" role="tablist" aria-label="Transcript view mode">
-                        <button type="button" class="tab-button is-active" data-transcript-tab="full-text" role="tab" aria-selected="true">Full text</button>
-                        <button type="button" class="tab-button" data-transcript-tab="timeline" role="tab" aria-selected="false">Timeline / segments</button>
+                    <div class="transcript-mode-switch" role="tablist" aria-label="Режим просмотра расшифровки">
+                        <button type="button" class="tab-button is-active" data-transcript-tab="full-text" role="tab" aria-selected="true">Полный текст</button>
+                        <button type="button" class="tab-button" data-transcript-tab="timeline" role="tab" aria-selected="false">Таймлайн / сегменты</button>
                     </div>
                 </div>
 
@@ -109,10 +157,10 @@
                         <article class="timeline-segment">
                             <div class="timeline-segment-rail">
                                 <span class="timeline-time">{{.StartLabel}}</span>
-                                <span class="timeline-arrow">to</span>
+                                <span class="timeline-arrow">до</span>
                                 <span class="timeline-time">{{.EndLabel}}</span>
                                 {{if .HasConfidence}}
-                                <span class="timeline-confidence">Confidence {{.Confidence}}</span>
+                                <span class="timeline-confidence">Уверенность {{.Confidence}}</span>
                                 {{end}}
                             </div>
                             <div class="timeline-segment-body">
@@ -127,8 +175,8 @@
             <div class="card transcript-trigger-card">
                 <div class="section-header section-header-wide">
                     <div>
-                        <h2>Trigger matches</h2>
-                        <p class="hint">Enabled trigger rules run over transcript segments and save explainable phrase hits.</p>
+                        <h2>Совпадения по триггерам</h2>
+                        <p class="hint">Включённые правила прогоняются по сегментам расшифровки и сохраняют понятные объяснимые совпадения.</p>
                     </div>
                     <span class="status-chip status-chip-{{.TriggerStatusTone}}">{{.TriggerStatusLabel}}</span>
                 </div>
@@ -151,13 +199,13 @@
                             <div class="trigger-match-meta">
                                 <span class="pill">{{.Category}}</span>
                                 <strong>{{.MatchedPhrase}}</strong>
-                                <span class="hint">Rule: {{.RuleName}}</span>
+                                <span class="hint">Правило: {{.RuleName}}</span>
                             </div>
                             <span class="timeline-time">{{.Timestamp}}</span>
                         </div>
                         <p class="trigger-match-text">{{.SegmentText}}</p>
                         {{if .ContextText}}
-                        <p class="trigger-match-context">Context: {{.ContextText}}</p>
+                        <p class="trigger-match-context">Контекст: {{.ContextText}}</p>
                         {{end}}
                         <div class="trigger-screenshot-block">
                             {{if .HasScreenshot}}
@@ -185,13 +233,13 @@
             <div class="card">
                 <div class="section-header">
                     <div>
-                        <h2>Transcript not available yet</h2>
-                        <p class="hint">This media item does not have persisted transcript text and segments yet. When the transcription finishes, the viewer will show both reading modes here.</p>
+                        <h2>Расшифровка пока не готова</h2>
+                        <p class="hint">Для этого файла ещё нет сохранённого текста и сегментов. Когда распознавание завершится, здесь появятся оба режима просмотра.</p>
                     </div>
                 </div>
                 <div class="empty-state transcript-empty">
-                    <p>Current status: {{.StatusLabel}}.</p>
-                    <p class="hint">You can return to the main page and keep watching the pipeline progress card.</p>
+                    <p>Текущий статус: {{.StatusLabel}}.</p>
+                    <p class="hint">Можно вернуться на главную страницу и наблюдать за карточкой прогресса пайплайна.</p>
                 </div>
             </div>
             {{end}}
@@ -223,7 +271,7 @@
 
     if (deleteForm) {
         deleteForm.addEventListener("submit", (event) => {
-            const confirmed = window.confirm("Delete this media item? This removes transcript data, jobs, and stored files when present.");
+            const confirmed = window.confirm("Удалить этот файл? Будут удалены расшифровка, задачи и сохранённые файлы.");
             if (!confirmed) {
                 event.preventDefault();
             }

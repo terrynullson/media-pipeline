@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	mediaapp "media-pipeline/internal/app/media"
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/transcript"
@@ -20,6 +21,8 @@ import (
 )
 
 type TranscriptPageViewData struct {
+	PageNotice          string
+	PageNoticeTone      string
 	MediaID             int64
 	MediaName           string
 	SizeHuman           string
@@ -37,6 +40,18 @@ type TranscriptPageViewData struct {
 	TriggerStatusTone   string
 	TriggerNotice       string
 	TriggerNoticeTone   string
+	HasSummary          bool
+	SummaryText         string
+	SummaryHighlights   []string
+	SummaryProvider     string
+	SummaryUpdatedAtUTC string
+	SummaryStatusLabel  string
+	SummaryStatusTone   string
+	SummaryNotice       string
+	SummaryNoticeTone   string
+	ShowSummaryAction   bool
+	SummaryActionLabel  string
+	SummaryActionURL    string
 }
 
 type TranscriptSettingItem struct {
@@ -70,7 +85,7 @@ type TriggerEventView struct {
 func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 	mediaID, err := mediaIDFromRequest(r)
 	if err != nil {
-		http.Error(w, "invalid media id", http.StatusBadRequest)
+		http.Error(w, "некорректный media id", http.StatusBadRequest)
 		return
 	}
 
@@ -86,12 +101,14 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 			slog.Int64("media_id", mediaID),
 			slog.Any("error", err),
 		)
-		http.Error(w, "failed to load transcript view", http.StatusInternalServerError)
+		http.Error(w, "не удалось загрузить страницу расшифровки", http.StatusInternalServerError)
 		return
 	}
 
 	statusLabel, statusTone, _, _, _ := describeMediaStatus(result.Media.Status)
 	data := TranscriptPageViewData{
+		PageNotice:          transcriptFlashMessage(r.URL.Query().Get("summary_status")),
+		PageNoticeTone:      transcriptFlashTone(r.URL.Query().Get("summary_status")),
 		MediaID:             result.Media.ID,
 		MediaName:           result.Media.OriginalName,
 		SizeHuman:           HumanSize(result.Media.SizeBytes),
@@ -107,20 +124,65 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		data.FullTextParagraphs = buildTranscriptParagraphs(result.Transcript.Segments, result.Transcript.FullText)
 		data.Segments = buildTranscriptSegments(result.Transcript.Segments)
 	}
+	if result.HasSummary {
+		data.HasSummary = true
+		data.SummaryText = strings.TrimSpace(result.Summary.SummaryText)
+		data.SummaryHighlights = append([]string(nil), result.Summary.Highlights...)
+		data.SummaryProvider = fallbackValue(result.Summary.Provider, "не указан")
+		data.SummaryUpdatedAtUTC = FormatDateTimeUTC(result.Summary.UpdatedAtUTC)
+	}
 	data.TriggerMatches = buildTriggerEventViews(result.TriggerEvents, result.TriggerScreenshots, result.Media, result.ScreenshotJob)
 	data.TriggerStatusLabel, data.TriggerStatusTone, data.TriggerNotice, data.TriggerNoticeTone = describeTriggerAnalysis(result.AnalyzeJob, len(data.TriggerMatches))
+	data.SummaryStatusLabel, data.SummaryStatusTone, data.SummaryNotice, data.SummaryNoticeTone = describeSummaryState(result.SummaryJob, result.HasSummary)
+	data.ShowSummaryAction, data.SummaryActionLabel = summaryActionState(result.SummaryJob, result.HasTranscript, result.HasSummary)
+	data.SummaryActionURL = fmt.Sprintf("/media/%d/summary", result.Media.ID)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if execErr := h.tmpl.ExecuteTemplate(w, "transcript.html", data); execErr != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("render transcript template failed", slog.Any("error", execErr))
-		http.Error(w, "failed to render transcript page", http.StatusInternalServerError)
+		http.Error(w, "не удалось отрисовать страницу расшифровки", http.StatusInternalServerError)
 	}
+}
+
+func (h *UploadHandler) RequestSummary(w http.ResponseWriter, r *http.Request) {
+	mediaID, err := mediaIDFromRequest(r)
+	if err != nil {
+		http.Error(w, "некорректный media id", http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.summaryRequestUC.Request(r.Context(), mediaID)
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			http.NotFound(w, r)
+			return
+		case errors.Is(err, mediaapp.ErrSummaryTranscriptNotReady):
+			http.Redirect(w, r, fmt.Sprintf("/media/%d/transcript?summary_status=not_ready", mediaID), http.StatusSeeOther)
+			return
+		default:
+			observability.LoggerFromContext(r.Context(), h.logger).Error(
+				"request summary failed",
+				slog.Int64("media_id", mediaID),
+				slog.Any("error", err),
+			)
+			http.Error(w, "не удалось поставить саммари в очередь", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	status := "requested"
+	if result.AlreadyInFlight {
+		status = "in_progress"
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/media/%d/transcript?summary_status=%s", mediaID, status), http.StatusSeeOther)
 }
 
 func (h *UploadHandler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 	mediaID, err := mediaIDFromRequest(r)
 	if err != nil {
-		http.Error(w, "invalid media id", http.StatusBadRequest)
+		http.Error(w, "некорректный media id", http.StatusBadRequest)
 		return
 	}
 
@@ -130,7 +192,7 @@ func (h *UploadHandler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 			if wantsJSON(r) {
 				h.writeJSON(w, http.StatusNotFound, map[string]any{
 					"status":  "error",
-					"message": "Media item was not found.",
+					"message": "Файл не найден.",
 				})
 				return
 			}
@@ -146,17 +208,17 @@ func (h *UploadHandler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 		if wantsJSON(r) {
 			h.writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"status":  "error",
-				"message": "Could not delete the media item.",
+				"message": "Не удалось удалить файл.",
 			})
 			return
 		}
-		http.Error(w, "failed to delete media", http.StatusInternalServerError)
+		http.Error(w, "не удалось удалить файл", http.StatusInternalServerError)
 		return
 	}
 
-	message := "Media item was deleted."
+	message := "Файл удалён."
 	if len(result.CleanupWarnings) > 0 {
-		message = "Media item was deleted. Some files could not be removed and were logged for follow-up."
+		message = "Файл удалён, но часть файлов не получилось очистить автоматически."
 	}
 	if wantsJSON(r) {
 		h.writeJSON(w, http.StatusOK, map[string]any{
@@ -191,12 +253,12 @@ func buildTranscriptSettings(settings *transcription.Settings) []TranscriptSetti
 	}
 
 	return []TranscriptSettingItem{
-		{Label: "Backend", Value: string(settings.Backend)},
-		{Label: "Model", Value: settings.ModelName},
-		{Label: "Device", Value: settings.Device},
-		{Label: "Compute type", Value: settings.ComputeType},
-		{Label: "Language", Value: fallbackValue(settings.Language, "auto")},
-		{Label: "Beam size", Value: strconv.Itoa(settings.BeamSize)},
+		{Label: "Бэкенд", Value: string(settings.Backend)},
+		{Label: "Модель", Value: settings.ModelName},
+		{Label: "Устройство", Value: settings.Device},
+		{Label: "Тип вычислений", Value: settings.ComputeType},
+		{Label: "Язык", Value: fallbackValue(settings.Language, "авто")},
+		{Label: "Ширина луча", Value: strconv.Itoa(settings.BeamSize)},
 		{Label: "VAD", Value: boolLabel(settings.VADEnabled)},
 	}
 }
@@ -240,7 +302,7 @@ func buildTriggerEventViews(
 			Timestamp:     FormatTimestamp(item.StartSec),
 			SegmentText:   segmentText,
 			ContextText:   contextText,
-			ScreenshotAlt: fmt.Sprintf("Screenshot for %s at %s", item.MatchedText, FormatTimestamp(item.StartSec)),
+			ScreenshotAlt: fmt.Sprintf("Скриншот для %s на %s", item.MatchedText, FormatTimestamp(item.StartSec)),
 			Placeholder:   describeScreenshotPlaceholder(mediaItem, screenshotJob),
 		}
 		if screenshot, ok := screenshots[item.ID]; ok {
@@ -259,55 +321,121 @@ func buildTriggerEventViews(
 
 func describeScreenshotPlaceholder(mediaItem media.Media, currentJob *job.Job) string {
 	if mediaItem.IsAudioOnly() {
-		return "Screenshot not available for audio-only media."
+		return "Для аудио скриншоты не создаются."
 	}
 	if currentJob == nil {
-		return "Screenshot extraction has not started yet."
+		return "Скриншоты ещё не запускались."
 	}
 
 	switch currentJob.Status {
 	case job.StatusPending:
-		return "Screenshot preview is queued."
+		return "Скриншот в очереди."
 	case job.StatusRunning:
-		return "Screenshot preview is being generated."
+		return "Скриншот сейчас создаётся."
 	case job.StatusFailed:
 		if strings.TrimSpace(currentJob.ErrorMessage) != "" {
 			return currentJob.ErrorMessage
 		}
-		return "Screenshot extraction failed."
+		return "Не удалось создать скриншот."
 	case job.StatusDone:
-		return "Screenshot preview was not available for this trigger."
+		return "Для этого триггера скриншот не найден."
 	default:
-		return "Screenshot preview is unavailable."
+		return "Скриншот недоступен."
 	}
 }
 
 func describeTriggerAnalysis(currentJob *job.Job, triggerCount int) (label string, tone string, notice string, noticeTone string) {
 	if currentJob == nil {
 		if triggerCount > 0 {
-			return "Ready", "success", "", ""
+			return "Готово", "success", "", ""
 		}
-		return "Not started", "neutral", "Trigger analysis has not started yet.", "neutral"
+		return "Не запускалось", "neutral", "Анализ триггеров ещё не запускался.", "neutral"
 	}
 
 	switch currentJob.Status {
 	case job.StatusPending:
-		return "Queued", "ready", "Trigger analysis is queued and will run in the worker.", "neutral"
+		return "В очереди", "ready", "Анализ триггеров поставлен в очередь и будет выполнен worker-процессом.", "neutral"
 	case job.StatusRunning:
-		return "Running", "running", "Trigger analysis is running now.", "neutral"
+		return "В работе", "running", "Анализ триггеров выполняется прямо сейчас.", "neutral"
 	case job.StatusFailed:
-		message := "Trigger analysis failed."
+		message := "Анализ триггеров завершился ошибкой."
 		if strings.TrimSpace(currentJob.ErrorMessage) != "" {
 			message = currentJob.ErrorMessage
 		}
-		return "Failed", "error", message, "error"
+		return "Ошибка", "error", message, "error"
 	case job.StatusDone:
 		if triggerCount == 0 {
-			return "Done", "success", "No trigger matches were found for this transcript.", "neutral"
+			return "Готово", "success", "Для этой расшифровки триггеры не найдены.", "neutral"
 		}
-		return "Done", "success", "", ""
+		return "Готово", "success", "", ""
 	default:
 		return string(currentJob.Status), "neutral", "", ""
+	}
+}
+
+func describeSummaryState(currentJob *job.Job, hasSummary bool) (label string, tone string, notice string, noticeTone string) {
+	if currentJob == nil {
+		if hasSummary {
+			return "Готово", "success", "", ""
+		}
+		return "Не запускалось", "neutral", "Саммари создаётся только по вашему запросу.", "neutral"
+	}
+
+	switch currentJob.Status {
+	case job.StatusPending:
+		return "В очереди", "ready", "Саммари поставлено в очередь.", "neutral"
+	case job.StatusRunning:
+		return "В работе", "running", "Worker сейчас собирает саммари.", "neutral"
+	case job.StatusFailed:
+		message := "Не удалось создать саммари."
+		if strings.TrimSpace(currentJob.ErrorMessage) != "" {
+			message = currentJob.ErrorMessage
+		}
+		return "Ошибка", "error", message, "error"
+	case job.StatusDone:
+		if hasSummary {
+			return "Готово", "success", "Саммари сохранено и доступно ниже.", "neutral"
+		}
+		return "Готово", "success", "Задача завершилась, но саммари не найдено.", "neutral"
+	default:
+		return string(currentJob.Status), "neutral", "", ""
+	}
+}
+
+func summaryActionState(currentJob *job.Job, hasTranscript bool, hasSummary bool) (bool, string) {
+	if !hasTranscript {
+		return false, ""
+	}
+	if currentJob != nil && (currentJob.Status == job.StatusPending || currentJob.Status == job.StatusRunning) {
+		return false, ""
+	}
+	if hasSummary {
+		return true, "Сделать заново"
+	}
+	return true, "Сделать саммари"
+}
+
+func transcriptFlashMessage(status string) string {
+	switch strings.TrimSpace(status) {
+	case "requested":
+		return "Задача на саммари поставлена в очередь."
+	case "in_progress":
+		return "Саммари уже создаётся. Дождитесь завершения."
+	case "not_ready":
+		return "Саммари можно запустить только после готовой расшифровки."
+	default:
+		return ""
+	}
+}
+
+func transcriptFlashTone(status string) string {
+	switch strings.TrimSpace(status) {
+	case "not_ready":
+		return "error"
+	case "requested", "in_progress":
+		return "success"
+	default:
+		return ""
 	}
 }
 
@@ -410,7 +538,7 @@ func fallbackValue(value string, fallback string) string {
 
 func boolLabel(value bool) string {
 	if value {
-		return "enabled"
+		return "включено"
 	}
-	return "disabled"
+	return "выключено"
 }

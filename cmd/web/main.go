@@ -48,13 +48,15 @@ func main() {
 	triggerRuleRepo := repositories.NewTriggerRuleRepository(sqlDB)
 	triggerEventRepo := repositories.NewTriggerEventRepository(sqlDB)
 	triggerScreenshotRepo := repositories.NewTriggerScreenshotRepository(sqlDB)
+	summaryRepo := repositories.NewSummaryRepository(sqlDB)
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
 	fileStorage := storage.NewLocalStorage(cfg.UploadDir)
 	audioStorage := storage.NewLocalStorage(cfg.AudioDir)
 	screenshotStorage := storage.NewLocalStorage(cfg.ScreenshotsDir)
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
 	triggerRuleService := triggerapp.NewService(triggerRuleRepo)
-	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, triggerEventRepo, triggerScreenshotRepo, jobRepo)
+	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, triggerEventRepo, triggerScreenshotRepo, summaryRepo, jobRepo)
+	requestSummaryUC := mediaapp.NewRequestSummaryUseCase(mediaRepo, transcriptRepo, jobRepo)
 	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, fileStorage, audioStorage, screenshotStorage, logger)
 
 	uploadUC := command.NewUploadMediaUseCase(mediaRepo, jobRepo, fileStorage, cfg.MaxUploadSizeBytes(), logger)
@@ -68,6 +70,7 @@ func main() {
 		profileService,
 		triggerRuleService,
 		transcriptViewUC,
+		requestSummaryUC,
 		deleteMediaUC,
 		templatesDir,
 		cfg.MaxUploadSizeBytes(),

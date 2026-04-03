@@ -6,12 +6,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/ports"
+	domainsummary "media-pipeline/internal/domain/summary"
 	"media-pipeline/internal/domain/transcript"
 	"media-pipeline/internal/domain/transcription"
 	domaintrigger "media-pipeline/internal/domain/trigger"
@@ -94,9 +96,11 @@ func TestProcessor_ProcessNextExtractAudioEnqueuesTranscribe(t *testing.T) {
 		&stubTriggerRuleRepository{},
 		&stubTriggerEventRepository{},
 		&stubTriggerScreenshotRepository{},
+		&stubSummaryRepository{},
 		audioExtractor,
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
+		&stubSummarizer{},
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("ru")},
 		uploadDir,
 		audioDir,
@@ -198,9 +202,11 @@ func TestProcessor_ProcessNextTranscribePersistsTranscript(t *testing.T) {
 		&stubTriggerRuleRepository{},
 		&stubTriggerEventRepository{},
 		&stubTriggerScreenshotRepository{},
+		&stubSummaryRepository{},
 		&stubAudioExtractor{},
 		&stubScreenshotExtractor{},
 		transcriber,
+		&stubSummarizer{},
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
 		t.TempDir(),
 		audioDir,
@@ -293,9 +299,11 @@ func TestProcessor_ProcessNextExtractAudioDoesNotDuplicateTranscribeJob(t *testi
 		&stubTriggerRuleRepository{},
 		&stubTriggerEventRepository{},
 		&stubTriggerScreenshotRepository{},
+		&stubSummaryRepository{},
 		audioExtractor,
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
+		&stubSummarizer{},
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("ru")},
 		uploadDir,
 		audioDir,
@@ -356,9 +364,11 @@ func TestProcessor_ProcessNextAnalyzeTriggersPersistsEvents(t *testing.T) {
 		triggerRuleRepo,
 		triggerEventRepo,
 		&stubTriggerScreenshotRepository{},
+		&stubSummaryRepository{},
 		&stubAudioExtractor{},
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
+		&stubSummarizer{},
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
 		t.TempDir(),
 		t.TempDir(),
@@ -451,9 +461,11 @@ func TestProcessor_ProcessNextExtractScreenshotsPersistsRows(t *testing.T) {
 		&stubTriggerRuleRepository{},
 		triggerEventRepo,
 		triggerScreenshotRepo,
+		&stubSummaryRepository{},
 		&stubAudioExtractor{},
 		screenshotExtractor,
 		&stubTranscriber{},
+		&stubSummarizer{},
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
 		uploadDir,
 		t.TempDir(),
@@ -510,9 +522,11 @@ func TestProcessor_ProcessNextExtractScreenshotsSkipsAudioOnlyMedia(t *testing.T
 		&stubTriggerRuleRepository{},
 		&stubTriggerEventRepository{},
 		triggerScreenshotRepo,
+		&stubSummaryRepository{},
 		&stubAudioExtractor{},
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
+		&stubSummarizer{},
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
 		t.TempDir(),
 		t.TempDir(),
@@ -538,6 +552,91 @@ func TestProcessor_ProcessNextExtractScreenshotsSkipsAudioOnlyMedia(t *testing.T
 	}
 }
 
+func TestProcessor_ProcessNextGenerateSummaryPersistsSummary(t *testing.T) {
+	t.Parallel()
+
+	jobRepo := &stubJobRepository{
+		claimByType: map[job.Type]claimResult{
+			job.TypeGenerateSummary: {
+				job: job.Job{ID: 36, MediaID: 72, Type: job.TypeGenerateSummary, Status: job.StatusRunning},
+				ok:  true,
+			},
+		},
+	}
+	transcriptRepo := &stubTranscriptRepository{
+		item: transcript.Transcript{
+			ID:       9,
+			MediaID:  72,
+			FullText: "Клиент рассказал о проблеме. Затем попросил возврат средств.",
+			Segments: []transcript.Segment{
+				{StartSec: 0, EndSec: 2, Text: "Клиент рассказал о проблеме."},
+				{StartSec: 2, EndSec: 4, Text: "Затем попросил возврат средств."},
+			},
+		},
+		ok: true,
+	}
+	triggerEventRepo := &stubTriggerEventRepository{
+		items: []domaintrigger.Event{
+			{ID: 11, MediaID: 72, MatchedText: "refund", Category: "billing", StartSec: 2},
+		},
+	}
+	triggerScreenshotRepo := &stubTriggerScreenshotRepository{
+		items: []domaintrigger.Screenshot{
+			{ID: 14, MediaID: 72, TriggerEventID: 11, ImagePath: "2026-04-03/s1.jpg"},
+		},
+	}
+	summaryRepo := &stubSummaryRepository{}
+	summarizer := &stubSummarizer{
+		output: ports.SummaryOutput{
+			SummaryText: "Короткое саммари разговора.",
+			Highlights:  []string{"Клиент описал проблему.", "Попросил возврат средств."},
+			Provider:    "simple-summary-v1",
+		},
+	}
+
+	processor := NewProcessor(
+		jobRepo,
+		&stubMediaRepository{},
+		transcriptRepo,
+		&stubTriggerRuleRepository{},
+		triggerEventRepo,
+		triggerScreenshotRepo,
+		summaryRepo,
+		&stubAudioExtractor{},
+		&stubScreenshotExtractor{},
+		&stubTranscriber{},
+		summarizer,
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
+		t.TempDir(),
+		t.TempDir(),
+		t.TempDir(),
+		10*time.Second,
+		10*time.Second,
+		10*time.Second,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	processed, err := processor.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessNext() error = %v", err)
+	}
+	if !processed {
+		t.Fatal("ProcessNext() processed = false, want true")
+	}
+	if summarizer.lastInput.MediaID != 72 {
+		t.Fatalf("summarizer media id = %d, want 72", summarizer.lastInput.MediaID)
+	}
+	if len(summaryRepo.saved) != 1 {
+		t.Fatalf("saved summaries = %d, want 1", len(summaryRepo.saved))
+	}
+	if summaryRepo.saved[0].SummaryText != "Короткое саммари разговора." {
+		t.Fatalf("SummaryText = %q, want persisted summary", summaryRepo.saved[0].SummaryText)
+	}
+	if len(jobRepo.markDoneIDs) != 1 || jobRepo.markDoneIDs[0] != 36 {
+		t.Fatalf("mark done ids = %#v, want [36]", jobRepo.markDoneIDs)
+	}
+}
+
 func newTestProcessor(
 	jobRepo *stubJobRepository,
 	mediaRepo *stubMediaRepository,
@@ -552,9 +651,11 @@ func newTestProcessor(
 		&stubTriggerRuleRepository{},
 		&stubTriggerEventRepository{},
 		&stubTriggerScreenshotRepository{},
+		&stubSummaryRepository{},
 		audioExtractor,
 		&stubScreenshotExtractor{},
 		transcriber,
+		&stubSummarizer{},
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
 		"./data/uploads",
 		"./data/audio",
@@ -761,6 +862,7 @@ type replaceTriggerScreenshotsCall struct {
 
 type stubTriggerScreenshotRepository struct {
 	replaceCalls []replaceTriggerScreenshotsCall
+	items        []domaintrigger.Screenshot
 	paths        []string
 	err          error
 }
@@ -781,6 +883,26 @@ func (s *stubTriggerScreenshotRepository) ListPathsByMediaID(context.Context, in
 		return nil, s.err
 	}
 	return append([]string(nil), s.paths...), nil
+}
+
+func (s *stubTriggerScreenshotRepository) ListByMediaID(context.Context, int64) ([]domaintrigger.Screenshot, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return append([]domaintrigger.Screenshot(nil), s.items...), nil
+}
+
+type stubSummaryRepository struct {
+	saved []domainsummary.Summary
+	err   error
+}
+
+func (s *stubSummaryRepository) Save(_ context.Context, item domainsummary.Summary) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.saved = append(s.saved, item)
+	return nil
 }
 
 type stubAudioExtractor struct {
@@ -831,6 +953,26 @@ type stubTranscriptionProfileProvider struct {
 
 func (s *stubTranscriptionProfileProvider) GetCurrent(context.Context) (transcription.Profile, error) {
 	return s.profile, s.err
+}
+
+type stubSummarizer struct {
+	output    ports.SummaryOutput
+	err       error
+	lastInput ports.SummaryInput
+}
+
+func (s *stubSummarizer) Generate(_ context.Context, in ports.SummaryInput) (ports.SummaryOutput, error) {
+	s.lastInput = in
+	if s.err != nil {
+		return ports.SummaryOutput{}, s.err
+	}
+	if strings.TrimSpace(s.output.Provider) == "" {
+		s.output.Provider = "simple-summary-v1"
+	}
+	if strings.TrimSpace(s.output.SummaryText) == "" {
+		s.output.SummaryText = "Короткое саммари."
+	}
+	return s.output, nil
 }
 
 func mustEncodeTranscribePayload(t *testing.T, payload job.TranscribePayload) string {

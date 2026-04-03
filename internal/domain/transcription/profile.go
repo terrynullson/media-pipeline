@@ -112,22 +112,22 @@ func ValidateSettings(in Settings) error {
 	normalized := NormalizeSettings(in)
 
 	if normalized.Backend != BackendFasterWhisper {
-		return fmt.Errorf("unsupported backend %q", in.Backend)
+		return fmt.Errorf("неподдерживаемый backend %q", in.Backend)
 	}
 	if !containsString(SupportedModels(), normalized.ModelName) {
-		return fmt.Errorf("unsupported model_name %q", in.ModelName)
+		return fmt.Errorf("неподдерживаемая model_name %q", in.ModelName)
 	}
 	if !containsString(SupportedDevices(), normalized.Device) {
-		return fmt.Errorf("unsupported device %q", in.Device)
+		return fmt.Errorf("неподдерживаемое device %q", in.Device)
 	}
 	if !containsString(SupportedComputeTypes(normalized.Device), normalized.ComputeType) {
-		return fmt.Errorf("unsupported compute_type %q for device %q", in.ComputeType, in.Device)
+		return fmt.Errorf("неподдерживаемый compute_type %q для device %q", in.ComputeType, in.Device)
 	}
 	if normalized.BeamSize < 1 || normalized.BeamSize > 10 {
-		return fmt.Errorf("beam_size must be between 1 and 10")
+		return fmt.Errorf("beam_size должен быть в диапазоне от 1 до 10")
 	}
 	if normalized.Language != "" && !languagePattern.MatchString(normalized.Language) {
-		return fmt.Errorf("language must be empty or look like ru, en, en-US")
+		return fmt.Errorf("language должен быть пустым или выглядеть как ru, en, en-US")
 	}
 
 	return nil

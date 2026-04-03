@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -10,29 +10,65 @@
 <main class="page">
     <section class="hero">
         <div class="hero-copy">
-            <p class="eyebrow">Stage 4</p>
+            <p class="eyebrow">Этап 6</p>
             <h1>Media Pipeline</h1>
-            <p class="subtitle">Upload once, then watch the real pipeline state move from upload to audio extraction and transcription. Trigger rules and trigger event review stay server-rendered and minimal.</p>
+            <p class="subtitle">Загрузите медиафайл, дождитесь обработки и просматривайте расшифровку, таймлайн, триггеры и саммари в одном спокойном интерфейсе. Саммари создаётся только по вашему явному запросу.</p>
         </div>
         <div class="hero-meta">
             <div class="meta-card">
-                <span class="meta-label">Upload limit</span>
+                <span class="meta-label">Лимит загрузки</span>
                 <strong>{{.MaxUploadHuman}}</strong>
             </div>
             <div class="meta-card">
-                <span class="meta-label">Accepted formats</span>
+                <span class="meta-label">Поддерживаемые форматы</span>
                 <strong>.mp4 .mov .mkv .avi .webm .mp3 .wav .m4a .aac .flac</strong>
             </div>
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="section-header">
+            <div>
+                <h2>Пошаговый сценарий</h2>
+                <p class="hint">Главная страница подсказывает, что делать дальше, и показывает реальные шаги пайплайна без искусственных процентов после загрузки.</p>
+            </div>
+        </div>
+        <div class="steps-grid">
+            <article class="step-card">
+                <span class="step-index">Шаг 1</span>
+                <strong>Загрузите видео или аудио</strong>
+                <p>Файл будет сохранён, а тяжёлая обработка уйдёт в worker.</p>
+            </article>
+            <article class="step-card">
+                <span class="step-index">Шаг 2</span>
+                <strong>Настройте распознавание</strong>
+                <p>Параметры сохраняются в SQLite и применяются к новым задачам.</p>
+            </article>
+            <article class="step-card">
+                <span class="step-index">Шаг 3</span>
+                <strong>Дождитесь обработки файла</strong>
+                <p>Сначала извлекается аудио, затем запускается распознавание.</p>
+            </article>
+            <article class="step-card">
+                <span class="step-index">Шаг 4</span>
+                <strong>Просмотрите текст, таймлайн и триггеры</strong>
+                <p>На странице файла доступны расшифровка, сегменты и найденные события.</p>
+            </article>
+            <article class="step-card">
+                <span class="step-index">Шаг 5</span>
+                <strong>Сделайте саммари при необходимости</strong>
+                <p>Саммари создаётся только по кнопке и не запускается автоматически.</p>
+            </article>
         </div>
     </section>
 
     <section class="card card-highlight">
         <div class="section-header section-header-wide">
             <div>
-                <h2>Upload media</h2>
-                <p class="hint">The web app stores the file and creates a pending <code>extract_audio</code> job. Heavy processing still runs only in the worker.</p>
+                <h2>Загрузка медиа</h2>
+                <p class="hint">Веб-приложение сохраняет файл и создаёт задачу <code>extract_audio</code>. Вся тяжёлая обработка по-прежнему выполняется только в worker.</p>
             </div>
-            <div class="inline-badge">Limit: {{.MaxUploadMB}} MB</div>
+            <div class="inline-badge">Лимит: {{.MaxUploadMB}} МБ</div>
         </div>
 
         <div id="upload-notices">
@@ -63,26 +99,26 @@
                 aria-describedby="media-file-help media-file-status upload-progress-text"
             >
                 <div class="upload-dropzone-copy">
-                    <span class="upload-kicker">Dropzone</span>
-                    <strong>Drop a media file here or click to choose</strong>
-                    <p id="media-file-help">Drag and drop is supported. Keyboard users can focus this area and press Enter or Space to open the picker.</p>
+                    <span class="upload-kicker">Зона загрузки</span>
+                    <strong>Перетащите сюда файл или нажмите для выбора</strong>
+                    <p id="media-file-help">Поддерживается drag-and-drop. С клавиатуры можно нажать Enter или пробел.</p>
                 </div>
                 <div class="upload-dropzone-action">
-                    <span class="file-picker-button" id="media-file-button">Choose file</span>
-                    <span class="file-picker-meta" id="dropzone-meta">Ready for local upload</span>
+                    <span class="file-picker-button" id="media-file-button">Выбрать файл</span>
+                    <span class="file-picker-meta" id="dropzone-meta">Готово к локальной загрузке</span>
                 </div>
             </div>
 
             <div class="file-selection" id="media-file-status" aria-live="polite">
-                <span class="file-selection-label">Selected file</span>
-                <strong class="file-picker-name" id="media-file-name">No file selected</strong>
-                <span class="file-selection-hint" id="media-file-size">Maximum file size: {{.MaxUploadHuman}}</span>
+                <span class="file-selection-label">Выбранный файл</span>
+                <strong class="file-picker-name" id="media-file-name">Файл не выбран</strong>
+                <span class="file-selection-hint" id="media-file-size">Максимальный размер: {{.MaxUploadHuman}}</span>
             </div>
 
             <div class="upload-progress" id="upload-progress" hidden>
                 <div class="progress-header">
-                    <span class="progress-label">Upload progress</span>
-                    <strong id="upload-progress-text">Waiting to start</strong>
+                    <span class="progress-label">Ход загрузки</span>
+                    <strong id="upload-progress-text">Ожидание запуска</strong>
                 </div>
                 <div class="progress-track" aria-hidden="true">
                     <span class="progress-fill" id="upload-progress-fill"></span>
@@ -90,8 +126,8 @@
             </div>
 
             <div class="upload-actions">
-                <button type="submit" id="upload-submit">Upload media</button>
-                <p class="hint">Upload progress is shown only while the browser is sending the file. Later stages switch to real pipeline statuses, not fake percentages.</p>
+                <button type="submit" id="upload-submit">Загрузить файл</button>
+                <p class="hint">Процент показывается только пока браузер отправляет файл. Дальше интерфейс переключается на реальные статусы пайплайна.</p>
             </div>
         </form>
     </section>
@@ -99,10 +135,10 @@
     <section class="card">
         <div class="section-header section-header-wide">
             <div>
-                <h2>Pipeline progress</h2>
-                <p class="hint">Statuses come from the backend. Extract audio and transcription use stage labels with indeterminate activity while work is running.</p>
+                <h2>Прогресс пайплайна</h2>
+                <p class="hint">Статусы приходят с бэкенда. Извлечение аудио и распознавание показываются как реальные шаги обработки.</p>
             </div>
-            <div class="inline-badge inline-badge-muted">Polling every few seconds</div>
+            <div class="inline-badge inline-badge-muted">Автообновление каждые несколько секунд</div>
         </div>
         <div class="pipeline-grid" id="pipeline-grid">
             {{if .Items}}
@@ -121,26 +157,26 @@
                     </div>
                     <div class="pipeline-stage-foot">
                         {{if gt .StageValue 0}}
-                        <span>Stage {{.StageValue}} / {{.StageTotal}}</span>
+                        <span>Шаг {{.StageValue}} / {{.StageTotal}}</span>
                         {{else}}
-                        <span>Needs attention</span>
+                        <span>Нужно внимание</span>
                         {{end}}
                         <span>{{.Extension}}</span>
                     </div>
                     <div class="pipeline-item-actions">
                         {{if .CanOpenTranscript}}
-                        <a class="button-link" href="{{.TranscriptURL}}">Open transcript</a>
+                        <a class="button-link" href="{{.TranscriptURL}}">Открыть расшифровку</a>
                         {{end}}
                         <form action="{{.DeleteURL}}" method="post" class="delete-media-form" data-media-id="{{.ID}}" data-media-name="{{.OriginalName}}">
-                            <button type="submit" class="button-danger">Delete</button>
+                            <button type="submit" class="button-danger">Удалить</button>
                         </form>
                     </div>
                 </article>
                 {{end}}
             {{else}}
             <div class="empty-state" id="pipeline-empty">
-                <p>No uploads yet.</p>
-                <p class="hint">After the first upload, this panel will show uploaded, extracting audio, audio ready, transcribing, transcribed, or failed.</p>
+                <p>Пока нет загруженных файлов.</p>
+                <p class="hint">После первой загрузки здесь появятся реальные статусы обработки.</p>
             </div>
             {{end}}
         </div>
@@ -149,8 +185,8 @@
     <section class="card">
         <div class="section-header">
             <div>
-                <h2>Transcription settings</h2>
-                <p class="hint">These settings are saved in SQLite. Every new <code>transcribe</code> job stores its own snapshot, so future edits do not rewrite old jobs.</p>
+                <h2>Настройки распознавания</h2>
+                <p class="hint">Эти настройки хранятся в SQLite. Каждая новая задача <code>transcribe</code> сохраняет свой снимок параметров.</p>
             </div>
         </div>
 
@@ -163,7 +199,7 @@
 
         <form action="/settings/transcription" method="post" class="settings-form">
             <label>
-                <span>Backend</span>
+                <span>Бэкенд</span>
                 <select name="backend">
                     {{range .BackendOptions}}
                     <option value="{{.}}" {{if eq $.SettingsForm.Backend .}}selected{{end}}>{{.}}</option>
@@ -172,7 +208,7 @@
             </label>
 
             <label>
-                <span>Model</span>
+                <span>Модель</span>
                 <select name="model_name">
                     {{range .ModelOptions}}
                     <option value="{{.}}" {{if eq $.SettingsForm.ModelName .}}selected{{end}}>{{.}}</option>
@@ -181,7 +217,7 @@
             </label>
 
             <label>
-                <span>Device</span>
+                <span>Устройство</span>
                 <select name="device" id="device-select">
                     {{range .DeviceOptions}}
                     <option value="{{.}}" {{if eq $.SettingsForm.Device .}}selected{{end}}>{{.}}</option>
@@ -190,7 +226,7 @@
             </label>
 
             <label>
-                <span>Compute type</span>
+                <span>Тип вычислений</span>
                 <select name="compute_type" id="compute-type-select" data-selected="{{.SettingsForm.ComputeType}}">
                     {{range .CurrentComputeTypes}}
                     <option value="{{.}}" {{if eq $.SettingsForm.ComputeType .}}selected{{end}}>{{.}}</option>
@@ -199,8 +235,8 @@
             </label>
 
             <label>
-                <span>Language</span>
-                <input type="text" name="language" value="{{.SettingsForm.Language}}" placeholder="ru or blank for auto">
+                <span>Язык</span>
+                <input type="text" name="language" value="{{.SettingsForm.Language}}" placeholder="ru или пусто для автоопределения">
             </label>
 
             <label>
@@ -210,12 +246,12 @@
 
             <label class="checkbox-field">
                 <input type="checkbox" name="vad_enabled" {{if .SettingsForm.VADEnabled}}checked{{end}}>
-                <span>Enable VAD filter</span>
+                <span>Включить VAD-фильтр</span>
             </label>
 
             <div class="settings-actions">
-                <button type="submit">Save settings</button>
-                <p class="hint">CPU supports <code>int8</code> and <code>float32</code>. CUDA supports <code>float16</code> and <code>int8_float16</code>.</p>
+                <button type="submit">Сохранить настройки</button>
+                <p class="hint">Для CPU доступны <code>int8</code> и <code>float32</code>. Для CUDA доступны <code>float16</code> и <code>int8_float16</code>.</p>
             </div>
         </form>
     </section>
@@ -223,8 +259,8 @@
     <section class="card">
         <div class="section-header">
             <div>
-                <h2>Trigger rules</h2>
-                <p class="hint">Rules are stored in SQLite and used by the worker after transcription completes. Matching is deterministic and case-insensitive.</p>
+                <h2>Правила триггеров</h2>
+                <p class="hint">Правила лежат в SQLite и применяются worker-процессом после готовой расшифровки. Поиск детерминированный и без учёта регистра.</p>
             </div>
         </div>
 
@@ -237,22 +273,22 @@
 
         <form action="/trigger-rules" method="post" class="trigger-rules-form">
             <label>
-                <span>Name</span>
-                <input type="text" name="name" value="{{.TriggerRuleForm.Name}}" placeholder="Billing complaint">
+                <span>Название</span>
+                <input type="text" name="name" value="{{.TriggerRuleForm.Name}}" placeholder="Жалоба по оплате">
             </label>
 
             <label>
-                <span>Category</span>
+                <span>Категория</span>
                 <input type="text" name="category" value="{{.TriggerRuleForm.Category}}" placeholder="billing">
             </label>
 
             <label>
-                <span>Pattern</span>
+                <span>Шаблон</span>
                 <input type="text" name="pattern" value="{{.TriggerRuleForm.Pattern}}" placeholder="refund">
             </label>
 
             <label>
-                <span>Match mode</span>
+                <span>Режим совпадения</span>
                 <select name="match_mode">
                     {{range .MatchModeOptions}}
                     <option value="{{.}}" {{if eq $.TriggerRuleForm.MatchMode .}}selected{{end}}>{{.}}</option>
@@ -261,8 +297,8 @@
             </label>
 
             <div class="settings-actions">
-                <button type="submit">Add rule</button>
-                <p class="hint"><code>contains</code> finds a phrase inside a segment. <code>exact</code> requires the full segment text to match.</p>
+                <button type="submit">Добавить правило</button>
+                <p class="hint"><code>contains</code> ищет фразу внутри сегмента. <code>exact</code> требует полного совпадения текста сегмента.</p>
             </div>
         </form>
 
@@ -284,7 +320,7 @@
                         <button type="submit" class="button-link button-link-compact">{{.ToggleLabel}}</button>
                     </form>
                     <form action="{{.DeleteURL}}" method="post">
-                        <button type="submit" class="button-danger button-danger-compact">Delete</button>
+                        <button type="submit" class="button-danger button-danger-compact">Удалить</button>
                     </form>
                 </div>
             </article>
@@ -292,8 +328,8 @@
         </div>
         {{else}}
         <div class="empty-state">
-            <p>No trigger rules yet.</p>
-            <p class="hint">Create the first rule above. New transcripts will be analyzed by the worker.</p>
+            <p>Правил триггеров пока нет.</p>
+            <p class="hint">Создайте первое правило выше. Новые расшифровки worker будет анализировать автоматически.</p>
         </div>
         {{end}}
     </section>
@@ -301,10 +337,10 @@
     <section class="card">
         <div class="section-header section-header-wide">
             <div>
-                <h2>Recent uploads</h2>
-                <p class="hint">Newest items first. Timestamps are shown in UTC.</p>
+                <h2>Последние загрузки</h2>
+                <p class="hint">Сначала идут самые новые файлы. Время показано в UTC.</p>
             </div>
-            <div class="inline-badge inline-badge-muted" id="recent-count">{{len .Items}} item{{if ne (len .Items) 1}}s{{end}}</div>
+            <div class="inline-badge inline-badge-muted" id="recent-count">{{len .Items}} файл{{if ne (len .Items) 1}}(ов){{end}}</div>
         </div>
 
         <div class="table-wrap" id="recent-table-wrap" {{if eq (len .Items) 0}}hidden{{end}}>
@@ -312,13 +348,13 @@
                 <thead>
                 <tr>
                     <th>ID</th>
-                    <th>Original name</th>
-                    <th>Type</th>
-                    <th>Size</th>
-                    <th>Status</th>
-                    <th>Pipeline stage</th>
-                    <th>Uploaded at (UTC)</th>
-                    <th>Actions</th>
+                    <th>Имя файла</th>
+                    <th>Тип</th>
+                    <th>Размер</th>
+                    <th>Статус</th>
+                    <th>Шаг пайплайна</th>
+                    <th>Загружен (UTC)</th>
+                    <th>Действия</th>
                 </tr>
                 </thead>
                 <tbody id="recent-table-body">
@@ -334,10 +370,10 @@
                     <td>
                         <div class="row-actions">
                             {{if .CanOpenTranscript}}
-                            <a class="button-link button-link-compact" href="{{.TranscriptURL}}">Open transcript</a>
+                            <a class="button-link button-link-compact" href="{{.TranscriptURL}}">Открыть расшифровку</a>
                             {{end}}
                             <form action="{{.DeleteURL}}" method="post" class="delete-media-form" data-media-id="{{.ID}}" data-media-name="{{.OriginalName}}">
-                                <button type="submit" class="button-danger button-danger-compact">Delete</button>
+                                <button type="submit" class="button-danger button-danger-compact">Удалить</button>
                             </form>
                         </div>
                     </td>
@@ -347,8 +383,8 @@
             </table>
         </div>
         <div class="empty-state" id="recent-empty" {{if gt (len .Items) 0}}hidden{{end}}>
-            <p>No uploads yet.</p>
-            <p class="hint">Choose one audio or video file above to create the first media row and a pending worker job.</p>
+            <p>Пока нет загруженных файлов.</p>
+            <p class="hint">Выберите аудио или видео выше, чтобы создать первую запись и поставить задачу в очередь.</p>
         </div>
     </section>
 </main>
@@ -427,13 +463,13 @@
         uploadProgress.hidden = true;
         uploadProgress.classList.remove("upload-progress-indeterminate");
         uploadProgressFill.style.width = "0%";
-        uploadProgressText.textContent = "Waiting to start";
+        uploadProgressText.textContent = "Ожидание запуска";
     }
 
     function renderSelectedFile(file) {
         if (!file) {
-            fileName.textContent = "No file selected";
-            fileSize.textContent = "Maximum file size: {{.MaxUploadHuman}}";
+            fileName.textContent = "Файл не выбран";
+            fileSize.textContent = "Максимальный размер: {{.MaxUploadHuman}}";
             trigger.classList.remove("has-file");
             return;
         }
@@ -473,8 +509,8 @@
         if (!items || items.length === 0) {
             pipelineGrid.innerHTML = `
                 <div class="empty-state" id="pipeline-empty">
-                    <p>No uploads yet.</p>
-                    <p class="hint">After the first upload, this panel will show uploaded, extracting audio, audio ready, transcribing, transcribed, or failed.</p>
+                    <p>Пока нет загруженных файлов.</p>
+                    <p class="hint">После первой загрузки здесь появятся реальные статусы обработки.</p>
                 </div>
             `;
             return;
@@ -494,13 +530,13 @@
                     <span class="stage-meter-fill" style="width: ${deriveStageWidth(item)}%;"></span>
                 </div>
                 <div class="pipeline-stage-foot">
-                    <span>${item.StageValue > 0 ? `Stage ${item.StageValue} / ${item.StageTotal}` : "Needs attention"}</span>
+                    <span>${item.StageValue > 0 ? `Шаг ${item.StageValue} / ${item.StageTotal}` : "Нужно внимание"}</span>
                     <span>${escapeHtml(item.Extension)}</span>
                 </div>
                 <div class="pipeline-item-actions">
-                    ${item.CanOpenTranscript ? `<a class="button-link" href="${escapeHtml(item.TranscriptURL)}">Open transcript</a>` : ""}
+                    ${item.CanOpenTranscript ? `<a class="button-link" href="${escapeHtml(item.TranscriptURL)}">Открыть расшифровку</a>` : ""}
                     <form action="${escapeHtml(item.DeleteURL)}" method="post" class="delete-media-form" data-media-id="${item.ID}" data-media-name="${escapeHtml(item.OriginalName)}">
-                        <button type="submit" class="button-danger">Delete</button>
+                        <button type="submit" class="button-danger">Удалить</button>
                     </form>
                 </div>
             </article>
@@ -508,7 +544,7 @@
     }
 
     function renderRecentTable(items) {
-        recentCount.textContent = `${items.length} item${items.length === 1 ? "" : "s"}`;
+        recentCount.textContent = `${items.length} файл(ов)`;
         if (!items || items.length === 0) {
             recentTableWrap.hidden = true;
             recentEmpty.hidden = false;
@@ -529,9 +565,9 @@
                 <td>${escapeHtml(item.CreatedAtUTC)}</td>
                 <td>
                     <div class="row-actions">
-                        ${item.CanOpenTranscript ? `<a class="button-link button-link-compact" href="${escapeHtml(item.TranscriptURL)}">Open transcript</a>` : ""}
+                        ${item.CanOpenTranscript ? `<a class="button-link button-link-compact" href="${escapeHtml(item.TranscriptURL)}">Открыть расшифровку</a>` : ""}
                         <form action="${escapeHtml(item.DeleteURL)}" method="post" class="delete-media-form" data-media-id="${item.ID}" data-media-name="${escapeHtml(item.OriginalName)}">
-                            <button type="submit" class="button-danger button-danger-compact">Delete</button>
+                            <button type="submit" class="button-danger button-danger-compact">Удалить</button>
                         </form>
                     </div>
                 </td>
@@ -540,8 +576,8 @@
     }
 
     async function submitDeleteForm(form) {
-        const mediaName = form.dataset.mediaName || "this media item";
-        const confirmed = window.confirm(`Delete ${mediaName}? This removes transcript data, jobs, and stored files when present.`);
+        const mediaName = form.dataset.mediaName || "этот файл";
+        const confirmed = window.confirm(`Удалить ${mediaName}? Будут удалены расшифровка, задачи и сохранённые файлы.`);
         if (!confirmed) {
             return;
         }
@@ -566,13 +602,13 @@
             }
 
             if (!response.ok) {
-                throw new Error(payload && payload.message ? payload.message : "Delete failed.");
+                throw new Error(payload && payload.message ? payload.message : "Не удалось удалить файл.");
             }
 
-            renderNotice("success", payload && payload.message ? payload.message : "Media item was deleted.");
+            renderNotice("success", payload && payload.message ? payload.message : "Файл удалён.");
             await refreshStatuses();
         } catch (error) {
-            renderNotice("error", error && error.message ? error.message : "Delete failed.");
+            renderNotice("error", error && error.message ? error.message : "Не удалось удалить файл.");
         } finally {
             if (submitButton) {
                 submitButton.disabled = false;
@@ -640,7 +676,7 @@
         trigger.addEventListener(eventName, (event) => {
             event.preventDefault();
             trigger.classList.add("is-dragover");
-            dropzoneMeta.textContent = "Release to attach file";
+            dropzoneMeta.textContent = "Отпустите файл для прикрепления";
         });
     });
     ["dragleave", "dragend", "drop"].forEach((eventName) => {
@@ -650,7 +686,7 @@
                 applyDroppedFiles(event.dataTransfer.files);
             }
             trigger.classList.remove("is-dragover");
-            dropzoneMeta.textContent = fileInput.files && fileInput.files.length > 0 ? "File ready to upload" : "Ready for local upload";
+            dropzoneMeta.textContent = fileInput.files && fileInput.files.length > 0 ? "Файл готов к загрузке" : "Готово к локальной загрузке";
         });
     });
 
@@ -669,26 +705,26 @@
         const selectedFile = fileInput.files[0];
 
         uploadSubmit.disabled = true;
-        renderNotice("success", "Upload started.");
-        setUploadProgress(0, "Starting upload...");
+        renderNotice("success", "Загрузка началась.");
+        setUploadProgress(0, "Подготавливаем отправку...");
 
         xhr.open("POST", form.action, true);
         xhr.setRequestHeader("Accept", "application/json");
         xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
         xhr.upload.addEventListener("progress", (progressEvent) => {
             if (!progressEvent.lengthComputable) {
-                setUploadProgressIndeterminate("Uploading...");
+                setUploadProgressIndeterminate("Загрузка...");
                 return;
             }
 
             const percent = Math.round((progressEvent.loaded / progressEvent.total) * 100);
-            setUploadProgress(percent, `Uploading ${selectedFile.name} (${percent}%)`);
+            setUploadProgress(percent, `Загружаем ${selectedFile.name} (${percent}%)`);
         });
         xhr.addEventListener("load", () => {
             uploadSubmit.disabled = false;
             if (xhr.status >= 200 && xhr.status < 300) {
-                setUploadProgress(100, "Upload completed");
-                renderNotice("success", "Upload completed. Worker stages will appear below.");
+                setUploadProgress(100, "Загрузка завершена");
+                renderNotice("success", "Файл загружен. Ниже появятся шаги обработки.");
                 form.reset();
                 renderSelectedFile(null);
                 startPollingSoon();
@@ -696,7 +732,7 @@
                 return;
             }
 
-            let message = "Upload failed.";
+            let message = "Не удалось загрузить файл.";
             try {
                 const parsed = JSON.parse(xhr.responseText);
                 if (parsed && parsed.message) {
@@ -709,12 +745,12 @@
         });
         xhr.addEventListener("error", () => {
             uploadSubmit.disabled = false;
-            renderNotice("error", "Upload failed because the server could not be reached.");
+            renderNotice("error", "Не удалось связаться с сервером.");
             clearUploadProgress();
         });
         xhr.addEventListener("abort", () => {
             uploadSubmit.disabled = false;
-            renderNotice("error", "Upload was canceled.");
+            renderNotice("error", "Загрузка была отменена.");
             clearUploadProgress();
         });
         xhr.send(payload);

@@ -3,6 +3,7 @@ data/app.db
 data/audio/
 data/uploads/
 data/logs/
+data/manual-*
 data/*.pid
 data/smoke-*.db
 data/smoke-*.pid

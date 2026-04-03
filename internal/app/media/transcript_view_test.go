@@ -8,6 +8,7 @@ import (
 
 	"media-pipeline/internal/domain/job"
 	domainmedia "media-pipeline/internal/domain/media"
+	domainsummary "media-pipeline/internal/domain/summary"
 	"media-pipeline/internal/domain/transcript"
 	"media-pipeline/internal/domain/transcription"
 	domaintrigger "media-pipeline/internal/domain/trigger"
@@ -52,6 +53,7 @@ func TestTranscriptViewUseCase_LoadIncludesTranscriptAndSettings(t *testing.T) {
 		stubTranscriptReader{item: transcriptItem, ok: true},
 		stubTriggerEventReader{},
 		stubTriggerScreenshotReader{},
+		stubSummaryReader{},
 		stubTranscriptJobReader{item: job.Job{MediaID: 42, Type: job.TypeTranscribe, Payload: payload}, ok: true},
 	)
 
@@ -81,6 +83,7 @@ func TestTranscriptViewUseCase_LoadKeepsWorkingWhenPayloadInvalid(t *testing.T) 
 		stubTranscriptReader{item: transcript.Transcript{MediaID: 11, FullText: "text"}, ok: true},
 		stubTriggerEventReader{},
 		stubTriggerScreenshotReader{},
+		stubSummaryReader{},
 		stubTranscriptJobReader{item: job.Job{MediaID: 11, Type: job.TypeTranscribe, Payload: `{"broken":true}`}, ok: true},
 	)
 
@@ -161,6 +164,19 @@ func (s stubTriggerScreenshotReader) ListByMediaID(context.Context, int64) ([]do
 	return s.items, nil
 }
 
+type stubSummaryReader struct {
+	item domainsummary.Summary
+	ok   bool
+	err  error
+}
+
+func (s stubSummaryReader) GetByMediaID(context.Context, int64) (domainsummary.Summary, bool, error) {
+	if s.err != nil {
+		return domainsummary.Summary{}, false, s.err
+	}
+	return s.item, s.ok, nil
+}
+
 func TestTranscriptViewUseCase_LoadPropagatesMediaError(t *testing.T) {
 	t.Parallel()
 
@@ -169,6 +185,7 @@ func TestTranscriptViewUseCase_LoadPropagatesMediaError(t *testing.T) {
 		stubTranscriptReader{},
 		stubTriggerEventReader{},
 		stubTriggerScreenshotReader{},
+		stubSummaryReader{},
 		stubTranscriptJobReader{},
 	)
 

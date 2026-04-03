@@ -20,6 +20,7 @@ func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, stati
 	r.Post("/upload", uploadHandler.Upload)
 	r.Get("/media/statuses", uploadHandler.MediaStatuses)
 	r.Get("/media/{mediaID}/transcript", uploadHandler.Transcript)
+	r.Post("/media/{mediaID}/summary", uploadHandler.RequestSummary)
 	r.Post("/media/{mediaID}/delete", uploadHandler.DeleteMedia)
 	r.Post("/trigger-rules", uploadHandler.CreateTriggerRule)
 	r.Post("/trigger-rules/{ruleID}/toggle", uploadHandler.ToggleTriggerRule)

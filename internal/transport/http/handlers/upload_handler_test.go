@@ -23,6 +23,7 @@ import (
 	triggerapp "media-pipeline/internal/app/trigger"
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
+	domainsummary "media-pipeline/internal/domain/summary"
 	"media-pipeline/internal/domain/transcript"
 	domaintranscription "media-pipeline/internal/domain/transcription"
 	domaintrigger "media-pipeline/internal/domain/trigger"
@@ -103,7 +104,7 @@ func TestUploadHandler_InvalidUpload(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("upload status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if !strings.Contains(rec.Body.String(), "Uploaded content does not look like audio or video.") {
+	if !strings.Contains(rec.Body.String(), "Файл не похож на аудио или видео.") {
 		t.Fatalf("response body = %q, want content type validation message", rec.Body.String())
 	}
 }
@@ -203,11 +204,11 @@ func TestUploadHandler_MediaStatuses(t *testing.T) {
 	if payload.Items[0].Status != "uploaded" {
 		t.Fatalf("status = %q, want uploaded", payload.Items[0].Status)
 	}
-	if payload.Items[0].StatusLabel != "Uploaded" {
-		t.Fatalf("status label = %q, want Uploaded", payload.Items[0].StatusLabel)
+	if payload.Items[0].StatusLabel != "Загружен" {
+		t.Fatalf("status label = %q, want Загружен", payload.Items[0].StatusLabel)
 	}
-	if payload.Items[0].StageLabel != "Waiting for audio extraction" {
-		t.Fatalf("stage label = %q, want Waiting for audio extraction", payload.Items[0].StageLabel)
+	if payload.Items[0].StageLabel != "Ожидает извлечения аудио" {
+		t.Fatalf("stage label = %q, want Ожидает извлечения аудио", payload.Items[0].StageLabel)
 	}
 }
 
@@ -222,6 +223,7 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 	triggerEventRepo := repositories.NewTriggerEventRepository(app.db)
 	triggerRuleRepo := repositories.NewTriggerRuleRepository(app.db)
 	triggerScreenshotRepo := repositories.NewTriggerScreenshotRepository(app.db)
+	summaryRepo := repositories.NewSummaryRepository(app.db)
 
 	nowUTC := time.Date(2026, 4, 3, 16, 0, 0, 0, time.UTC)
 	mediaID, err := mediaRepo.Create(ctx, media.Media{
@@ -359,6 +361,16 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ReplaceForMedia(trigger screenshots) error = %v", err)
 	}
+	if err := summaryRepo.Save(ctx, domainsummary.Summary{
+		MediaID:      mediaID,
+		SummaryText:  "Короткое саммари по разговору.",
+		Highlights:   []string{"Обсудили заказ.", "Попросили refund."},
+		Provider:     "simple-summary-v1",
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		t.Fatalf("Save(summary) error = %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(mediaID, 10)+"/transcript", nil)
 	rec := httptest.NewRecorder()
@@ -370,17 +382,20 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"Transcript Viewer",
+		"Расшифровка файла",
 		"timeline.mp4",
-		"Full text",
-		"Timeline / segments",
-		"Trigger matches",
+		"Полный текст",
+		"Таймлайн / сегменты",
+		"Совпадения по триггерам",
+		"Саммари",
+		"Сделать заново",
+		"Короткое саммари по разговору.",
 		"refund",
 		"billing",
 		"/media-screenshots/2026-04-03/media_1_trigger_1_2100ms.jpg",
 		"00:00:00.000",
 		"00:00:01.400",
-		"Confidence 0.87",
+		"Уверенность 0.87",
 		"small",
 	} {
 		if !strings.Contains(body, want) {
@@ -517,8 +532,94 @@ func TestUploadHandler_TranscriptPageShowsTriggerEmptyState(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("transcript page status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if !strings.Contains(rec.Body.String(), "No trigger matches were found for this transcript.") {
+	if !strings.Contains(rec.Body.String(), "Для этой расшифровки триггеры не найдены.") {
 		t.Fatalf("transcript page body missing trigger empty state: %s", rec.Body.String())
+	}
+}
+
+func TestUploadHandler_RequestSummaryCreatesJobAndRedirects(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	ctx := context.Background()
+	mediaRepo := repositories.NewMediaRepository(app.db)
+	transcriptRepo := repositories.NewTranscriptRepository(app.db)
+	jobRepo := repositories.NewJobRepository(app.db)
+
+	nowUTC := time.Date(2026, 4, 3, 19, 30, 0, 0, time.UTC)
+	mediaID, err := mediaRepo.Create(ctx, media.Media{
+		OriginalName: "summary-me.wav",
+		StoredName:   "summary-me.wav",
+		Extension:    ".wav",
+		MIMEType:     "audio/wav",
+		SizeBytes:    1024,
+		StoragePath:  "2026-04-03/summary-me.wav",
+		Status:       media.StatusTranscribed,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	})
+	if err != nil {
+		t.Fatalf("Create(media) error = %v", err)
+	}
+	if err := transcriptRepo.Save(ctx, transcript.Transcript{
+		MediaID:      mediaID,
+		Language:     "ru",
+		FullText:     "Короткий текст для саммари.",
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+		Segments: []transcript.Segment{
+			{StartSec: 0, EndSec: 1, Text: "Короткий текст для саммари."},
+		},
+	}); err != nil {
+		t.Fatalf("Save(transcript) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/media/"+strconv.FormatInt(mediaID, 10)+"/summary", nil)
+	rec := httptest.NewRecorder()
+	app.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("summary request status = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+	if location := rec.Header().Get("Location"); location != "/media/"+strconv.FormatInt(mediaID, 10)+"/transcript?summary_status=requested" {
+		t.Fatalf("redirect location = %q, want summary requested redirect", location)
+	}
+
+	latestJob, ok, err := jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeGenerateSummary)
+	if err != nil {
+		t.Fatalf("FindLatestByMediaAndType() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("generate summary job not found")
+	}
+	if latestJob.Status != job.StatusPending {
+		t.Fatalf("summary job status = %q, want %q", latestJob.Status, job.StatusPending)
+	}
+}
+
+func TestUploadHandler_IndexShowsRussianStepFlow(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+
+	app.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Пошаговый сценарий",
+		"Шаг 1",
+		"Загрузите видео или аудио",
+		"Шаг 5",
+		"Сделайте саммари при необходимости",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("index body missing %q", want)
+		}
 	}
 }
 
@@ -533,6 +634,7 @@ func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 	triggerEventRepo := repositories.NewTriggerEventRepository(app.db)
 	triggerRuleRepo := repositories.NewTriggerRuleRepository(app.db)
 	triggerScreenshotRepo := repositories.NewTriggerScreenshotRepository(app.db)
+	summaryRepo := repositories.NewSummaryRepository(app.db)
 
 	nowUTC := time.Date(2026, 4, 3, 17, 0, 0, 0, time.UTC)
 	uploadRelative := filepath.ToSlash(filepath.Join("2026-04-03", "delete-me.wav"))
@@ -641,6 +743,16 @@ func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ReplaceForMedia(trigger screenshots) error = %v", err)
 	}
+	if err := summaryRepo.Save(ctx, domainsummary.Summary{
+		MediaID:      mediaID,
+		SummaryText:  "Короткое саммари для удаления.",
+		Highlights:   []string{"Тезис 1"},
+		Provider:     "simple-summary-v1",
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		t.Fatalf("Save(summary) error = %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/media/"+strconv.FormatInt(mediaID, 10)+"/delete", nil)
 	req.Header.Set("Accept", "application/json")
@@ -666,6 +778,7 @@ func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 	assertDBCount(t, app.db, "SELECT COUNT(*) FROM media WHERE id = ?", mediaID, 0)
 	assertDBCount(t, app.db, "SELECT COUNT(*) FROM jobs WHERE media_id = ?", mediaID, 0)
 	assertDBCount(t, app.db, "SELECT COUNT(*) FROM transcripts WHERE media_id = ?", mediaID, 0)
+	assertDBCount(t, app.db, "SELECT COUNT(*) FROM summaries WHERE media_id = ?", mediaID, 0)
 
 	if _, err := os.Stat(filepath.Join(app.uploadDir, filepath.FromSlash(uploadRelative))); !os.IsNotExist(err) {
 		t.Fatalf("uploaded file still exists, stat err = %v", err)
@@ -768,6 +881,7 @@ func newTestApp(t *testing.T) testWebApp {
 	triggerRuleRepo := repositories.NewTriggerRuleRepository(sqlDB)
 	triggerEventRepo := repositories.NewTriggerEventRepository(sqlDB)
 	triggerScreenshotRepo := repositories.NewTriggerScreenshotRepository(sqlDB)
+	summaryRepo := repositories.NewSummaryRepository(sqlDB)
 	uploadStorage := storage.NewLocalStorage(uploadDir)
 	audioStorage := storage.NewLocalStorage(audioDir)
 	screenshotStorage := storage.NewLocalStorage(screenshotsDir)
@@ -783,13 +897,15 @@ func newTestApp(t *testing.T) testWebApp {
 		10*1024*1024,
 		logger,
 	)
-	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, triggerEventRepo, triggerScreenshotRepo, jobRepo)
+	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, triggerEventRepo, triggerScreenshotRepo, summaryRepo, jobRepo)
+	requestSummaryUC := mediaapp.NewRequestSummaryUseCase(mediaRepo, transcriptRepo, jobRepo)
 	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, uploadStorage, audioStorage, screenshotStorage, logger)
 	handler, err := handlers.NewUploadHandler(
 		uploadUC,
 		profileService,
 		triggerRuleService,
 		transcriptViewUC,
+		requestSummaryUC,
 		deleteMediaUC,
 		templatesDir,
 		10*1024*1024,
