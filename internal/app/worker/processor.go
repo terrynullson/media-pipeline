@@ -598,9 +598,14 @@ func (p *Processor) processGenerateSummaryJob(ctx context.Context, claimedJob jo
 	}
 
 	nowUTC := time.Now().UTC()
-	summaryItem := ports.ToDomainSummary(claimedJob.MediaID, summaryOutput)
-	summaryItem.CreatedAtUTC = nowUTC
-	summaryItem.UpdatedAtUTC = nowUTC
+	summaryItem := domainsummary.Summary{
+		MediaID:      claimedJob.MediaID,
+		SummaryText:  summaryOutput.SummaryText,
+		Highlights:   append([]string(nil), summaryOutput.Highlights...),
+		Provider:     summaryOutput.Provider,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}
 	if err := p.summaries.Save(ctx, summaryItem); err != nil {
 		failureMessage := fmt.Sprintf("persist summary: %v", err)
 		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
