@@ -4,6 +4,7 @@ import ctypes
 import json
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -159,7 +160,27 @@ def write_progress(progress_path, processed_sec, total_sec):
     with open(tmp_path, "w", encoding="utf-8") as progress_file:
         json.dump(payload, progress_file, ensure_ascii=True)
         progress_file.flush()
-    os.replace(tmp_path, progress_path)
+    replace_file_with_retry(tmp_path, progress_path)
+
+
+def replace_file_with_retry(source_path, destination_path):
+    attempts = 10 if os.name == "nt" else 1
+    delay_seconds = 0.1
+
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            os.replace(source_path, destination_path)
+            return
+        except PermissionError as exc:
+            last_error = exc
+            if os.name != "nt" or attempt == attempts - 1:
+                raise
+            time.sleep(delay_seconds)
+            delay_seconds = min(delay_seconds * 1.5, 1.0)
+
+    if last_error is not None:
+        raise last_error
 
 
 def transcribe_with_backend(audio_path, language, args):
@@ -257,7 +278,7 @@ def main():
         )
         output_file.flush()
 
-    os.replace(tmp_output_path, args.output_path)
+    replace_file_with_retry(tmp_output_path, args.output_path)
     print("ok", file=sys.stdout)
     return 0
 
