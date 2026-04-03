@@ -6,28 +6,24 @@
     <title>Media Pipeline</title>
     <link rel="stylesheet" href="/static/css/app.css">
 </head>
-<body>
-<main class="page">
-    <section class="app-header">
-        <div>
-            <p class="eyebrow">Media Pipeline</p>
-            <h1>Быстрая загрузка и прозрачный пайплайн</h1>
-            <p class="subtitle">Загрузите файл, следите за этапами обработки и открывайте расшифровку, когда она будет готова. Настройки и правила убраны в отдельную панель.</p>
-        </div>
-        <button type="button" class="button-link settings-button" id="open-settings-button">
-            <span aria-hidden="true">&#9881;</span>
-            <span>Настройки</span>
-        </button>
-    </section>
+<body class="page-home-body">
+<div class="floating-mark" aria-hidden="true">
+    <img src="/static/img/floating-mark.svg" alt="">
+</div>
 
-    <section class="shell-grid">
-        <article class="card card-highlight upload-shell">
-            <div class="section-header section-header-wide">
-                <div>
-                    <h2>Новая загрузка</h2>
-                    <p class="hint">Поддерживаются видео и аудио. Тяжёлая обработка по-прежнему выполняется только в worker.</p>
-                </div>
-                <span class="inline-badge">Лимит: {{.MaxUploadHuman}}</span>
+<main class="page page-home">
+    <header class="topbar">
+        <div class="topbar-brand">Media Pipeline</div>
+        <button type="button" class="icon-button" id="open-settings-button" aria-label="Открыть настройки">
+            <span aria-hidden="true">&#9881;</span>
+        </button>
+    </header>
+
+    <section class="dashboard-grid">
+        <article class="card upload-panel">
+            <div class="panel-heading">
+                <h1>Загрузка файла</h1>
+                <p class="hint">Видео и аудио, до {{.MaxUploadHuman}}. Форматы: mp4, mov, mkv, avi, webm, mp3, wav, m4a, aac, flac.</p>
             </div>
 
             <div id="upload-notices">
@@ -64,14 +60,14 @@
                     aria-describedby="media-file-help media-file-status upload-progress-text"
                 >
                     <div class="upload-dropzone-copy">
-                        <span class="upload-kicker">Основное действие</span>
-                        <strong>Перетащите файл сюда или выберите его вручную</strong>
-                        <p id="media-file-help">Точный процент показывается только во время отправки файла из браузера. После этого интерфейс переключается на реальные статусы этапов.</p>
+                        <strong>Перетащите файл сюда</strong>
+                        <p id="media-file-help">Или выберите его вручную.</p>
                     </div>
-                    <div class="upload-dropzone-action">
-                        <span class="file-picker-button" id="media-file-button">Выбрать файл</span>
-                        <span class="file-picker-meta" id="dropzone-meta">Готово к загрузке</span>
-                    </div>
+                </div>
+
+                <div class="upload-picker-row">
+                    <button type="button" class="button-secondary" id="media-file-button">Выбрать файл</button>
+                    <span class="file-picker-meta" id="dropzone-meta">Готово к загрузке</span>
                 </div>
 
                 <div class="file-selection" id="media-file-status" aria-live="polite">
@@ -82,7 +78,7 @@
 
                 <div class="upload-progress" id="upload-progress" hidden>
                     <div class="progress-header">
-                        <span class="progress-label">Ход загрузки</span>
+                        <span class="progress-label">Загрузка</span>
                         <strong id="upload-progress-text">Ожидание запуска</strong>
                     </div>
                     <div class="progress-track" aria-hidden="true">
@@ -91,140 +87,135 @@
                 </div>
 
                 <div class="upload-actions">
-                    <button type="submit" id="upload-submit">Загрузить файл</button>
-                    <p class="hint">Подходящие форматы: .mp4, .mov, .mkv, .avi, .webm, .mp3, .wav, .m4a, .aac, .flac.</p>
+                    <button type="submit" id="upload-submit">Загрузить</button>
                 </div>
             </form>
         </article>
 
-        <aside class="card spotlight-card">
-            <div class="section-header">
-                <div>
-                    <h2>Текущий статус</h2>
-                    <p class="hint">Карточка показывает самую активную запись, чтобы не искать её в списке.</p>
-                </div>
+        <aside class="card active-task-panel">
+            <div class="panel-heading panel-heading-compact">
+                <h2>Активная задача</h2>
             </div>
 
-            <div class="spotlight-stats">
-                <div class="stat-row">
-                    <span>Файлов в ленте</span>
-                    <strong id="items-total">{{.ItemsTotal}}</strong>
+            <article class="active-task-card" id="spotlight-entry" data-media-id="{{if .Spotlight}}{{.Spotlight.ID}}{{end}}" {{if not .Spotlight}}hidden{{end}}>
+                <div class="active-task-row">
+                    <span class="active-task-label">Файл</span>
+                    <strong class="active-task-name" id="spotlight-title">{{if .Spotlight}}{{.Spotlight.OriginalName}}{{end}}</strong>
                 </div>
-                <div class="stat-row">
-                    <span>Сейчас в работе</span>
-                    <strong id="items-active">{{.ItemsActive}}</strong>
+                <div class="active-task-row active-task-status-row">
+                    <span class="active-task-label">Статус</span>
+                    <span class="status-chip {{if .Spotlight}}status-chip-{{.Spotlight.StatusTone}}{{else}}status-chip-neutral{{end}}" id="spotlight-status">{{if .Spotlight}}{{.Spotlight.StatusLabel}}{{end}}</span>
                 </div>
-            </div>
-
-            {{if .Spotlight}}
-            <article class="spotlight-entry" id="spotlight-entry" data-media-id="{{.Spotlight.ID}}">
-                <div class="pipeline-item-header">
-                    <div>
-                        <strong class="pipeline-item-title" id="spotlight-title">{{.Spotlight.OriginalName}}</strong>
-                        <p class="pipeline-item-meta" id="spotlight-meta">{{.Spotlight.SizeHuman}} · {{.Spotlight.CreatedAtUTC}} UTC</p>
+                <div class="active-task-row">
+                    <span class="active-task-label">Этап</span>
+                    <strong class="active-task-stage" id="spotlight-stage">{{if .Spotlight}}{{.Spotlight.CurrentStage}}{{end}}</strong>
+                </div>
+                <div class="active-task-progress">
+                    <div class="progress-header progress-header-compact">
+                        <span class="progress-label">Прогресс</span>
+                        <strong id="spotlight-progress-text">{{if .Spotlight}}Этап {{.Spotlight.StageValue}} / {{.Spotlight.StageTotal}}{{else}}Этап 0 / 0{{end}}</strong>
                     </div>
-                    <span class="status-chip status-chip-{{.Spotlight.StatusTone}}" id="spotlight-status">{{.Spotlight.StatusLabel}}</span>
-                </div>
-                <p class="spotlight-stage" id="spotlight-stage">{{.Spotlight.StageLabel}}</p>
-                <p class="spotlight-timing hint" id="spotlight-timing">{{.Spotlight.CurrentTimingText}}</p>
-                <div class="stage-meter{{if .Spotlight.IsActive}} stage-meter-active{{end}}{{if eq .Spotlight.StatusTone "error"}} stage-meter-error{{end}}" aria-hidden="true">
-                    <span class="stage-meter-fill" id="spotlight-progress-fill" style="width: {{.Spotlight.StagePercent}}%;"></span>
+                    <div class="stage-meter{{if .Spotlight}}{{if .Spotlight.IsActive}} stage-meter-active{{end}}{{if eq .Spotlight.StatusTone "error"}} stage-meter-error{{end}}{{end}}" id="spotlight-progress-meter" aria-hidden="true">
+                        <span class="stage-meter-fill" id="spotlight-progress-fill" style="width: {{if .Spotlight}}{{.Spotlight.StagePercent}}{{else}}0{{end}}%;"></span>
+                    </div>
                 </div>
                 <div class="pipeline-item-actions">
-                    {{if .Spotlight.CanOpenTranscript}}
-                    <a class="button-link" id="spotlight-link" href="{{.Spotlight.TranscriptURL}}">Открыть карточку</a>
-                    {{end}}
+                    <a class="button-link" id="spotlight-link" href="{{if .Spotlight}}{{.Spotlight.TranscriptURL}}{{else}}#{{end}}" {{if .Spotlight}}{{if not .Spotlight.CanOpenTranscript}}hidden{{end}}{{else}}hidden{{end}}>Открыть</a>
                 </div>
             </article>
-            {{else}}
-            <div class="empty-state" id="spotlight-empty">
-                <p>Пока нет загруженных файлов.</p>
-                <p class="hint">После первой загрузки здесь появится живая сводка по текущему этапу.</p>
+            <div class="empty-state empty-state-compact" id="spotlight-empty" {{if .Spotlight}}hidden{{end}}>
+                <p>Нет задач для показа.</p>
             </div>
-            {{end}}
         </aside>
     </section>
 
-    <section class="card">
-        <div class="section-header section-header-wide">
+    <section class="card history-panel">
+        <div class="section-header section-header-tight">
             <div>
-                <h2>Очередь и этапы</h2>
-                <p class="hint">Каждый шаг показывает статус, время старта, завершение и длительность. Для распознавания процент помечается как оценка, только если он построен по реальным сегментам.</p>
+                <h2>Последние задачи</h2>
             </div>
-            <span class="inline-badge inline-badge-muted">Автообновление каждые несколько секунд</span>
+            <span class="inline-badge inline-badge-muted">Автообновление</span>
         </div>
-        <div class="pipeline-grid" id="pipeline-grid">
+
+        <div class="history-list" id="pipeline-grid">
             {{if .Items}}
                 {{range .Items}}
-                <article class="pipeline-item pipeline-tone-{{.StatusTone}}" data-media-id="{{.ID}}">
-                    <div class="pipeline-item-header">
-                        <div>
-                            <strong class="pipeline-item-title">{{.OriginalName}}</strong>
-                            <p class="pipeline-item-meta">{{.SizeHuman}} · {{.CreatedAtUTC}} UTC</p>
+                <article class="history-item pipeline-tone-{{.StatusTone}}" data-media-id="{{.ID}}">
+                    <div class="history-summary">
+                        <div class="history-summary-copy">
+                            <div class="history-summary-head">
+                                <strong class="pipeline-item-title">{{.OriginalName}}</strong>
+                                <span class="status-chip status-chip-{{.StatusTone}}">{{.StatusLabel}}</span>
+                            </div>
+                            <p class="history-summary-meta">{{.Extension}} · {{.CreatedAtUTC}} UTC</p>
+                            <p class="history-summary-stage">{{.StageLabel}}</p>
+                            <div class="stage-meter{{if .IsActive}} stage-meter-active{{end}}{{if eq .StatusTone "error"}} stage-meter-error{{end}}" aria-hidden="true">
+                                <span class="stage-meter-fill" style="width: {{.StagePercent}}%;"></span>
+                            </div>
                         </div>
-                        <span class="status-chip status-chip-{{.StatusTone}}">{{.StatusLabel}}</span>
+                        <div class="history-summary-actions">
+                            {{if .CanOpenTranscript}}
+                            <a class="button-link button-link-compact" href="{{.TranscriptURL}}">Открыть</a>
+                            {{end}}
+                            <button type="button" class="button-secondary button-secondary-compact history-toggle" data-media-id="{{.ID}}" aria-expanded="false">Детали</button>
+                        </div>
                     </div>
-                    <p class="pipeline-stage-text">{{.StageLabel}}</p>
-                    {{if .CurrentTimingText}}
-                    <p class="hint pipeline-stage-timing">{{.CurrentTimingText}}</p>
-                    {{end}}
-                    <div class="stage-meter{{if .IsActive}} stage-meter-active{{end}}{{if eq .StatusTone "error"}} stage-meter-error{{end}}" aria-hidden="true">
-                        <span class="stage-meter-fill" style="width: {{.StagePercent}}%;"></span>
-                    </div>
-                    <div class="pipeline-stage-foot">
-                        <span>Этап {{.StageValue}} / {{.StageTotal}}</span>
-                        <span>{{.Extension}}</span>
-                    </div>
-                    <div class="step-detail-list">
-                        {{range .Steps}}
-                        <div class="step-detail step-detail-{{.Tone}}{{if .IsCurrent}} is-current{{end}}{{if .IsFailed}} is-failed{{end}}">
-                            <div class="step-detail-head">
-                                <strong>{{.Label}}</strong>
-                                <span>{{.StatusLabel}}</span>
+                    <div class="history-details" id="history-details-{{.ID}}" hidden>
+                        <div class="history-details-meta">
+                            <span>Этап {{.StageValue}} / {{.StageTotal}}</span>
+                            <span>{{.SizeHuman}}</span>
+                            {{if .CurrentTimingText}}<span>{{.CurrentTimingText}}</span>{{end}}
+                        </div>
+                        <div class="step-detail-list">
+                            {{range .Steps}}
+                            <div class="step-detail step-detail-{{.Tone}}{{if .IsCurrent}} is-current{{end}}{{if .IsFailed}} is-failed{{end}}">
+                                <div class="step-detail-head">
+                                    <strong>{{.Label}}</strong>
+                                    <span>{{.StatusLabel}}</span>
+                                </div>
+                                <p class="step-detail-meta">{{.TimingText}}</p>
+                                {{if .ProgressVisible}}
+                                <div class="step-progress-mini" aria-hidden="true">
+                                    <span class="step-progress-mini-fill" style="width: {{.ProgressPercent}}%;"></span>
+                                </div>
+                                <p class="step-detail-progress">{{.ProgressLabel}}</p>
+                                {{end}}
                             </div>
-                            <p class="step-detail-meta">{{.TimingText}}</p>
-                            {{if .ProgressVisible}}
-                            <div class="step-progress-mini" aria-hidden="true">
-                                <span class="step-progress-mini-fill" style="width: {{.ProgressPercent}}%;"></span>
-                            </div>
-                            <p class="step-detail-progress">{{.ProgressLabel}}</p>
                             {{end}}
                         </div>
+                        {{if .FailedStage}}
+                        <div class="pipeline-problem">
+                            <strong>Ошибка на этапе: {{.FailedStage}}</strong>
+                            <p>Причина: {{.ErrorSummary}}</p>
+                            <p class="hint">{{.ErrorLocation}}</p>
+                        </div>
                         {{end}}
-                    </div>
-                    {{if .FailedStage}}
-                    <div class="pipeline-problem">
-                        <strong>Ошибка на этапе: {{.FailedStage}}</strong>
-                        <p>Причина: {{.ErrorSummary}}</p>
-                        <p class="hint">{{.ErrorLocation}}</p>
-                    </div>
-                    {{end}}
-                    <div class="pipeline-item-actions">
-                        {{if .CanOpenTranscript}}
-                        <a class="button-link" href="{{.TranscriptURL}}">Открыть расшифровку</a>
-                        {{end}}
-                        <form action="{{.DeleteURL}}" method="post" class="delete-media-form" data-media-id="{{.ID}}" data-media-name="{{.OriginalName}}">
-                            <button type="submit" class="button-danger">Удалить</button>
-                        </form>
+                        <div class="pipeline-item-actions">
+                            {{if .CanOpenTranscript}}
+                            <a class="button-link" href="{{.TranscriptURL}}">Открыть</a>
+                            {{end}}
+                            <form action="{{.DeleteURL}}" method="post" class="delete-media-form" data-media-id="{{.ID}}" data-media-name="{{.OriginalName}}">
+                                <button type="submit" class="button-danger">Удалить</button>
+                            </form>
+                        </div>
                     </div>
                 </article>
                 {{end}}
             {{else}}
             <div class="empty-state" id="pipeline-empty">
                 <p>Пока нет загруженных файлов.</p>
-                <p class="hint">После первой загрузки здесь появятся статусы этапов и длительности.</p>
             </div>
             {{end}}
         </div>
     </section>
 </main>
+
 <div class="drawer-overlay{{if .SettingsPanelOpen}} is-open{{end}}" id="settings-overlay" hidden></div>
 <aside class="settings-sheet{{if .SettingsPanelOpen}} is-open{{end}}" id="settings-sheet" aria-hidden="{{if .SettingsPanelOpen}}false{{else}}true{{end}}" {{if not .SettingsPanelOpen}}hidden inert{{end}}>
     <div class="settings-sheet-header">
         <div>
             <p class="eyebrow">Настройки</p>
-            <h2>Параметры распознавания и правила</h2>
-            <p class="hint">Основной сценарий остаётся на главной. Управление вынесено в отдельную панель.</p>
+            <h2>Распознавание и правила</h2>
         </div>
         <button type="button" class="button-link button-link-compact" id="close-settings-button">Закрыть</button>
     </div>
@@ -247,10 +238,10 @@
     {{end}}
 
     <section class="card settings-drawer-panel">
-        <div class="section-header">
+        <div class="section-header section-header-tight">
             <div>
                 <h2>Распознавание</h2>
-                <p class="hint">Настройки сохраняются в SQLite и применяются только к новым задачам.</p>
+                <p class="hint">Применяется только к новым задачам.</p>
             </div>
         </div>
 
@@ -301,16 +292,23 @@
             </label>
             <div class="settings-actions">
                 <button type="submit">Сохранить</button>
-                <p class="hint">Для CPU обычно подходят <code>int8</code> и <code>float32</code>. Для CUDA чаще всего подходят <code>float16</code>, <code>int8_float16</code> и, для старых карт вроде GTX 1080 Ti, <code>int8_float32</code>.</p>
             </div>
         </form>
+
+        <details class="info-disclosure">
+            <summary>Подсказка по compute type</summary>
+            <div class="info-disclosure-body">
+                <p>Для CPU обычно подходят <code>int8</code> и <code>float32</code>.</p>
+                <p>Для CUDA чаще подходят <code>float16</code>, <code>int8_float16</code> и иногда <code>int8_float32</code>.</p>
+            </div>
+        </details>
     </section>
 
     <section class="card settings-drawer-panel">
-        <div class="section-header">
+        <div class="section-header section-header-tight">
             <div>
                 <h2>Правила триггеров</h2>
-                <p class="hint">Минимальное управление правилами без перегруза главной страницы.</p>
+                <p class="hint">Только нужные сигналы для новых расшифровок.</p>
             </div>
         </div>
 
@@ -371,14 +369,14 @@
                 </article>
                 {{end}}
             {{else}}
-            <div class="empty-state">
+            <div class="empty-state empty-state-compact">
                 <p>Правил пока нет.</p>
-                <p class="hint">Добавьте только те сигналы, которые реально нужны в анализе.</p>
             </div>
             {{end}}
         </div>
     </section>
 </aside>
+
 <script>
 (() => {
     const form = document.getElementById("upload-form");
@@ -399,11 +397,11 @@
     const spotlightEntry = document.getElementById("spotlight-entry");
     const spotlightEmpty = document.getElementById("spotlight-empty");
     const spotlightTitle = document.getElementById("spotlight-title");
-    const spotlightMeta = document.getElementById("spotlight-meta");
     const spotlightStatus = document.getElementById("spotlight-status");
     const spotlightStage = document.getElementById("spotlight-stage");
-    const spotlightTiming = document.getElementById("spotlight-timing");
+    const spotlightProgressMeter = document.getElementById("spotlight-progress-meter");
     const spotlightProgressFill = document.getElementById("spotlight-progress-fill");
+    const spotlightProgressText = document.getElementById("spotlight-progress-text");
     const spotlightLink = document.getElementById("spotlight-link");
     const hardwareConcurrencyInput = document.getElementById("hardware-concurrency-input");
     const deviceMemoryInput = document.getElementById("device-memory-input");
@@ -416,6 +414,7 @@
     }
 
     let pollTimer = null;
+    const expandedItems = new Set();
 
     function formatBytes(size) {
         if (!Number.isFinite(size) || size < 1024) {
@@ -539,44 +538,57 @@
         `;
     }
 
+    function renderHistoryItem(item) {
+        const itemID = Number(item && item.ID);
+        const isExpanded = Number.isFinite(itemID) && expandedItems.has(itemID);
+        return `
+            <article class="history-item pipeline-tone-${escapeHtml(item.StatusTone)}" data-media-id="${item.ID}">
+                <div class="history-summary">
+                    <div class="history-summary-copy">
+                        <div class="history-summary-head">
+                            <strong class="pipeline-item-title">${escapeHtml(item.OriginalName)}</strong>
+                            <span class="status-chip status-chip-${escapeHtml(item.StatusTone)}">${escapeHtml(item.StatusLabel)}</span>
+                        </div>
+                        <p class="history-summary-meta">${escapeHtml(item.Extension)} · ${escapeHtml(item.CreatedAtUTC)} UTC</p>
+                        <p class="history-summary-stage">${escapeHtml(item.StageLabel)}</p>
+                        <div class="stage-meter${item.IsActive ? " stage-meter-active" : ""}${item.StatusTone === "error" ? " stage-meter-error" : ""}" aria-hidden="true">
+                            <span class="stage-meter-fill" style="width: ${deriveStageWidth(item)}%;"></span>
+                        </div>
+                    </div>
+                    <div class="history-summary-actions">
+                        ${item.CanOpenTranscript ? `<a class="button-link button-link-compact" href="${escapeHtml(item.TranscriptURL)}">Открыть</a>` : ""}
+                        <button type="button" class="button-secondary button-secondary-compact history-toggle" data-media-id="${item.ID}" aria-expanded="${isExpanded ? "true" : "false"}">${isExpanded ? "Скрыть" : "Детали"}</button>
+                    </div>
+                </div>
+                <div class="history-details" id="history-details-${item.ID}"${isExpanded ? "" : " hidden"}>
+                    <div class="history-details-meta">
+                        <span>Этап ${item.StageValue} / ${item.StageTotal}</span>
+                        <span>${escapeHtml(item.SizeHuman)}</span>
+                        ${item.CurrentTimingText ? `<span>${escapeHtml(item.CurrentTimingText)}</span>` : ""}
+                    </div>
+                    ${renderStepDetails(item)}
+                    ${renderProblemBlock(item)}
+                    <div class="pipeline-item-actions">
+                        ${item.CanOpenTranscript ? `<a class="button-link" href="${escapeHtml(item.TranscriptURL)}">Открыть</a>` : ""}
+                        <form action="${escapeHtml(item.DeleteURL)}" method="post" class="delete-media-form" data-media-id="${item.ID}" data-media-name="${escapeHtml(item.OriginalName)}">
+                            <button type="submit" class="button-danger">Удалить</button>
+                        </form>
+                    </div>
+                </div>
+            </article>
+        `;
+    }
+
     function renderPipelineItems(items) {
         if (!items || items.length === 0) {
             pipelineGrid.innerHTML = `
                 <div class="empty-state" id="pipeline-empty">
                     <p>Пока нет загруженных файлов.</p>
-                    <p class="hint">После первой загрузки здесь появятся статусы этапов и длительности.</p>
                 </div>
             `;
             return;
         }
-        pipelineGrid.innerHTML = items.map((item) => `
-            <article class="pipeline-item pipeline-tone-${escapeHtml(item.StatusTone)}" data-media-id="${item.ID}">
-                <div class="pipeline-item-header">
-                    <div>
-                        <strong class="pipeline-item-title">${escapeHtml(item.OriginalName)}</strong>
-                        <p class="pipeline-item-meta">${escapeHtml(item.SizeHuman)} · ${escapeHtml(item.CreatedAtUTC)} UTC</p>
-                    </div>
-                    <span class="status-chip status-chip-${escapeHtml(item.StatusTone)}">${escapeHtml(item.StatusLabel)}</span>
-                </div>
-                <p class="pipeline-stage-text">${escapeHtml(item.StageLabel)}</p>
-                ${item.CurrentTimingText ? `<p class="hint pipeline-stage-timing">${escapeHtml(item.CurrentTimingText)}</p>` : ""}
-                <div class="stage-meter${item.IsActive ? " stage-meter-active" : ""}${item.StatusTone === "error" ? " stage-meter-error" : ""}" aria-hidden="true">
-                    <span class="stage-meter-fill" style="width: ${deriveStageWidth(item)}%;"></span>
-                </div>
-                <div class="pipeline-stage-foot">
-                    <span>Этап ${item.StageValue} / ${item.StageTotal}</span>
-                    <span>${escapeHtml(item.Extension)}</span>
-                </div>
-                ${renderStepDetails(item)}
-                ${renderProblemBlock(item)}
-                <div class="pipeline-item-actions">
-                    ${item.CanOpenTranscript ? `<a class="button-link" href="${escapeHtml(item.TranscriptURL)}">Открыть расшифровку</a>` : ""}
-                    <form action="${escapeHtml(item.DeleteURL)}" method="post" class="delete-media-form" data-media-id="${item.ID}" data-media-name="${escapeHtml(item.OriginalName)}">
-                        <button type="submit" class="button-danger">Удалить</button>
-                    </form>
-                </div>
-            </article>
-        `).join("");
+        pipelineGrid.innerHTML = items.map((item) => renderHistoryItem(item)).join("");
     }
 
     function updateSpotlight(items) {
@@ -606,21 +618,21 @@
         if (spotlightTitle) {
             spotlightTitle.textContent = spotlight.OriginalName || "";
         }
-        if (spotlightMeta) {
-            spotlightMeta.textContent = `${spotlight.SizeHuman || ""} · ${spotlight.CreatedAtUTC || ""} UTC`;
-        }
         if (spotlightStatus) {
             spotlightStatus.textContent = spotlight.StatusLabel || "";
             spotlightStatus.className = `status-chip status-chip-${spotlight.StatusTone || "neutral"}`;
         }
         if (spotlightStage) {
-            spotlightStage.textContent = spotlight.StageLabel || "";
+            spotlightStage.textContent = spotlight.CurrentStage || spotlight.StageLabel || "";
         }
-        if (spotlightTiming) {
-            spotlightTiming.textContent = spotlight.CurrentTimingText || "";
+        if (spotlightProgressMeter) {
+            spotlightProgressMeter.className = `stage-meter${spotlight.IsActive ? " stage-meter-active" : ""}${spotlight.StatusTone === "error" ? " stage-meter-error" : ""}`;
         }
         if (spotlightProgressFill) {
             spotlightProgressFill.style.width = `${deriveStageWidth(spotlight)}%`;
+        }
+        if (spotlightProgressText) {
+            spotlightProgressText.textContent = `Этап ${spotlight.StageValue || 0} / ${spotlight.StageTotal || 0}`;
         }
         if (spotlightLink) {
             if (spotlight.CanOpenTranscript) {
@@ -657,6 +669,10 @@
             if (!response.ok) {
                 throw new Error(payload && payload.message ? payload.message : "Не удалось удалить файл.");
             }
+            const mediaID = Number(form.dataset.mediaId);
+            if (Number.isFinite(mediaID)) {
+                expandedItems.delete(mediaID);
+            }
             renderNotice("success", payload && payload.message ? payload.message : "Файл удалён.");
             await refreshStatuses();
         } catch (error) {
@@ -687,6 +703,12 @@
             }
             const payload = await response.json();
             const items = Array.isArray(payload.items) ? payload.items : [];
+            const itemIDs = new Set(items.map((item) => Number(item && item.ID)).filter((value) => Number.isFinite(value)));
+            Array.from(expandedItems).forEach((value) => {
+                if (!itemIDs.has(value)) {
+                    expandedItems.delete(value);
+                }
+            });
             renderPipelineItems(items);
             updateSpotlight(items);
             nextDelayMs = items.some((item) => item && item.IsActive) ? 3000 : 8000;
@@ -735,7 +757,7 @@
         trigger.addEventListener(eventName, (event) => {
             event.preventDefault();
             trigger.classList.add("is-dragover");
-            dropzoneMeta.textContent = "Отпустите файл для прикрепления";
+            dropzoneMeta.textContent = "Отпустите файл";
         });
     });
     ["dragleave", "dragend", "drop"].forEach((eventName) => {
@@ -783,7 +805,7 @@
             uploadSubmit.disabled = false;
             if (xhr.status >= 200 && xhr.status < 300) {
                 setUploadProgress(100, "Загрузка завершена");
-                renderNotice("success", "Файл загружен. Ниже появятся этапы обработки.");
+                renderNotice("success", "Файл загружен.");
                 form.reset();
                 renderSelectedFile(null);
                 refreshStatuses();
@@ -812,6 +834,29 @@
             clearUploadProgress();
         });
         xhr.send(payload);
+    });
+
+    document.addEventListener("click", (event) => {
+        const toggleButton = event.target.closest(".history-toggle");
+        if (toggleButton) {
+            const mediaID = Number(toggleButton.dataset.mediaId);
+            const details = document.getElementById(`history-details-${mediaID}`);
+            if (!details) {
+                return;
+            }
+            const nextExpanded = details.hidden;
+            details.hidden = !nextExpanded;
+            toggleButton.setAttribute("aria-expanded", nextExpanded ? "true" : "false");
+            toggleButton.textContent = nextExpanded ? "Скрыть" : "Детали";
+            if (Number.isFinite(mediaID)) {
+                if (nextExpanded) {
+                    expandedItems.add(mediaID);
+                } else {
+                    expandedItems.delete(mediaID);
+                }
+            }
+            return;
+        }
     });
 
     document.addEventListener("submit", (event) => {

@@ -669,10 +669,10 @@ func TestUploadHandler_IndexShowsRussianStepFlow(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"Быстрая загрузка и прозрачный пайплайн",
-		"Новая загрузка",
-		"Текущий статус",
-		"Очередь и этапы",
+		"Media Pipeline",
+		"Загрузка файла",
+		"Активная задача",
+		"Последние задачи",
 		"Настройки",
 	} {
 		if !strings.Contains(body, want) {
@@ -737,7 +737,7 @@ func TestUploadHandler_IndexShowsSettingsBehindGearAndFailedStage(t *testing.T) 
 	body := rec.Body.String()
 	for _, want := range []string{
 		"settings-sheet",
-		"Параметры распознавания и правила",
+		"Распознавание и правила",
 		"Ошибка на этапе: Распознавание текста",
 		"Причина: Не удалось распознать текст: модель small вернула ошибку.",
 		"Подробности смотрите в логах worker.",
