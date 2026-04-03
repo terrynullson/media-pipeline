@@ -72,6 +72,14 @@ if ($LASTEXITCODE -ne 0) {
     throw "Failed to install transcription requirements."
 }
 
+if ($IsWindows) {
+    Write-Host "Installing Windows CUDA runtime libraries for faster-whisper..."
+    & $venvPython -m pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 nvidia-cuda-nvrtc-cu12
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install Windows CUDA runtime libraries."
+    }
+}
+
 Write-Host "Running backend self-check..."
 & $venvPython .\scripts\transcribe.py --self-check
 if ($LASTEXITCODE -ne 0) {

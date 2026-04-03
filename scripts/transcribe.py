@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import argparse
+import ctypes
 import json
 import os
 import sys
 import traceback
+from pathlib import Path
 
 
 def parse_args():
@@ -31,6 +33,8 @@ def parse_args():
 
 
 def load_backend():
+    configure_windows_cuda_runtime()
+
     try:
         from faster_whisper import WhisperModel  # type: ignore
     except ImportError as exc:
@@ -39,6 +43,35 @@ def load_backend():
         ) from exc
 
     return WhisperModel
+
+
+def configure_windows_cuda_runtime():
+    if os.name != "nt":
+        return
+
+    site_packages = Path(__file__).resolve().parent.parent / ".venv" / "Lib" / "site-packages"
+    if not site_packages.exists():
+        return
+
+    candidate_dirs = [
+        site_packages / "nvidia" / "cublas" / "bin",
+        site_packages / "nvidia" / "cudnn" / "bin",
+        site_packages / "nvidia" / "cuda_nvrtc" / "bin",
+    ]
+
+    existing = []
+    for candidate in candidate_dirs:
+        if not candidate.exists():
+            continue
+        existing.append(str(candidate))
+        try:
+            os.add_dll_directory(str(candidate))
+        except (AttributeError, OSError):
+            pass
+
+    if existing:
+        current_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = os.pathsep.join(existing + [current_path]) if current_path else os.pathsep.join(existing)
 
 
 def parse_bool(value):
@@ -89,6 +122,9 @@ def self_check(args):
     load_backend()
     config = load_backend_config(args)
     validate_config(config)
+
+    if os.name == "nt" and config["device"] == "cuda":
+        ctypes.WinDLL("cublas64_12.dll")
 
     return {
         "backend": config["backend"],
