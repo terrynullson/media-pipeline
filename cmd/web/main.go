@@ -47,13 +47,15 @@ func main() {
 	transcriptRepo := repositories.NewTranscriptRepository(sqlDB)
 	triggerRuleRepo := repositories.NewTriggerRuleRepository(sqlDB)
 	triggerEventRepo := repositories.NewTriggerEventRepository(sqlDB)
+	triggerScreenshotRepo := repositories.NewTriggerScreenshotRepository(sqlDB)
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
 	fileStorage := storage.NewLocalStorage(cfg.UploadDir)
 	audioStorage := storage.NewLocalStorage(cfg.AudioDir)
+	screenshotStorage := storage.NewLocalStorage(cfg.ScreenshotsDir)
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
 	triggerRuleService := triggerapp.NewService(triggerRuleRepo)
-	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, triggerEventRepo, jobRepo)
-	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, fileStorage, audioStorage, logger)
+	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, triggerEventRepo, triggerScreenshotRepo, jobRepo)
+	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, fileStorage, audioStorage, screenshotStorage, logger)
 
 	uploadUC := command.NewUploadMediaUseCase(mediaRepo, jobRepo, fileStorage, cfg.MaxUploadSizeBytes(), logger)
 	templatesDir, err := infraRuntime.ResolvePath("internal/transport/http/views/templates")
@@ -81,7 +83,7 @@ func main() {
 		logger.Error("resolve static path", slog.Any("error", err))
 		os.Exit(1)
 	}
-	router := httptransport.NewRouter(logger, uploadHandler, staticPath)
+	router := httptransport.NewRouter(logger, uploadHandler, staticPath, cfg.ScreenshotsDir)
 
 	addr := ":" + cfg.AppPort
 	logger.Info("starting web server",

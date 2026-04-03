@@ -51,6 +51,7 @@ func TestTranscriptViewUseCase_LoadIncludesTranscriptAndSettings(t *testing.T) {
 		stubTranscriptMediaReader{item: mediaItem},
 		stubTranscriptReader{item: transcriptItem, ok: true},
 		stubTriggerEventReader{},
+		stubTriggerScreenshotReader{},
 		stubTranscriptJobReader{item: job.Job{MediaID: 42, Type: job.TypeTranscribe, Payload: payload}, ok: true},
 	)
 
@@ -79,6 +80,7 @@ func TestTranscriptViewUseCase_LoadKeepsWorkingWhenPayloadInvalid(t *testing.T) 
 		stubTranscriptMediaReader{item: domainmedia.Media{ID: 11, Status: domainmedia.StatusTranscribed}},
 		stubTranscriptReader{item: transcript.Transcript{MediaID: 11, FullText: "text"}, ok: true},
 		stubTriggerEventReader{},
+		stubTriggerScreenshotReader{},
 		stubTranscriptJobReader{item: job.Job{MediaID: 11, Type: job.TypeTranscribe, Payload: `{"broken":true}`}, ok: true},
 	)
 
@@ -147,6 +149,18 @@ func (s stubTriggerEventReader) ListByMediaID(context.Context, int64) ([]domaint
 	return s.items, nil
 }
 
+type stubTriggerScreenshotReader struct {
+	items []domaintrigger.Screenshot
+	err   error
+}
+
+func (s stubTriggerScreenshotReader) ListByMediaID(context.Context, int64) ([]domaintrigger.Screenshot, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.items, nil
+}
+
 func TestTranscriptViewUseCase_LoadPropagatesMediaError(t *testing.T) {
 	t.Parallel()
 
@@ -154,6 +168,7 @@ func TestTranscriptViewUseCase_LoadPropagatesMediaError(t *testing.T) {
 		stubTranscriptMediaReader{err: errors.New("boom")},
 		stubTranscriptReader{},
 		stubTriggerEventReader{},
+		stubTriggerScreenshotReader{},
 		stubTranscriptJobReader{},
 	)
 

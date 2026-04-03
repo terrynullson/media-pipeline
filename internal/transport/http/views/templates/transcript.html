@@ -10,9 +10,9 @@
 <main class="page page-transcript">
     <section class="hero hero-transcript">
         <div class="hero-copy">
-            <p class="eyebrow">Stage 4</p>
+            <p class="eyebrow">Stage 5</p>
             <h1 class="hero-title-transcript">Transcript Viewer</h1>
-            <p class="subtitle">A readable transcript view for one media item, with transcript text, timeline segments, and deterministic trigger phrase matches.</p>
+            <p class="subtitle">A readable transcript view for one media item, with transcript text, timeline segments, trigger phrase matches, and screenshot previews.</p>
         </div>
         <div class="hero-meta hero-meta-actions">
             <div class="meta-card">
@@ -159,6 +159,24 @@
                         {{if .ContextText}}
                         <p class="trigger-match-context">Context: {{.ContextText}}</p>
                         {{end}}
+                        <div class="trigger-screenshot-block">
+                            {{if .HasScreenshot}}
+                            <a class="trigger-screenshot-link" href="{{.ScreenshotURL}}" target="_blank" rel="noopener noreferrer">
+                                <img
+                                    class="trigger-screenshot-image"
+                                    src="{{.ScreenshotURL}}"
+                                    alt="{{.ScreenshotAlt}}"
+                                    {{if gt .ScreenshotW 0}}width="{{.ScreenshotW}}"{{end}}
+                                    {{if gt .ScreenshotH 0}}height="{{.ScreenshotH}}"{{end}}
+                                    loading="lazy"
+                                >
+                            </a>
+                            {{else}}
+                            <div class="empty-state trigger-screenshot-empty">
+                                <p>{{.Placeholder}}</p>
+                            </div>
+                            {{end}}
+                        </div>
                     </article>
                     {{end}}
                 </div>

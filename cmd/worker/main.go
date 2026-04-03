@@ -47,9 +47,11 @@ func main() {
 	transcriptRepo := repositories.NewTranscriptRepository(sqlDB)
 	triggerRuleRepo := repositories.NewTriggerRuleRepository(sqlDB)
 	triggerEventRepo := repositories.NewTriggerEventRepository(sqlDB)
+	triggerScreenshotRepo := repositories.NewTriggerScreenshotRepository(sqlDB)
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
 	audioExtractor := infraMedia.NewFFmpegExtractor(cfg.FFmpegBinary)
+	screenshotExtractor := infraMedia.NewFFmpegScreenshotExtractor(cfg.FFmpegBinary)
 	transcribeScriptPath, err := infraRuntime.ResolvePath(cfg.TranscribeScript)
 	if err != nil {
 		logger.Error("resolve transcribe script path", slog.Any("error", err), slog.String("path", cfg.TranscribeScript))
@@ -63,12 +65,16 @@ func main() {
 		transcriptRepo,
 		triggerRuleRepo,
 		triggerEventRepo,
+		triggerScreenshotRepo,
 		audioExtractor,
+		screenshotExtractor,
 		transcriber,
 		profileService,
 		cfg.UploadDir,
 		cfg.AudioDir,
+		cfg.ScreenshotsDir,
 		cfg.FFmpegTimeout(),
+		cfg.ScreenshotTimeout(),
 		cfg.TranscribeTimeout(),
 		logger,
 	)
@@ -78,11 +84,13 @@ func main() {
 		slog.String("db_path", cfg.DBPath),
 		slog.String("upload_dir", cfg.UploadDir),
 		slog.String("audio_dir", cfg.AudioDir),
+		slog.String("screenshots_dir", cfg.ScreenshotsDir),
 		slog.String("ffmpeg_binary", cfg.FFmpegBinary),
 		slog.String("python_binary", cfg.PythonBinary),
 		slog.String("transcribe_script", transcribeScriptPath),
 		slog.Duration("poll_interval", cfg.WorkerPollInterval()),
 		slog.Duration("ffmpeg_timeout", cfg.FFmpegTimeout()),
+		slog.Duration("screenshot_timeout", cfg.ScreenshotTimeout()),
 		slog.Duration("transcribe_timeout", cfg.TranscribeTimeout()),
 	)
 

@@ -16,9 +16,10 @@ type Type string
 type Status string
 
 const (
-	TypeExtractAudio    Type = "extract_audio"
-	TypeTranscribe      Type = "transcribe"
-	TypeAnalyzeTriggers Type = "analyze_triggers"
+	TypeExtractAudio       Type = "extract_audio"
+	TypeTranscribe         Type = "transcribe"
+	TypeAnalyzeTriggers    Type = "analyze_triggers"
+	TypeExtractScreenshots Type = "extract_screenshots"
 
 	StatusPending Status = "pending"
 	StatusRunning Status = "running"

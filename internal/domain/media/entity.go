@@ -1,6 +1,9 @@
 package media
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Status string
 
@@ -26,4 +29,21 @@ type Media struct {
 	Status             Status
 	CreatedAtUTC       time.Time
 	UpdatedAtUTC       time.Time
+}
+
+func (m Media) IsAudioOnly() bool {
+	mimeType := strings.ToLower(strings.TrimSpace(m.MIMEType))
+	if strings.HasPrefix(mimeType, "audio/") {
+		return true
+	}
+	if strings.HasPrefix(mimeType, "video/") {
+		return false
+	}
+
+	switch strings.ToLower(strings.TrimSpace(m.Extension)) {
+	case ".mp3", ".wav", ".m4a", ".aac", ".flac":
+		return true
+	default:
+		return false
+	}
 }

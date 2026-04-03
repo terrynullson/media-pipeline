@@ -10,7 +10,7 @@ import (
 	"media-pipeline/internal/transport/http/handlers"
 )
 
-func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, staticDir string) http.Handler {
+func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, staticDir string, screenshotsDir string) http.Handler {
 	r := chi.NewRouter()
 	r.Use(RequestIDMiddleware(logger))
 	r.Use(AccessLogMiddleware(logger))
@@ -33,6 +33,9 @@ func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, stati
 
 	fs := http.FileServer(http.Dir(staticDir))
 	r.Handle("/static/*", http.StripPrefix("/static/", fs))
+
+	screenshotFS := http.FileServer(http.Dir(screenshotsDir))
+	r.Handle("/media-screenshots/*", http.StripPrefix("/media-screenshots/", screenshotFS))
 
 	return r
 }

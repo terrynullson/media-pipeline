@@ -744,6 +744,36 @@ select:focus {
     font-size: 0.94rem;
 }
 
+.trigger-screenshot-block {
+    margin-top: 0.9rem;
+}
+
+.trigger-screenshot-link {
+    display: inline-flex;
+    max-width: min(100%, 360px);
+    border-radius: 18px;
+    overflow: hidden;
+    border: 1px solid rgba(240, 94, 168, 0.2);
+    background: rgba(255, 255, 255, 0.03);
+    box-shadow: var(--shadow-soft);
+}
+
+.trigger-screenshot-link:hover {
+    border-color: rgba(255, 77, 157, 0.42);
+}
+
+.trigger-screenshot-image {
+    display: block;
+    width: 100%;
+    max-width: 360px;
+    height: auto;
+    background: #101114;
+}
+
+.trigger-screenshot-empty {
+    padding: 1rem;
+}
+
 .table-wrap {
     overflow-x: auto;
 }

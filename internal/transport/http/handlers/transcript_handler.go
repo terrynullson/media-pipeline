@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"media-pipeline/internal/domain/job"
+	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/transcript"
 	"media-pipeline/internal/domain/transcription"
 	domaintrigger "media-pipeline/internal/domain/trigger"
@@ -58,6 +59,12 @@ type TriggerEventView struct {
 	Timestamp     string
 	SegmentText   string
 	ContextText   string
+	HasScreenshot bool
+	ScreenshotURL string
+	ScreenshotAlt string
+	ScreenshotW   int
+	ScreenshotH   int
+	Placeholder   string
 }
 
 func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +107,7 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		data.FullTextParagraphs = buildTranscriptParagraphs(result.Transcript.Segments, result.Transcript.FullText)
 		data.Segments = buildTranscriptSegments(result.Transcript.Segments)
 	}
-	data.TriggerMatches = buildTriggerEventViews(result.TriggerEvents)
+	data.TriggerMatches = buildTriggerEventViews(result.TriggerEvents, result.TriggerScreenshots, result.Media, result.ScreenshotJob)
 	data.TriggerStatusLabel, data.TriggerStatusTone, data.TriggerNotice, data.TriggerNoticeTone = describeTriggerAnalysis(result.AnalyzeJob, len(data.TriggerMatches))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -212,7 +219,12 @@ func buildTranscriptSegments(items []transcript.Segment) []TranscriptSegmentView
 	return segments
 }
 
-func buildTriggerEventViews(items []domaintrigger.Event) []TriggerEventView {
+func buildTriggerEventViews(
+	items []domaintrigger.Event,
+	screenshots map[int64]domaintrigger.Screenshot,
+	mediaItem media.Media,
+	screenshotJob *job.Job,
+) []TriggerEventView {
 	views := make([]TriggerEventView, 0, len(items))
 	for _, item := range items {
 		contextText := strings.TrimSpace(item.ContextText)
@@ -221,17 +233,53 @@ func buildTriggerEventViews(items []domaintrigger.Event) []TriggerEventView {
 			contextText = ""
 		}
 
-		views = append(views, TriggerEventView{
+		view := TriggerEventView{
 			Category:      item.Category,
 			RuleName:      item.RuleName,
 			MatchedPhrase: item.MatchedText,
 			Timestamp:     FormatTimestamp(item.StartSec),
 			SegmentText:   segmentText,
 			ContextText:   contextText,
-		})
+			ScreenshotAlt: fmt.Sprintf("Screenshot for %s at %s", item.MatchedText, FormatTimestamp(item.StartSec)),
+			Placeholder:   describeScreenshotPlaceholder(mediaItem, screenshotJob),
+		}
+		if screenshot, ok := screenshots[item.ID]; ok {
+			view.HasScreenshot = true
+			view.ScreenshotURL = "/media-screenshots/" + screenshot.ImagePath
+			view.ScreenshotW = screenshot.Width
+			view.ScreenshotH = screenshot.Height
+			view.Placeholder = ""
+		}
+
+		views = append(views, view)
 	}
 
 	return views
+}
+
+func describeScreenshotPlaceholder(mediaItem media.Media, currentJob *job.Job) string {
+	if mediaItem.IsAudioOnly() {
+		return "Screenshot not available for audio-only media."
+	}
+	if currentJob == nil {
+		return "Screenshot extraction has not started yet."
+	}
+
+	switch currentJob.Status {
+	case job.StatusPending:
+		return "Screenshot preview is queued."
+	case job.StatusRunning:
+		return "Screenshot preview is being generated."
+	case job.StatusFailed:
+		if strings.TrimSpace(currentJob.ErrorMessage) != "" {
+			return currentJob.ErrorMessage
+		}
+		return "Screenshot extraction failed."
+	case job.StatusDone:
+		return "Screenshot preview was not available for this trigger."
+	default:
+		return "Screenshot preview is unavailable."
+	}
 }
 
 func describeTriggerAnalysis(currentJob *job.Job, triggerCount int) (label string, tone string, notice string, noticeTone string) {

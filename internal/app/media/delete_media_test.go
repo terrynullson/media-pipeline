@@ -24,7 +24,9 @@ func TestDeleteMediaUseCase_DeleteRemovesRecordAndCollectsWarnings(t *testing.T)
 	}
 	uc := NewDeleteMediaUseCase(
 		repo,
+		stubScreenshotPathReader{},
 		stubDeleteStorage{err: errors.New("disk busy")},
+		stubDeleteStorage{},
 		stubDeleteStorage{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
@@ -46,6 +48,8 @@ func TestDeleteMediaUseCase_DeleteReturnsNotFound(t *testing.T) {
 
 	uc := NewDeleteMediaUseCase(
 		&stubMediaDeletionRepository{getErr: sql.ErrNoRows},
+		stubScreenshotPathReader{},
+		stubDeleteStorage{},
 		stubDeleteStorage{},
 		stubDeleteStorage{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -77,6 +81,18 @@ func (s *stubMediaDeletionRepository) DeleteWithAssociations(context.Context, in
 
 type stubDeleteStorage struct {
 	err error
+}
+
+type stubScreenshotPathReader struct {
+	paths []string
+	err   error
+}
+
+func (s stubScreenshotPathReader) ListPathsByMediaID(context.Context, int64) ([]string, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.paths, nil
 }
 
 func (s stubDeleteStorage) Save(context.Context, string, io.Reader) (ports.StoredFile, error) {

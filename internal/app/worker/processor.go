@@ -50,6 +50,12 @@ type TriggerRuleRepository interface {
 
 type TriggerEventRepository interface {
 	ReplaceForMedia(ctx context.Context, mediaID int64, transcriptID *int64, events []domaintrigger.Event) error
+	ListByMediaID(ctx context.Context, mediaID int64) ([]domaintrigger.Event, error)
+}
+
+type TriggerScreenshotRepository interface {
+	ReplaceForMedia(ctx context.Context, mediaID int64, items []domaintrigger.Screenshot) error
+	ListPathsByMediaID(ctx context.Context, mediaID int64) ([]string, error)
 }
 
 type TranscriptionProfileProvider interface {
@@ -57,19 +63,23 @@ type TranscriptionProfileProvider interface {
 }
 
 type Processor struct {
-	jobs              JobRepository
-	media             MediaRepository
-	transcripts       TranscriptRepository
-	triggerRules      TriggerRuleRepository
-	triggerEvents     TriggerEventRepository
-	audioExtractor    ports.AudioExtractor
-	transcriber       ports.Transcriber
-	profiles          TranscriptionProfileProvider
-	logger            *slog.Logger
-	uploadDir         string
-	audioDir          string
-	ffmpegTimeout     time.Duration
-	transcribeTimeout time.Duration
+	jobs                JobRepository
+	media               MediaRepository
+	transcripts         TranscriptRepository
+	triggerRules        TriggerRuleRepository
+	triggerEvents       TriggerEventRepository
+	triggerScreenshots  TriggerScreenshotRepository
+	audioExtractor      ports.AudioExtractor
+	screenshotExtractor ports.ScreenshotExtractor
+	transcriber         ports.Transcriber
+	profiles            TranscriptionProfileProvider
+	logger              *slog.Logger
+	uploadDir           string
+	audioDir            string
+	screenshotsDir      string
+	ffmpegTimeout       time.Duration
+	screenshotTimeout   time.Duration
+	transcribeTimeout   time.Duration
 }
 
 func NewProcessor(
@@ -78,34 +88,47 @@ func NewProcessor(
 	transcriptRepo TranscriptRepository,
 	triggerRuleRepo TriggerRuleRepository,
 	triggerEventRepo TriggerEventRepository,
+	triggerScreenshotRepo TriggerScreenshotRepository,
 	audioExtractor ports.AudioExtractor,
+	screenshotExtractor ports.ScreenshotExtractor,
 	transcriber ports.Transcriber,
 	profiles TranscriptionProfileProvider,
 	uploadDir string,
 	audioDir string,
+	screenshotsDir string,
 	ffmpegTimeout time.Duration,
+	screenshotTimeout time.Duration,
 	transcribeTimeout time.Duration,
 	logger *slog.Logger,
 ) *Processor {
 	return &Processor{
-		jobs:              jobRepo,
-		media:             mediaRepo,
-		transcripts:       transcriptRepo,
-		triggerRules:      triggerRuleRepo,
-		triggerEvents:     triggerEventRepo,
-		audioExtractor:    audioExtractor,
-		transcriber:       transcriber,
-		profiles:          profiles,
-		logger:            logger,
-		uploadDir:         uploadDir,
-		audioDir:          audioDir,
-		ffmpegTimeout:     ffmpegTimeout,
-		transcribeTimeout: transcribeTimeout,
+		jobs:                jobRepo,
+		media:               mediaRepo,
+		transcripts:         transcriptRepo,
+		triggerRules:        triggerRuleRepo,
+		triggerEvents:       triggerEventRepo,
+		triggerScreenshots:  triggerScreenshotRepo,
+		audioExtractor:      audioExtractor,
+		screenshotExtractor: screenshotExtractor,
+		transcriber:         transcriber,
+		profiles:            profiles,
+		logger:              logger,
+		uploadDir:           uploadDir,
+		audioDir:            audioDir,
+		screenshotsDir:      screenshotsDir,
+		ffmpegTimeout:       ffmpegTimeout,
+		screenshotTimeout:   screenshotTimeout,
+		transcribeTimeout:   transcribeTimeout,
 	}
 }
 
 func (p *Processor) ProcessNext(ctx context.Context) (bool, error) {
-	for _, jobType := range []job.Type{job.TypeExtractAudio, job.TypeTranscribe, job.TypeAnalyzeTriggers} {
+	for _, jobType := range []job.Type{
+		job.TypeExtractAudio,
+		job.TypeTranscribe,
+		job.TypeAnalyzeTriggers,
+		job.TypeExtractScreenshots,
+	} {
 		processed, err := p.processNextByType(ctx, jobType)
 		if err != nil {
 			return false, err
@@ -142,6 +165,8 @@ func (p *Processor) processNextByType(ctx context.Context, jobType job.Type) (bo
 		p.processTranscribeJob(ctx, claimedJob, logger)
 	case job.TypeAnalyzeTriggers:
 		p.processAnalyzeTriggersJob(ctx, claimedJob, logger)
+	case job.TypeExtractScreenshots:
+		p.processExtractScreenshotsJob(ctx, claimedJob, logger)
 	default:
 		p.failJob(ctx, claimedJob, 0, fmt.Sprintf("unsupported job type %q", claimedJob.Type), true, logger)
 	}
@@ -374,6 +399,12 @@ func (p *Processor) processAnalyzeTriggersJob(ctx context.Context, claimedJob jo
 		return
 	}
 
+	if err := p.enqueueNextJob(ctx, claimedJob.MediaID, job.TypeExtractScreenshots); err != nil {
+		failureMessage := fmt.Sprintf("enqueue extract screenshots job: %v", err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+
 	if err := p.jobs.MarkDone(ctx, claimedJob.ID, nowUTC); err != nil {
 		failureMessage := fmt.Sprintf("mark job done: %v", err)
 		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
@@ -381,6 +412,135 @@ func (p *Processor) processAnalyzeTriggersJob(ctx context.Context, claimedJob jo
 	}
 
 	logger.Info("trigger analysis completed", slog.Int("events", len(events)))
+}
+
+func (p *Processor) processExtractScreenshotsJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
+	mediaItem, err := p.media.GetByID(ctx, claimedJob.MediaID)
+	if err != nil {
+		failureMessage := fmt.Sprintf("load media %d: %v", claimedJob.MediaID, err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+
+	if mediaItem.IsAudioOnly() {
+		existingPaths, err := p.triggerScreenshots.ListPathsByMediaID(ctx, mediaItem.ID)
+		if err != nil {
+			failureMessage := fmt.Sprintf("load existing screenshots for audio-only media: %v", err)
+			p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+			return
+		}
+		if err := p.triggerScreenshots.ReplaceForMedia(ctx, mediaItem.ID, nil); err != nil {
+			failureMessage := fmt.Sprintf("clear screenshots for audio-only media: %v", err)
+			p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+			return
+		}
+		p.cleanupCreatedScreenshots(existingPaths, logger)
+		if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
+			failureMessage := fmt.Sprintf("mark job done: %v", err)
+			p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+			return
+		}
+		logger.Info("skipped screenshot extraction for audio-only media")
+		return
+	}
+
+	inputPath, err := safeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
+	if err != nil {
+		failureMessage := fmt.Sprintf("resolve screenshot input path: %v", err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+
+	events, err := p.triggerEvents.ListByMediaID(ctx, claimedJob.MediaID)
+	if err != nil {
+		failureMessage := fmt.Sprintf("load trigger events for screenshots: %v", err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+
+	if len(events) == 0 {
+		existingPaths, err := p.triggerScreenshots.ListPathsByMediaID(ctx, mediaItem.ID)
+		if err != nil {
+			failureMessage := fmt.Sprintf("load existing screenshots for media without events: %v", err)
+			p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+			return
+		}
+		if err := p.triggerScreenshots.ReplaceForMedia(ctx, mediaItem.ID, nil); err != nil {
+			failureMessage := fmt.Sprintf("clear screenshots for media without events: %v", err)
+			p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+			return
+		}
+		p.cleanupCreatedScreenshots(existingPaths, logger)
+		if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
+			failureMessage := fmt.Sprintf("mark job done: %v", err)
+			p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+			return
+		}
+		logger.Info("no trigger events found for screenshot extraction")
+		return
+	}
+
+	nowUTC := time.Now().UTC()
+	existingPaths, err := p.triggerScreenshots.ListPathsByMediaID(ctx, mediaItem.ID)
+	if err != nil {
+		failureMessage := fmt.Sprintf("load existing screenshots: %v", err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+	screenshots := make([]domaintrigger.Screenshot, 0, len(events))
+	createdPaths := make([]string, 0, len(events))
+	for _, event := range events {
+		if event.StartSec < 0 {
+			failureMessage := fmt.Sprintf("invalid screenshot timestamp %.3f for trigger event %d", event.StartSec, event.ID)
+			p.cleanupCreatedScreenshots(createdPaths, logger)
+			p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+			return
+		}
+
+		screenshotCtx, cancel := context.WithTimeout(ctx, p.screenshotTimeout)
+		result, extractErr := p.screenshotExtractor.Extract(screenshotCtx, ports.ExtractScreenshotInput{
+			MediaID:        mediaItem.ID,
+			TriggerEventID: event.ID,
+			InputPath:      inputPath,
+			TimestampSec:   event.StartSec,
+			OutputDir:      p.screenshotsDir,
+			ProcessedAt:    nowUTC.Format("2006-01-02"),
+		})
+		cancel()
+		if extractErr != nil {
+			p.cleanupCreatedScreenshots(createdPaths, logger)
+			failureMessage := buildFailureMessage("extract screenshot", extractErr, result.Stderr)
+			p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+			return
+		}
+
+		createdPaths = append(createdPaths, result.ImagePath)
+		screenshots = append(screenshots, domaintrigger.Screenshot{
+			MediaID:        mediaItem.ID,
+			TriggerEventID: event.ID,
+			TimestampSec:   event.StartSec,
+			ImagePath:      result.ImagePath,
+			Width:          result.Width,
+			Height:         result.Height,
+			CreatedAtUTC:   nowUTC,
+		})
+	}
+
+	if err := p.triggerScreenshots.ReplaceForMedia(ctx, mediaItem.ID, screenshots); err != nil {
+		p.cleanupCreatedScreenshots(createdPaths, logger)
+		failureMessage := fmt.Sprintf("persist trigger screenshots: %v", err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+	p.cleanupCreatedScreenshots(pathsDifference(existingPaths, createdPaths), logger)
+
+	if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
+		failureMessage := fmt.Sprintf("mark job done: %v", err)
+		p.failJob(ctx, claimedJob, 0, failureMessage, false, logger)
+		return
+	}
+
+	logger.Info("screenshot extraction completed", slog.Int("screenshots", len(screenshots)))
 }
 
 func (p *Processor) RecoverInterruptedJobs(ctx context.Context) error {
@@ -391,6 +551,7 @@ func (p *Processor) RecoverInterruptedJobs(ctx context.Context) error {
 		{jobType: job.TypeExtractAudio, restoreState: p.media.MarkUploaded},
 		{jobType: job.TypeTranscribe, restoreState: p.media.MarkAudioReady},
 		{jobType: job.TypeAnalyzeTriggers},
+		{jobType: job.TypeExtractScreenshots},
 	} {
 		if err := p.recoverInterruptedJobType(ctx, recovery.jobType, recovery.restoreState); err != nil {
 			return err
@@ -458,6 +619,31 @@ func cleanupOutputFile(audioDir string, relativePath string) error {
 	}
 
 	return nil
+}
+
+func (p *Processor) cleanupCreatedScreenshots(relativePaths []string, logger *slog.Logger) {
+	for _, relativePath := range relativePaths {
+		if err := cleanupOutputFile(p.screenshotsDir, relativePath); err != nil {
+			logger.Error("cleanup screenshot output failed", slog.Any("error", err), slog.String("image_path", relativePath))
+		}
+	}
+}
+
+func pathsDifference(existingPaths []string, keepPaths []string) []string {
+	keep := make(map[string]struct{}, len(keepPaths))
+	for _, path := range keepPaths {
+		keep[path] = struct{}{}
+	}
+
+	result := make([]string, 0)
+	for _, path := range existingPaths {
+		if _, ok := keep[path]; ok {
+			continue
+		}
+		result = append(result, path)
+	}
+
+	return result
 }
 
 func (p *Processor) enqueueNextJob(ctx context.Context, mediaID int64, jobType job.Type) error {

@@ -28,10 +28,15 @@ type TriggerEventReader interface {
 	ListByMediaID(ctx context.Context, mediaID int64) ([]domaintrigger.Event, error)
 }
 
+type TriggerScreenshotReader interface {
+	ListByMediaID(ctx context.Context, mediaID int64) ([]domaintrigger.Screenshot, error)
+}
+
 type TranscriptViewUseCase struct {
 	mediaRepo      TranscriptMediaReader
 	transcriptRepo TranscriptReader
 	triggerEvents  TriggerEventReader
+	screenshots    TriggerScreenshotReader
 	jobRepo        TranscriptJobReader
 }
 
@@ -40,7 +45,9 @@ type TranscriptViewResult struct {
 	Transcript          transcript.Transcript
 	HasTranscript       bool
 	TriggerEvents       []domaintrigger.Event
+	TriggerScreenshots  map[int64]domaintrigger.Screenshot
 	AnalyzeJob          *job.Job
+	ScreenshotJob       *job.Job
 	Settings            *transcription.Settings
 	SettingsUnavailable bool
 }
@@ -49,12 +56,14 @@ func NewTranscriptViewUseCase(
 	mediaRepo TranscriptMediaReader,
 	transcriptRepo TranscriptReader,
 	triggerEventRepo TriggerEventReader,
+	triggerScreenshotRepo TriggerScreenshotReader,
 	jobRepo TranscriptJobReader,
 ) *TranscriptViewUseCase {
 	return &TranscriptViewUseCase{
 		mediaRepo:      mediaRepo,
 		transcriptRepo: transcriptRepo,
 		triggerEvents:  triggerEventRepo,
+		screenshots:    triggerScreenshotRepo,
 		jobRepo:        jobRepo,
 	}
 }
@@ -84,12 +93,29 @@ func (u *TranscriptViewUseCase) Load(ctx context.Context, mediaID int64) (Transc
 	}
 	result.TriggerEvents = triggerEvents
 
+	screenshots, err := u.screenshots.ListByMediaID(ctx, mediaID)
+	if err != nil {
+		return TranscriptViewResult{}, fmt.Errorf("load trigger screenshots for media %d: %w", mediaID, err)
+	}
+	result.TriggerScreenshots = make(map[int64]domaintrigger.Screenshot, len(screenshots))
+	for _, item := range screenshots {
+		result.TriggerScreenshots[item.TriggerEventID] = item
+	}
+
 	analyzeJob, ok, err := u.jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeAnalyzeTriggers)
 	if err != nil {
 		return TranscriptViewResult{}, fmt.Errorf("load analyze job for media %d: %w", mediaID, err)
 	}
 	if ok {
 		result.AnalyzeJob = &analyzeJob
+	}
+
+	screenshotJob, ok, err := u.jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeExtractScreenshots)
+	if err != nil {
+		return TranscriptViewResult{}, fmt.Errorf("load screenshot job for media %d: %w", mediaID, err)
+	}
+	if ok {
+		result.ScreenshotJob = &screenshotJob
 	}
 
 	currentJob, ok, err := u.jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeTranscribe)

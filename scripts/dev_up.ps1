@@ -11,6 +11,7 @@ $pathsToEnsure = @(
     (Join-Path $repoRoot "data"),
     (Join-Path $repoRoot "data\uploads"),
     (Join-Path $repoRoot "data\audio"),
+    (Join-Path $repoRoot "data\screenshots"),
     (Join-Path $repoRoot "data\logs")
 )
 

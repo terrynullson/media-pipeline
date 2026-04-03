@@ -93,11 +93,15 @@ func TestProcessor_ProcessNextExtractAudioEnqueuesTranscribe(t *testing.T) {
 		&stubTranscriptRepository{},
 		&stubTriggerRuleRepository{},
 		&stubTriggerEventRepository{},
+		&stubTriggerScreenshotRepository{},
 		audioExtractor,
+		&stubScreenshotExtractor{},
 		&stubTranscriber{},
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("ru")},
 		uploadDir,
 		audioDir,
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -193,11 +197,15 @@ func TestProcessor_ProcessNextTranscribePersistsTranscript(t *testing.T) {
 		transcriptRepo,
 		&stubTriggerRuleRepository{},
 		&stubTriggerEventRepository{},
+		&stubTriggerScreenshotRepository{},
 		&stubAudioExtractor{},
+		&stubScreenshotExtractor{},
 		transcriber,
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
 		t.TempDir(),
 		audioDir,
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -284,11 +292,15 @@ func TestProcessor_ProcessNextExtractAudioDoesNotDuplicateTranscribeJob(t *testi
 		&stubTranscriptRepository{},
 		&stubTriggerRuleRepository{},
 		&stubTriggerEventRepository{},
+		&stubTriggerScreenshotRepository{},
 		audioExtractor,
+		&stubScreenshotExtractor{},
 		&stubTranscriber{},
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("ru")},
 		uploadDir,
 		audioDir,
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -343,11 +355,15 @@ func TestProcessor_ProcessNextAnalyzeTriggersPersistsEvents(t *testing.T) {
 		transcriptRepo,
 		triggerRuleRepo,
 		triggerEventRepo,
+		&stubTriggerScreenshotRepository{},
 		&stubAudioExtractor{},
+		&stubScreenshotExtractor{},
 		&stubTranscriber{},
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
 		t.TempDir(),
 		t.TempDir(),
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -369,11 +385,156 @@ func TestProcessor_ProcessNextAnalyzeTriggersPersistsEvents(t *testing.T) {
 	if triggerEventRepo.replaceCalls[0].events[0].MatchedText != "refund" {
 		t.Fatalf("matched text = %q, want %q", triggerEventRepo.replaceCalls[0].events[0].MatchedText, "refund")
 	}
+	if len(jobRepo.createdJobs) != 1 || jobRepo.createdJobs[0].Type != job.TypeExtractScreenshots {
+		t.Fatalf("created jobs = %#v, want one extract_screenshots job", jobRepo.createdJobs)
+	}
 	if len(jobRepo.markDoneIDs) != 1 || jobRepo.markDoneIDs[0] != 33 {
 		t.Fatalf("mark done ids = %#v, want [33]", jobRepo.markDoneIDs)
 	}
 	if len(mediaRepo.markFailedIDs) != 0 {
 		t.Fatalf("mark failed ids = %#v, want none", mediaRepo.markFailedIDs)
+	}
+}
+
+func TestProcessor_ProcessNextExtractScreenshotsPersistsRows(t *testing.T) {
+	t.Parallel()
+
+	uploadDir := t.TempDir()
+	screenshotsDir := t.TempDir()
+	storedPath := filepath.ToSlash(filepath.Join("2026-04-03", "video.mp4"))
+	inputPath := filepath.Join(uploadDir, filepath.FromSlash(storedPath))
+	if err := os.MkdirAll(filepath.Dir(inputPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(inputPath, []byte("video"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	jobRepo := &stubJobRepository{
+		claimByType: map[job.Type]claimResult{
+			job.TypeExtractScreenshots: {
+				job: job.Job{ID: 34, MediaID: 70, Type: job.TypeExtractScreenshots, Status: job.StatusRunning},
+				ok:  true,
+			},
+		},
+	}
+	mediaRepo := &stubMediaRepository{
+		mediaByID: map[int64]media.Media{
+			70: {
+				ID:          70,
+				StoragePath: storedPath,
+				MIMEType:    "video/mp4",
+				Extension:   ".mp4",
+			},
+		},
+	}
+	triggerEventRepo := &stubTriggerEventRepository{
+		items: []domaintrigger.Event{
+			{ID: 100, MediaID: 70, StartSec: 3.25, MatchedText: "refund"},
+		},
+	}
+	triggerScreenshotRepo := &stubTriggerScreenshotRepository{}
+	screenshotExtractor := &stubScreenshotExtractor{
+		outputByEventID: map[int64]ports.ExtractScreenshotOutput{
+			100: {
+				ImagePath: filepath.ToSlash(filepath.Join("2026-04-03", "media_70_trigger_100_3250ms.jpg")),
+				Width:     640,
+				Height:    360,
+			},
+		},
+	}
+
+	processor := NewProcessor(
+		jobRepo,
+		mediaRepo,
+		&stubTranscriptRepository{},
+		&stubTriggerRuleRepository{},
+		triggerEventRepo,
+		triggerScreenshotRepo,
+		&stubAudioExtractor{},
+		screenshotExtractor,
+		&stubTranscriber{},
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
+		uploadDir,
+		t.TempDir(),
+		screenshotsDir,
+		10*time.Second,
+		10*time.Second,
+		10*time.Second,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	processed, err := processor.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessNext() error = %v", err)
+	}
+	if !processed {
+		t.Fatal("ProcessNext() processed = false, want true")
+	}
+	if len(triggerScreenshotRepo.replaceCalls) != 1 {
+		t.Fatalf("replace screenshot calls = %d, want 1", len(triggerScreenshotRepo.replaceCalls))
+	}
+	if got := len(triggerScreenshotRepo.replaceCalls[0].items); got != 1 {
+		t.Fatalf("saved screenshots = %d, want 1", got)
+	}
+	if triggerScreenshotRepo.replaceCalls[0].items[0].TriggerEventID != 100 {
+		t.Fatalf("trigger event id = %d, want 100", triggerScreenshotRepo.replaceCalls[0].items[0].TriggerEventID)
+	}
+	if len(jobRepo.markDoneIDs) != 1 || jobRepo.markDoneIDs[0] != 34 {
+		t.Fatalf("mark done ids = %#v, want [34]", jobRepo.markDoneIDs)
+	}
+}
+
+func TestProcessor_ProcessNextExtractScreenshotsSkipsAudioOnlyMedia(t *testing.T) {
+	t.Parallel()
+
+	jobRepo := &stubJobRepository{
+		claimByType: map[job.Type]claimResult{
+			job.TypeExtractScreenshots: {
+				job: job.Job{ID: 35, MediaID: 71, Type: job.TypeExtractScreenshots, Status: job.StatusRunning},
+				ok:  true,
+			},
+		},
+	}
+	mediaRepo := &stubMediaRepository{
+		mediaByID: map[int64]media.Media{
+			71: {ID: 71, MIMEType: "audio/wav", Extension: ".wav"},
+		},
+	}
+	triggerScreenshotRepo := &stubTriggerScreenshotRepository{}
+
+	processor := NewProcessor(
+		jobRepo,
+		mediaRepo,
+		&stubTranscriptRepository{},
+		&stubTriggerRuleRepository{},
+		&stubTriggerEventRepository{},
+		triggerScreenshotRepo,
+		&stubAudioExtractor{},
+		&stubScreenshotExtractor{},
+		&stubTranscriber{},
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
+		t.TempDir(),
+		t.TempDir(),
+		t.TempDir(),
+		10*time.Second,
+		10*time.Second,
+		10*time.Second,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	processed, err := processor.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessNext() error = %v", err)
+	}
+	if !processed {
+		t.Fatal("ProcessNext() processed = false, want true")
+	}
+	if len(triggerScreenshotRepo.replaceCalls) != 1 {
+		t.Fatalf("replace screenshot calls = %d, want 1", len(triggerScreenshotRepo.replaceCalls))
+	}
+	if got := len(triggerScreenshotRepo.replaceCalls[0].items); got != 0 {
+		t.Fatalf("saved screenshots = %d, want 0", got)
 	}
 }
 
@@ -390,11 +551,15 @@ func newTestProcessor(
 		transcriptRepo,
 		&stubTriggerRuleRepository{},
 		&stubTriggerEventRepository{},
+		&stubTriggerScreenshotRepository{},
 		audioExtractor,
+		&stubScreenshotExtractor{},
 		transcriber,
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
 		"./data/uploads",
 		"./data/audio",
+		"./data/screenshots",
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -566,6 +731,7 @@ type replaceTriggerEventsCall struct {
 
 type stubTriggerEventRepository struct {
 	replaceCalls []replaceTriggerEventsCall
+	items        []domaintrigger.Event
 	err          error
 }
 
@@ -581,6 +747,42 @@ func (s *stubTriggerEventRepository) ReplaceForMedia(_ context.Context, mediaID 
 	return nil
 }
 
+func (s *stubTriggerEventRepository) ListByMediaID(context.Context, int64) ([]domaintrigger.Event, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.items, nil
+}
+
+type replaceTriggerScreenshotsCall struct {
+	mediaID int64
+	items   []domaintrigger.Screenshot
+}
+
+type stubTriggerScreenshotRepository struct {
+	replaceCalls []replaceTriggerScreenshotsCall
+	paths        []string
+	err          error
+}
+
+func (s *stubTriggerScreenshotRepository) ReplaceForMedia(_ context.Context, mediaID int64, items []domaintrigger.Screenshot) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.replaceCalls = append(s.replaceCalls, replaceTriggerScreenshotsCall{
+		mediaID: mediaID,
+		items:   append([]domaintrigger.Screenshot(nil), items...),
+	})
+	return nil
+}
+
+func (s *stubTriggerScreenshotRepository) ListPathsByMediaID(context.Context, int64) ([]string, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return append([]string(nil), s.paths...), nil
+}
+
 type stubAudioExtractor struct {
 	output ports.ExtractAudioOutput
 	err    error
@@ -588,6 +790,27 @@ type stubAudioExtractor struct {
 
 func (s *stubAudioExtractor) Extract(context.Context, ports.ExtractAudioInput) (ports.ExtractAudioOutput, error) {
 	return s.output, s.err
+}
+
+type stubScreenshotExtractor struct {
+	outputByEventID map[int64]ports.ExtractScreenshotOutput
+	err             error
+}
+
+func (s *stubScreenshotExtractor) Extract(_ context.Context, in ports.ExtractScreenshotInput) (ports.ExtractScreenshotOutput, error) {
+	if s.err != nil {
+		return ports.ExtractScreenshotOutput{}, s.err
+	}
+	if s.outputByEventID != nil {
+		if output, ok := s.outputByEventID[in.TriggerEventID]; ok {
+			return output, nil
+		}
+	}
+	return ports.ExtractScreenshotOutput{
+		ImagePath: filepath.ToSlash(filepath.Join("2026-04-03", "screenshot.jpg")),
+		Width:     320,
+		Height:    180,
+	}, nil
 }
 
 type stubTranscriber struct {

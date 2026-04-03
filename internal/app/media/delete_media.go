@@ -18,22 +18,30 @@ type MediaDeletionRepository interface {
 	DeleteWithAssociations(ctx context.Context, id int64) error
 }
 
+type ScreenshotPathReader interface {
+	ListPathsByMediaID(ctx context.Context, mediaID int64) ([]string, error)
+}
+
 type DeleteMediaResult struct {
 	MediaID         int64
 	CleanupWarnings []string
 }
 
 type DeleteMediaUseCase struct {
-	repo          MediaDeletionRepository
-	uploadStorage ports.FileStorage
-	audioStorage  ports.FileStorage
-	logger        *slog.Logger
+	repo              MediaDeletionRepository
+	screenshots       ScreenshotPathReader
+	uploadStorage     ports.FileStorage
+	audioStorage      ports.FileStorage
+	screenshotStorage ports.FileStorage
+	logger            *slog.Logger
 }
 
 func NewDeleteMediaUseCase(
 	repo MediaDeletionRepository,
+	screenshots ScreenshotPathReader,
 	uploadStorage ports.FileStorage,
 	audioStorage ports.FileStorage,
+	screenshotStorage ports.FileStorage,
 	logger *slog.Logger,
 ) *DeleteMediaUseCase {
 	if logger == nil {
@@ -41,10 +49,12 @@ func NewDeleteMediaUseCase(
 	}
 
 	return &DeleteMediaUseCase{
-		repo:          repo,
-		uploadStorage: uploadStorage,
-		audioStorage:  audioStorage,
-		logger:        logger,
+		repo:              repo,
+		screenshots:       screenshots,
+		uploadStorage:     uploadStorage,
+		audioStorage:      audioStorage,
+		screenshotStorage: screenshotStorage,
+		logger:            logger,
 	}
 }
 
@@ -57,6 +67,14 @@ func (u *DeleteMediaUseCase) Delete(ctx context.Context, mediaID int64) (DeleteM
 		return DeleteMediaResult{}, fmt.Errorf("load media for deletion: %w", err)
 	}
 
+	screenshotPaths := make([]string, 0)
+	if u.screenshots != nil {
+		screenshotPaths, err = u.screenshots.ListPathsByMediaID(ctx, mediaID)
+		if err != nil {
+			return DeleteMediaResult{}, fmt.Errorf("load screenshot paths for deletion: %w", err)
+		}
+	}
+
 	if err := u.repo.DeleteWithAssociations(ctx, mediaID); err != nil {
 		return DeleteMediaResult{}, fmt.Errorf("delete media %d and associations: %w", mediaID, err)
 	}
@@ -64,6 +82,9 @@ func (u *DeleteMediaUseCase) Delete(ctx context.Context, mediaID int64) (DeleteM
 	result := DeleteMediaResult{MediaID: mediaID}
 	result.CleanupWarnings = append(result.CleanupWarnings, u.cleanupFile(mediaID, "uploaded media", mediaItem.StoragePath, u.uploadStorage)...)
 	result.CleanupWarnings = append(result.CleanupWarnings, u.cleanupFile(mediaID, "extracted audio", mediaItem.ExtractedAudioPath, u.audioStorage)...)
+	for _, screenshotPath := range screenshotPaths {
+		result.CleanupWarnings = append(result.CleanupWarnings, u.cleanupFile(mediaID, "trigger screenshot", screenshotPath, u.screenshotStorage)...)
+	}
 
 	return result, nil
 }

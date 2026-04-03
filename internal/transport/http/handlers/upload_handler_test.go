@@ -221,15 +221,16 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 	transcriptRepo := repositories.NewTranscriptRepository(app.db)
 	triggerEventRepo := repositories.NewTriggerEventRepository(app.db)
 	triggerRuleRepo := repositories.NewTriggerRuleRepository(app.db)
+	triggerScreenshotRepo := repositories.NewTriggerScreenshotRepository(app.db)
 
 	nowUTC := time.Date(2026, 4, 3, 16, 0, 0, 0, time.UTC)
 	mediaID, err := mediaRepo.Create(ctx, media.Media{
-		OriginalName: "timeline.wav",
-		StoredName:   "timeline.wav",
-		Extension:    ".wav",
-		MIMEType:     "audio/wav",
+		OriginalName: "timeline.mp4",
+		StoredName:   "timeline.mp4",
+		Extension:    ".mp4",
+		MIMEType:     "video/mp4",
 		SizeBytes:    2048,
-		StoragePath:  "2026-04-03/timeline.wav",
+		StoragePath:  "2026-04-03/timeline.mp4",
 		Status:       media.StatusTranscribed,
 		CreatedAtUTC: nowUTC,
 		UpdatedAtUTC: nowUTC,
@@ -270,6 +271,15 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 		UpdatedAtUTC: nowUTC.Add(time.Minute),
 	}); err != nil {
 		t.Fatalf("Create(analyze job) error = %v", err)
+	}
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeExtractScreenshots,
+		Status:       job.StatusDone,
+		CreatedAtUTC: nowUTC.Add(2 * time.Minute),
+		UpdatedAtUTC: nowUTC.Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("Create(screenshot job) error = %v", err)
 	}
 
 	confidence := 0.87
@@ -321,6 +331,34 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ReplaceForMedia(trigger events) error = %v", err)
 	}
+	triggerEvents, err := triggerEventRepo.ListByMediaID(ctx, mediaID)
+	if err != nil {
+		t.Fatalf("ListByMediaID(trigger events) error = %v", err)
+	}
+	if len(triggerEvents) != 1 {
+		t.Fatalf("trigger events = %d, want 1", len(triggerEvents))
+	}
+	screenshotRelative := filepath.ToSlash(filepath.Join("2026-04-03", "media_1_trigger_1_2100ms.jpg"))
+	screenshotPath := filepath.Join(app.screenshotsDir, filepath.FromSlash(screenshotRelative))
+	if err := os.MkdirAll(filepath.Dir(screenshotPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(screenshot dir) error = %v", err)
+	}
+	if err := os.WriteFile(screenshotPath, pngPixelBytes(), 0o644); err != nil {
+		t.Fatalf("WriteFile(screenshot) error = %v", err)
+	}
+	if err := triggerScreenshotRepo.ReplaceForMedia(ctx, mediaID, []domaintrigger.Screenshot{
+		{
+			MediaID:        mediaID,
+			TriggerEventID: triggerEvents[0].ID,
+			TimestampSec:   2.1,
+			ImagePath:      screenshotRelative,
+			Width:          1,
+			Height:         1,
+			CreatedAtUTC:   nowUTC,
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceForMedia(trigger screenshots) error = %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(mediaID, 10)+"/transcript", nil)
 	rec := httptest.NewRecorder()
@@ -333,12 +371,13 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"Transcript Viewer",
-		"timeline.wav",
+		"timeline.mp4",
 		"Full text",
 		"Timeline / segments",
 		"Trigger matches",
 		"refund",
 		"billing",
+		"/media-screenshots/2026-04-03/media_1_trigger_1_2100ms.jpg",
 		"00:00:00.000",
 		"00:00:01.400",
 		"Confidence 0.87",
@@ -491,21 +530,31 @@ func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 	mediaRepo := repositories.NewMediaRepository(app.db)
 	jobRepo := repositories.NewJobRepository(app.db)
 	transcriptRepo := repositories.NewTranscriptRepository(app.db)
+	triggerEventRepo := repositories.NewTriggerEventRepository(app.db)
+	triggerRuleRepo := repositories.NewTriggerRuleRepository(app.db)
+	triggerScreenshotRepo := repositories.NewTriggerScreenshotRepository(app.db)
 
 	nowUTC := time.Date(2026, 4, 3, 17, 0, 0, 0, time.UTC)
 	uploadRelative := filepath.ToSlash(filepath.Join("2026-04-03", "delete-me.wav"))
 	audioRelative := filepath.ToSlash(filepath.Join("2026-04-03", "delete-me-audio.wav"))
+	screenshotRelative := filepath.ToSlash(filepath.Join("2026-04-03", "delete-me-screenshot.jpg"))
 	if err := os.MkdirAll(filepath.Join(app.uploadDir, "2026-04-03"), 0o755); err != nil {
 		t.Fatalf("MkdirAll(uploadDir) error = %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(app.audioDir, "2026-04-03"), 0o755); err != nil {
 		t.Fatalf("MkdirAll(audioDir) error = %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(app.screenshotsDir, "2026-04-03"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(screenshotsDir) error = %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(app.uploadDir, filepath.FromSlash(uploadRelative)), []byte("upload"), 0o644); err != nil {
 		t.Fatalf("WriteFile(upload) error = %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(app.audioDir, filepath.FromSlash(audioRelative)), []byte("audio"), 0o644); err != nil {
 		t.Fatalf("WriteFile(audio) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(app.screenshotsDir, filepath.FromSlash(screenshotRelative)), pngPixelBytes(), 0o644); err != nil {
+		t.Fatalf("WriteFile(screenshot) error = %v", err)
 	}
 
 	mediaID, err := mediaRepo.Create(ctx, media.Media{
@@ -544,6 +593,54 @@ func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Save(transcript) error = %v", err)
 	}
+	transcriptItem, ok, err := transcriptRepo.GetByMediaID(ctx, mediaID)
+	if err != nil {
+		t.Fatalf("GetByMediaID(transcript) error = %v", err)
+	}
+	if !ok {
+		t.Fatal("GetByMediaID(transcript) ok = false, want true")
+	}
+	triggerRules, err := triggerRuleRepo.List(ctx)
+	if err != nil {
+		t.Fatalf("List(trigger rules) error = %v", err)
+	}
+	if len(triggerRules) == 0 {
+		t.Fatal("trigger rules are empty, want seeded rules")
+	}
+	if err := triggerEventRepo.ReplaceForMedia(ctx, mediaID, &transcriptItem.ID, []domaintrigger.Event{
+		{
+			MediaID:      mediaID,
+			TranscriptID: &transcriptItem.ID,
+			RuleID:       triggerRules[0].ID,
+			Category:     "billing",
+			MatchedText:  "refund",
+			SegmentIndex: 0,
+			StartSec:     0,
+			EndSec:       1,
+			SegmentText:  "delete me",
+			ContextText:  "delete me",
+			CreatedAtUTC: nowUTC,
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceForMedia(trigger events) error = %v", err)
+	}
+	triggerEvents, err := triggerEventRepo.ListByMediaID(ctx, mediaID)
+	if err != nil {
+		t.Fatalf("ListByMediaID(trigger events) error = %v", err)
+	}
+	if err := triggerScreenshotRepo.ReplaceForMedia(ctx, mediaID, []domaintrigger.Screenshot{
+		{
+			MediaID:        mediaID,
+			TriggerEventID: triggerEvents[0].ID,
+			TimestampSec:   0,
+			ImagePath:      screenshotRelative,
+			Width:          1,
+			Height:         1,
+			CreatedAtUTC:   nowUTC,
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceForMedia(trigger screenshots) error = %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/media/"+strconv.FormatInt(mediaID, 10)+"/delete", nil)
 	req.Header.Set("Accept", "application/json")
@@ -575,6 +672,9 @@ func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(app.audioDir, filepath.FromSlash(audioRelative))); !os.IsNotExist(err) {
 		t.Fatalf("audio file still exists, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(app.screenshotsDir, filepath.FromSlash(screenshotRelative))); !os.IsNotExist(err) {
+		t.Fatalf("screenshot file still exists, stat err = %v", err)
 	}
 }
 
@@ -620,10 +720,11 @@ func newTestRouter(t *testing.T) http.Handler {
 }
 
 type testWebApp struct {
-	router    http.Handler
-	db        *sql.DB
-	uploadDir string
-	audioDir  string
+	router         http.Handler
+	db             *sql.DB
+	uploadDir      string
+	audioDir       string
+	screenshotsDir string
 }
 
 func newTestApp(t *testing.T) testWebApp {
@@ -633,6 +734,7 @@ func newTestApp(t *testing.T) testWebApp {
 	dbPath := filepath.Join(tempDir, "app.db")
 	uploadDir := filepath.Join(tempDir, "uploads")
 	audioDir := filepath.Join(tempDir, "audio")
+	screenshotsDir := filepath.Join(tempDir, "screenshots")
 
 	sqlDB, err := db.OpenSQLite(dbPath)
 	if err != nil {
@@ -665,8 +767,10 @@ func newTestApp(t *testing.T) testWebApp {
 	transcriptRepo := repositories.NewTranscriptRepository(sqlDB)
 	triggerRuleRepo := repositories.NewTriggerRuleRepository(sqlDB)
 	triggerEventRepo := repositories.NewTriggerEventRepository(sqlDB)
+	triggerScreenshotRepo := repositories.NewTriggerScreenshotRepository(sqlDB)
 	uploadStorage := storage.NewLocalStorage(uploadDir)
 	audioStorage := storage.NewLocalStorage(audioDir)
+	screenshotStorage := storage.NewLocalStorage(screenshotsDir)
 	profileService := transcriptionapp.NewService(
 		repositories.NewTranscriptionProfileRepository(sqlDB),
 		domaintranscription.DefaultProfile("ru"),
@@ -679,8 +783,8 @@ func newTestApp(t *testing.T) testWebApp {
 		10*1024*1024,
 		logger,
 	)
-	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, triggerEventRepo, jobRepo)
-	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, uploadStorage, audioStorage, logger)
+	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, triggerEventRepo, triggerScreenshotRepo, jobRepo)
+	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, uploadStorage, audioStorage, screenshotStorage, logger)
 	handler, err := handlers.NewUploadHandler(
 		uploadUC,
 		profileService,
@@ -696,10 +800,11 @@ func newTestApp(t *testing.T) testWebApp {
 	}
 
 	return testWebApp{
-		router:    httptransport.NewRouter(logger, handler, staticPath),
-		db:        sqlDB,
-		uploadDir: uploadDir,
-		audioDir:  audioDir,
+		router:         httptransport.NewRouter(logger, handler, staticPath, screenshotsDir),
+		db:             sqlDB,
+		uploadDir:      uploadDir,
+		audioDir:       audioDir,
+		screenshotsDir: screenshotsDir,
 	}
 }
 
@@ -728,5 +833,20 @@ func testWAVBytes() []byte {
 		0x02, 0x00, 0x10, 0x00,
 		'd', 'a', 't', 'a',
 		0x00, 0x08, 0x00, 0x00,
+	}
+}
+
+func pngPixelBytes() []byte {
+	return []byte{
+		0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n',
+		0x00, 0x00, 0x00, 0x0d, 'I', 'H', 'D', 'R',
+		0x00, 0x00, 0x00, 0x01,
+		0x00, 0x00, 0x00, 0x01,
+		0x08, 0x02, 0x00, 0x00, 0x00,
+		0x90, 0x77, 0x53, 0xde,
+		0x00, 0x00, 0x00, 0x0c, 'I', 'D', 'A', 'T',
+		0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00,
+		0x18, 0xdd, 0x8d, 0xb3,
+		0x00, 0x00, 0x00, 0x00, 'I', 'E', 'N', 'D', 0xae, 0x42, 0x60, 0x82,
 	}
 }
