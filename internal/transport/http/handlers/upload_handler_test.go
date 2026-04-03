@@ -2,6 +2,8 @@ package handlers_test
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -10,11 +12,17 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"media-pipeline/internal/app/command"
+	mediaapp "media-pipeline/internal/app/media"
 	transcriptionapp "media-pipeline/internal/app/transcription"
+	"media-pipeline/internal/domain/job"
+	"media-pipeline/internal/domain/media"
+	"media-pipeline/internal/domain/transcript"
 	domaintranscription "media-pipeline/internal/domain/transcription"
 	"media-pipeline/internal/infra/db"
 	"media-pipeline/internal/infra/db/repositories"
@@ -27,51 +35,8 @@ import (
 func TestUploadHandler_UploadHappyPath(t *testing.T) {
 	t.Parallel()
 
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "app.db")
-	uploadDir := filepath.Join(tempDir, "uploads")
-
-	sqlDB, err := db.OpenSQLite(dbPath)
-	if err != nil {
-		t.Fatalf("OpenSQLite() error = %v", err)
-	}
-	defer sqlDB.Close()
-
-	migrationsPath, err := infraRuntime.ResolvePath("internal/infra/db/migrations")
-	if err != nil {
-		t.Fatalf("ResolvePath(migrations) error = %v", err)
-	}
-	if err := db.RunMigrations(sqlDB, migrationsPath); err != nil {
-		t.Fatalf("RunMigrations() error = %v", err)
-	}
-
-	templatePath, err := infraRuntime.ResolvePath("internal/transport/http/views/templates/index.html")
-	if err != nil {
-		t.Fatalf("ResolvePath(template) error = %v", err)
-	}
-	staticPath, err := infraRuntime.ResolvePath("web/static")
-	if err != nil {
-		t.Fatalf("ResolvePath(static) error = %v", err)
-	}
-
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	profileService := transcriptionapp.NewService(
-		repositories.NewTranscriptionProfileRepository(sqlDB),
-		domaintranscription.DefaultProfile("ru"),
-	)
-	uploadUC := command.NewUploadMediaUseCase(
-		repositories.NewMediaRepository(sqlDB),
-		repositories.NewJobRepository(sqlDB),
-		storage.NewLocalStorage(uploadDir),
-		10*1024*1024,
-		logger,
-	)
-	handler, err := handlers.NewUploadHandler(uploadUC, profileService, templatePath, 10*1024*1024, logger)
-	if err != nil {
-		t.Fatalf("NewUploadHandler() error = %v", err)
-	}
-
-	router := httptransport.NewRouter(logger, handler, staticPath)
+	app := newTestApp(t)
+	router := app.router
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -99,7 +64,7 @@ func TestUploadHandler_UploadHappyPath(t *testing.T) {
 		t.Fatalf("upload redirect = %q, want %q", location, "/?status=uploaded")
 	}
 
-	files, err := os.ReadDir(uploadDir)
+	files, err := os.ReadDir(app.uploadDir)
 	if err != nil {
 		t.Fatalf("ReadDir(uploadDir) error = %v", err)
 	}
@@ -111,51 +76,8 @@ func TestUploadHandler_UploadHappyPath(t *testing.T) {
 func TestUploadHandler_InvalidUpload(t *testing.T) {
 	t.Parallel()
 
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "app.db")
-	uploadDir := filepath.Join(tempDir, "uploads")
-
-	sqlDB, err := db.OpenSQLite(dbPath)
-	if err != nil {
-		t.Fatalf("OpenSQLite() error = %v", err)
-	}
-	defer sqlDB.Close()
-
-	migrationsPath, err := infraRuntime.ResolvePath("internal/infra/db/migrations")
-	if err != nil {
-		t.Fatalf("ResolvePath(migrations) error = %v", err)
-	}
-	if err := db.RunMigrations(sqlDB, migrationsPath); err != nil {
-		t.Fatalf("RunMigrations() error = %v", err)
-	}
-
-	templatePath, err := infraRuntime.ResolvePath("internal/transport/http/views/templates/index.html")
-	if err != nil {
-		t.Fatalf("ResolvePath(template) error = %v", err)
-	}
-	staticPath, err := infraRuntime.ResolvePath("web/static")
-	if err != nil {
-		t.Fatalf("ResolvePath(static) error = %v", err)
-	}
-
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	profileService := transcriptionapp.NewService(
-		repositories.NewTranscriptionProfileRepository(sqlDB),
-		domaintranscription.DefaultProfile("ru"),
-	)
-	uploadUC := command.NewUploadMediaUseCase(
-		repositories.NewMediaRepository(sqlDB),
-		repositories.NewJobRepository(sqlDB),
-		storage.NewLocalStorage(uploadDir),
-		10*1024*1024,
-		logger,
-	)
-	handler, err := handlers.NewUploadHandler(uploadUC, profileService, templatePath, 10*1024*1024, logger)
-	if err != nil {
-		t.Fatalf("NewUploadHandler() error = %v", err)
-	}
-
-	router := httptransport.NewRouter(logger, handler, staticPath)
+	app := newTestApp(t)
+	router := app.router
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -287,12 +209,212 @@ func TestUploadHandler_MediaStatuses(t *testing.T) {
 	}
 }
 
+func TestUploadHandler_TranscriptPage(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	ctx := context.Background()
+	mediaRepo := repositories.NewMediaRepository(app.db)
+	jobRepo := repositories.NewJobRepository(app.db)
+	transcriptRepo := repositories.NewTranscriptRepository(app.db)
+
+	nowUTC := time.Date(2026, 4, 3, 16, 0, 0, 0, time.UTC)
+	mediaID, err := mediaRepo.Create(ctx, media.Media{
+		OriginalName: "timeline.wav",
+		StoredName:   "timeline.wav",
+		Extension:    ".wav",
+		MIMEType:     "audio/wav",
+		SizeBytes:    2048,
+		StoragePath:  "2026-04-03/timeline.wav",
+		Status:       media.StatusTranscribed,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	})
+	if err != nil {
+		t.Fatalf("Create(media) error = %v", err)
+	}
+
+	settingsPayload, err := job.EncodeTranscribePayload(job.TranscribePayload{
+		Settings: domaintranscription.Settings{
+			Backend:     domaintranscription.BackendFasterWhisper,
+			ModelName:   "small",
+			Device:      "cpu",
+			ComputeType: "int8",
+			Language:    "ru",
+			BeamSize:    3,
+			VADEnabled:  true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("EncodeTranscribePayload() error = %v", err)
+	}
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeTranscribe,
+		Payload:      settingsPayload,
+		Status:       job.StatusDone,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		t.Fatalf("Create(job) error = %v", err)
+	}
+
+	confidence := 0.87
+	if err := transcriptRepo.Save(ctx, transcript.Transcript{
+		MediaID:      mediaID,
+		Language:     "ru",
+		FullText:     "Hello world. Nice to meet you.",
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+		Segments: []transcript.Segment{
+			{StartSec: 0, EndSec: 1.4, Text: "Hello world.", Confidence: &confidence},
+			{StartSec: 2.1, EndSec: 3.8, Text: "Nice to meet you."},
+		},
+	}); err != nil {
+		t.Fatalf("Save(transcript) error = %v", err)
+	}
+	if err := mediaRepo.MarkTranscribed(ctx, mediaID, "Hello world. Nice to meet you.", nowUTC); err != nil {
+		t.Fatalf("MarkTranscribed() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(mediaID, 10)+"/transcript", nil)
+	rec := httptest.NewRecorder()
+
+	app.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("transcript page status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Transcript Viewer",
+		"timeline.wav",
+		"Full text",
+		"Timeline / segments",
+		"00:00:00.000",
+		"00:00:01.400",
+		"Confidence 0.87",
+		"small",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("transcript page body missing %q", want)
+		}
+	}
+}
+
+func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	ctx := context.Background()
+	mediaRepo := repositories.NewMediaRepository(app.db)
+	jobRepo := repositories.NewJobRepository(app.db)
+	transcriptRepo := repositories.NewTranscriptRepository(app.db)
+
+	nowUTC := time.Date(2026, 4, 3, 17, 0, 0, 0, time.UTC)
+	uploadRelative := filepath.ToSlash(filepath.Join("2026-04-03", "delete-me.wav"))
+	audioRelative := filepath.ToSlash(filepath.Join("2026-04-03", "delete-me-audio.wav"))
+	if err := os.MkdirAll(filepath.Join(app.uploadDir, "2026-04-03"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(uploadDir) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(app.audioDir, "2026-04-03"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(audioDir) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(app.uploadDir, filepath.FromSlash(uploadRelative)), []byte("upload"), 0o644); err != nil {
+		t.Fatalf("WriteFile(upload) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(app.audioDir, filepath.FromSlash(audioRelative)), []byte("audio"), 0o644); err != nil {
+		t.Fatalf("WriteFile(audio) error = %v", err)
+	}
+
+	mediaID, err := mediaRepo.Create(ctx, media.Media{
+		OriginalName:       "delete-me.wav",
+		StoredName:         "delete-me.wav",
+		Extension:          ".wav",
+		MIMEType:           "audio/wav",
+		SizeBytes:          1024,
+		StoragePath:        uploadRelative,
+		ExtractedAudioPath: audioRelative,
+		Status:             media.StatusTranscribed,
+		CreatedAtUTC:       nowUTC,
+		UpdatedAtUTC:       nowUTC,
+	})
+	if err != nil {
+		t.Fatalf("Create(media) error = %v", err)
+	}
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeTranscribe,
+		Status:       job.StatusDone,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		t.Fatalf("Create(job) error = %v", err)
+	}
+	if err := transcriptRepo.Save(ctx, transcript.Transcript{
+		MediaID:      mediaID,
+		Language:     "en",
+		FullText:     "delete me",
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+		Segments: []transcript.Segment{
+			{StartSec: 0, EndSec: 1, Text: "delete me"},
+		},
+	}); err != nil {
+		t.Fatalf("Save(transcript) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/media/"+strconv.FormatInt(mediaID, 10)+"/delete", nil)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	rec := httptest.NewRecorder()
+
+	app.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var payload struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if payload.Status != "deleted" {
+		t.Fatalf("status = %q, want deleted", payload.Status)
+	}
+
+	assertDBCount(t, app.db, "SELECT COUNT(*) FROM media WHERE id = ?", mediaID, 0)
+	assertDBCount(t, app.db, "SELECT COUNT(*) FROM jobs WHERE media_id = ?", mediaID, 0)
+	assertDBCount(t, app.db, "SELECT COUNT(*) FROM transcripts WHERE media_id = ?", mediaID, 0)
+
+	if _, err := os.Stat(filepath.Join(app.uploadDir, filepath.FromSlash(uploadRelative))); !os.IsNotExist(err) {
+		t.Fatalf("uploaded file still exists, stat err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(app.audioDir, filepath.FromSlash(audioRelative))); !os.IsNotExist(err) {
+		t.Fatalf("audio file still exists, stat err = %v", err)
+	}
+}
+
 func newTestRouter(t *testing.T) http.Handler {
+	return newTestApp(t).router
+}
+
+type testWebApp struct {
+	router    http.Handler
+	db        *sql.DB
+	uploadDir string
+	audioDir  string
+}
+
+func newTestApp(t *testing.T) testWebApp {
 	t.Helper()
 
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "app.db")
 	uploadDir := filepath.Join(tempDir, "uploads")
+	audioDir := filepath.Join(tempDir, "audio")
 
 	sqlDB, err := db.OpenSQLite(dbPath)
 	if err != nil {
@@ -310,9 +432,9 @@ func newTestRouter(t *testing.T) http.Handler {
 		t.Fatalf("RunMigrations() error = %v", err)
 	}
 
-	templatePath, err := infraRuntime.ResolvePath("internal/transport/http/views/templates/index.html")
+	templatesDir, err := infraRuntime.ResolvePath("internal/transport/http/views/templates")
 	if err != nil {
-		t.Fatalf("ResolvePath(template) error = %v", err)
+		t.Fatalf("ResolvePath(template dir) error = %v", err)
 	}
 	staticPath, err := infraRuntime.ResolvePath("web/static")
 	if err != nil {
@@ -320,23 +442,55 @@ func newTestRouter(t *testing.T) http.Handler {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mediaRepo := repositories.NewMediaRepository(sqlDB)
+	jobRepo := repositories.NewJobRepository(sqlDB)
+	transcriptRepo := repositories.NewTranscriptRepository(sqlDB)
+	uploadStorage := storage.NewLocalStorage(uploadDir)
+	audioStorage := storage.NewLocalStorage(audioDir)
 	profileService := transcriptionapp.NewService(
 		repositories.NewTranscriptionProfileRepository(sqlDB),
 		domaintranscription.DefaultProfile("ru"),
 	)
 	uploadUC := command.NewUploadMediaUseCase(
-		repositories.NewMediaRepository(sqlDB),
-		repositories.NewJobRepository(sqlDB),
-		storage.NewLocalStorage(uploadDir),
+		mediaRepo,
+		jobRepo,
+		uploadStorage,
 		10*1024*1024,
 		logger,
 	)
-	handler, err := handlers.NewUploadHandler(uploadUC, profileService, templatePath, 10*1024*1024, logger)
+	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, jobRepo)
+	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, uploadStorage, audioStorage, logger)
+	handler, err := handlers.NewUploadHandler(
+		uploadUC,
+		profileService,
+		transcriptViewUC,
+		deleteMediaUC,
+		templatesDir,
+		10*1024*1024,
+		logger,
+	)
 	if err != nil {
 		t.Fatalf("NewUploadHandler() error = %v", err)
 	}
 
-	return httptransport.NewRouter(logger, handler, staticPath)
+	return testWebApp{
+		router:    httptransport.NewRouter(logger, handler, staticPath),
+		db:        sqlDB,
+		uploadDir: uploadDir,
+		audioDir:  audioDir,
+	}
+}
+
+func assertDBCount(t *testing.T, sqlDB *sql.DB, query string, mediaID int64, want int) {
+	t.Helper()
+
+	var count int
+	if err := sqlDB.QueryRowContext(context.Background(), query, mediaID).Scan(&count); err != nil {
+		t.Fatalf("QueryRow(%q) error = %v", query, err)
+	}
+	if count != want {
+		t.Fatalf("count for %q = %d, want %d", query, count, want)
+	}
 }
 
 func testWAVBytes() []byte {

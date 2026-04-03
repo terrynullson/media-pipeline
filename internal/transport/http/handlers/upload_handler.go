@@ -9,10 +9,12 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"media-pipeline/internal/app/command"
+	mediaapp "media-pipeline/internal/app/media"
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/transcription"
 	"media-pipeline/internal/observability"
@@ -21,6 +23,8 @@ import (
 type UploadHandler struct {
 	uploadUC         *command.UploadMediaUseCase
 	transcriptionSvc TranscriptionSettingsService
+	transcriptViewUC TranscriptViewService
+	deleteMediaUC    MediaDeletionService
 	tmpl             *template.Template
 	maxUploadSizeB   int64
 	maxRequestBodyB  int64
@@ -35,20 +39,31 @@ type TranscriptionSettingsService interface {
 	SaveCurrent(ctx context.Context, profile transcription.Profile) (transcription.Profile, error)
 }
 
+type TranscriptViewService interface {
+	Load(ctx context.Context, mediaID int64) (mediaapp.TranscriptViewResult, error)
+}
+
+type MediaDeletionService interface {
+	Delete(ctx context.Context, mediaID int64) (mediaapp.DeleteMediaResult, error)
+}
+
 type MediaListItem struct {
-	ID           int64
-	OriginalName string
-	Extension    string
-	SizeHuman    string
-	Status       media.Status
-	StatusLabel  string
-	StatusTone   string
-	StageLabel   string
-	StageValue   int
-	StageTotal   int
-	StagePercent int
-	IsActive     bool
-	CreatedAtUTC string
+	ID            int64
+	OriginalName  string
+	Extension     string
+	SizeHuman     string
+	Status        media.Status
+	StatusLabel   string
+	StatusTone    string
+	StageLabel    string
+	StageValue    int
+	StageTotal    int
+	StagePercent  int
+	IsActive      bool
+	CreatedAtUTC  string
+	HasTranscript bool
+	TranscriptURL string
+	DeleteURL     string
 }
 
 type IndexViewData struct {
@@ -81,20 +96,26 @@ type TranscriptionSettingsForm struct {
 func NewUploadHandler(
 	uploadUC *command.UploadMediaUseCase,
 	transcriptionSvc TranscriptionSettingsService,
-	templatePath string,
+	transcriptViewUC TranscriptViewService,
+	deleteMediaUC MediaDeletionService,
+	templatesDir string,
 	maxUploadSizeB int64,
 	logger *slog.Logger,
 ) (*UploadHandler, error) {
 	tmpl, err := template.New("index.html").Funcs(template.FuncMap{
-		"humanSize": HumanSize,
-	}).ParseFiles(templatePath)
+		"humanSize":         HumanSize,
+		"formatTimestamp":   FormatTimestamp,
+		"formatDateTimeUTC": FormatDateTimeUTC,
+	}).ParseGlob(filepath.Join(templatesDir, "*.html"))
 	if err != nil {
-		return nil, fmt.Errorf("parse index template: %w", err)
+		return nil, fmt.Errorf("parse html templates: %w", err)
 	}
 
 	return &UploadHandler{
 		uploadUC:         uploadUC,
 		transcriptionSvc: transcriptionSvc,
+		transcriptViewUC: transcriptViewUC,
+		deleteMediaUC:    deleteMediaUC,
 		tmpl:             tmpl,
 		maxUploadSizeB:   maxUploadSizeB,
 		maxRequestBodyB:  maxUploadSizeB + (1 << 20),
@@ -109,6 +130,9 @@ func (h *UploadHandler) Index(w http.ResponseWriter, r *http.Request) {
 	successMessage := ""
 	if r.URL.Query().Get("status") == "uploaded" {
 		successMessage = "Upload completed. Media record and pending job were created."
+	}
+	if r.URL.Query().Get("status") == "deleted" {
+		successMessage = "Media item was deleted. Related records were removed and file cleanup was attempted."
 	}
 	settingsSuccess := ""
 	if r.URL.Query().Get("status") == "settings_saved" {
@@ -311,19 +335,22 @@ func (h *UploadHandler) buildMediaListItems(ctx context.Context) ([]MediaListIte
 	for _, item := range items {
 		statusLabel, statusTone, stageLabel, stageValue, active := describeMediaStatus(item.Status)
 		viewItems = append(viewItems, MediaListItem{
-			ID:           item.ID,
-			OriginalName: item.OriginalName,
-			Extension:    item.Extension,
-			SizeHuman:    HumanSize(item.SizeBytes),
-			Status:       item.Status,
-			StatusLabel:  statusLabel,
-			StatusTone:   statusTone,
-			StageLabel:   stageLabel,
-			StageValue:   stageValue,
-			StageTotal:   5,
-			StagePercent: stagePercent(stageValue, 5),
-			IsActive:     active,
-			CreatedAtUTC: item.CreatedAtUTC.UTC().Format("2006-01-02 15:04:05"),
+			ID:            item.ID,
+			OriginalName:  item.OriginalName,
+			Extension:     item.Extension,
+			SizeHuman:     HumanSize(item.SizeBytes),
+			Status:        item.Status,
+			StatusLabel:   statusLabel,
+			StatusTone:    statusTone,
+			StageLabel:    stageLabel,
+			StageValue:    stageValue,
+			StageTotal:    5,
+			StagePercent:  stagePercent(stageValue, 5),
+			IsActive:      active,
+			CreatedAtUTC:  item.CreatedAtUTC.UTC().Format("2006-01-02 15:04:05"),
+			HasTranscript: strings.TrimSpace(item.TranscriptText) != "",
+			TranscriptURL: fmt.Sprintf("/media/%d/transcript", item.ID),
+			DeleteURL:     fmt.Sprintf("/media/%d/delete", item.ID),
 		})
 	}
 

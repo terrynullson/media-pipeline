@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>{{.MediaName}} · Transcript</title>
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<main class="page page-transcript">
+    <section class="hero hero-transcript">
+        <div class="hero-copy">
+            <p class="eyebrow">Stage 3.3</p>
+            <h1 class="hero-title-transcript">Transcript Viewer</h1>
+            <p class="subtitle">A readable transcript view for one media item, with clean full-text reading and timeline-aligned segments.</p>
+        </div>
+        <div class="hero-meta hero-meta-actions">
+            <div class="meta-card">
+                <span class="meta-label">Media item</span>
+                <strong>{{.MediaName}}</strong>
+            </div>
+            <div class="meta-card meta-card-actions">
+                <a class="button-link button-link-strong" href="/">Back to pipeline</a>
+                <form action="{{.DeleteURL}}" method="post" class="transcript-delete-form">
+                    <button type="submit" class="button-danger">Delete media</button>
+                </form>
+            </div>
+        </div>
+    </section>
+
+    <section class="transcript-layout">
+        <aside class="card transcript-sidebar">
+            <div class="section-header">
+                <div>
+                    <h2>Media details</h2>
+                    <p class="hint">The page keeps the metadata close to the transcript so a long result stays understandable.</p>
+                </div>
+            </div>
+            <dl class="detail-grid">
+                <div class="detail-item">
+                    <dt>Name</dt>
+                    <dd>{{.MediaName}}</dd>
+                </div>
+                <div class="detail-item">
+                    <dt>Size</dt>
+                    <dd>{{.SizeHuman}}</dd>
+                </div>
+                <div class="detail-item">
+                    <dt>Created</dt>
+                    <dd>{{.CreatedAtUTC}} UTC</dd>
+                </div>
+                <div class="detail-item">
+                    <dt>Status</dt>
+                    <dd><span class="status-chip status-chip-{{.StatusTone}}">{{.StatusLabel}}</span></dd>
+                </div>
+            </dl>
+
+            <div class="settings-panel">
+                <div class="section-header">
+                    <div>
+                        <h2>Run settings</h2>
+                        <p class="hint">These are the settings snapshot attached to the transcribe job when it was created.</p>
+                    </div>
+                </div>
+                {{if .Settings}}
+                <dl class="settings-grid">
+                    {{range .Settings}}
+                    <div class="settings-item">
+                        <dt>{{.Label}}</dt>
+                        <dd>{{.Value}}</dd>
+                    </div>
+                    {{end}}
+                </dl>
+                {{else if .SettingsUnavailable}}
+                <div class="notice notice-error transcript-inline-notice">The transcribe job payload exists, but its saved settings could not be decoded.</div>
+                {{else}}
+                <div class="empty-state transcript-empty">
+                    <p>No saved transcription settings were found for this media item.</p>
+                </div>
+                {{end}}
+            </div>
+        </aside>
+
+        <section class="transcript-main">
+            {{if .HasTranscript}}
+            <div class="card transcript-viewer">
+                <div class="section-header section-header-wide transcript-header">
+                    <div>
+                        <h2>Transcript</h2>
+                        <p class="hint">Switch between readable prose and precise segment timing without leaving the page.</p>
+                    </div>
+                    <div class="transcript-mode-switch" role="tablist" aria-label="Transcript view mode">
+                        <button type="button" class="tab-button is-active" data-transcript-tab="full-text" role="tab" aria-selected="true">Full text</button>
+                        <button type="button" class="tab-button" data-transcript-tab="timeline" role="tab" aria-selected="false">Timeline / segments</button>
+                    </div>
+                </div>
+
+                <div class="transcript-panel" data-transcript-panel="full-text">
+                    <div class="transcript-reading-surface">
+                        {{range .FullTextParagraphs}}
+                        <p>{{.}}</p>
+                        {{end}}
+                    </div>
+                </div>
+
+                <div class="transcript-panel" data-transcript-panel="timeline" hidden>
+                    <div class="timeline-list">
+                        {{range .Segments}}
+                        <article class="timeline-segment">
+                            <div class="timeline-segment-rail">
+                                <span class="timeline-time">{{.StartLabel}}</span>
+                                <span class="timeline-arrow">to</span>
+                                <span class="timeline-time">{{.EndLabel}}</span>
+                                {{if .HasConfidence}}
+                                <span class="timeline-confidence">Confidence {{.Confidence}}</span>
+                                {{end}}
+                            </div>
+                            <div class="timeline-segment-body">
+                                <p>{{.Text}}</p>
+                            </div>
+                        </article>
+                        {{end}}
+                    </div>
+                </div>
+            </div>
+            {{else}}
+            <div class="card">
+                <div class="section-header">
+                    <div>
+                        <h2>Transcript not available yet</h2>
+                        <p class="hint">This media item does not have persisted transcript text and segments yet. When the transcription finishes, the viewer will show both reading modes here.</p>
+                    </div>
+                </div>
+                <div class="empty-state transcript-empty">
+                    <p>Current status: {{.StatusLabel}}.</p>
+                    <p class="hint">You can return to the main page and keep watching the pipeline progress card.</p>
+                </div>
+            </div>
+            {{end}}
+        </section>
+    </section>
+</main>
+<script>
+(() => {
+    const buttons = Array.from(document.querySelectorAll("[data-transcript-tab]"));
+    const panels = Array.from(document.querySelectorAll("[data-transcript-panel]"));
+    const deleteForm = document.querySelector(".transcript-delete-form");
+
+    function activateTab(target) {
+        buttons.forEach((button) => {
+            const isActive = button.dataset.transcriptTab === target;
+            button.classList.toggle("is-active", isActive);
+            button.setAttribute("aria-selected", isActive ? "true" : "false");
+        });
+        panels.forEach((panel) => {
+            panel.hidden = panel.dataset.transcriptPanel !== target;
+        });
+    }
+
+    buttons.forEach((button) => {
+        button.addEventListener("click", () => {
+            activateTab(button.dataset.transcriptTab);
+        });
+    });
+
+    if (deleteForm) {
+        deleteForm.addEventListener("submit", (event) => {
+            const confirmed = window.confirm("Delete this media item? This removes transcript data, jobs, and stored files when present.");
+            if (!confirmed) {
+                event.preventDefault();
+            }
+        });
+    }
+
+    activateTab("full-text");
+})();
+</script>
+</body>
+</html>

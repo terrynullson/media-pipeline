@@ -90,3 +90,73 @@ func (r *TranscriptRepository) Save(ctx context.Context, item transcript.Transcr
 
 	return nil
 }
+
+func (r *TranscriptRepository) GetByMediaID(ctx context.Context, mediaID int64) (transcript.Transcript, bool, error) {
+	row := r.db.QueryRowContext(
+		ctx,
+		`SELECT id, media_id, language, full_text, created_at, updated_at
+		 FROM transcripts
+		 WHERE media_id = ?`,
+		mediaID,
+	)
+
+	var item transcript.Transcript
+	var createdAt string
+	var updatedAt string
+	if err := row.Scan(
+		&item.ID,
+		&item.MediaID,
+		&item.Language,
+		&item.FullText,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return transcript.Transcript{}, false, nil
+		}
+		return transcript.Transcript{}, false, fmt.Errorf("scan transcript by media id %d: %w", mediaID, err)
+	}
+
+	parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return transcript.Transcript{}, false, fmt.Errorf("parse transcript created_at: %w", err)
+	}
+	parsedUpdatedAt, err := time.Parse(time.RFC3339, updatedAt)
+	if err != nil {
+		return transcript.Transcript{}, false, fmt.Errorf("parse transcript updated_at: %w", err)
+	}
+	item.CreatedAtUTC = parsedCreatedAt
+	item.UpdatedAtUTC = parsedUpdatedAt
+
+	rows, err := r.db.QueryContext(
+		ctx,
+		`SELECT start_sec, end_sec, text, confidence
+		 FROM transcript_segments
+		 WHERE transcript_id = ?
+		 ORDER BY segment_index ASC, id ASC`,
+		item.ID,
+	)
+	if err != nil {
+		return transcript.Transcript{}, false, fmt.Errorf("query transcript segments by transcript id %d: %w", item.ID, err)
+	}
+	defer rows.Close()
+
+	item.Segments = make([]transcript.Segment, 0)
+	for rows.Next() {
+		var segment transcript.Segment
+		if err := rows.Scan(
+			&segment.StartSec,
+			&segment.EndSec,
+			&segment.Text,
+			&segment.Confidence,
+		); err != nil {
+			return transcript.Transcript{}, false, fmt.Errorf("scan transcript segment: %w", err)
+		}
+		item.Segments = append(item.Segments, segment)
+	}
+	if err := rows.Err(); err != nil {
+		return transcript.Transcript{}, false, fmt.Errorf("iterate transcript segments: %w", err)
+	}
+
+	return item, true, nil
+}

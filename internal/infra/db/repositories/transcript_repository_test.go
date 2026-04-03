@@ -104,3 +104,62 @@ func TestTranscriptRepository_SavePersistsTranscriptAndSegments(t *testing.T) {
 		t.Fatalf("segment texts = %#v, want privet/mir", segments)
 	}
 }
+
+func TestTranscriptRepository_GetByMediaIDReturnsOrderedSegments(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
+
+	mediaRepo := NewMediaRepository(sqlDB)
+	transcriptRepo := NewTranscriptRepository(sqlDB)
+
+	nowUTC := time.Date(2026, 4, 3, 13, 0, 0, 0, time.UTC)
+	mediaID, err := mediaRepo.Create(ctx, media.Media{
+		OriginalName: "ordered.wav",
+		StoredName:   "ordered.wav",
+		Extension:    ".wav",
+		MIMEType:     "audio/wav",
+		SizeBytes:    1024,
+		StoragePath:  "2026-04-03/ordered.wav",
+		Status:       media.StatusTranscribed,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	})
+	if err != nil {
+		t.Fatalf("Create(media) error = %v", err)
+	}
+
+	if err := transcriptRepo.Save(ctx, transcript.Transcript{
+		MediaID:      mediaID,
+		Language:     "en",
+		FullText:     "first second third",
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+		Segments: []transcript.Segment{
+			{StartSec: 0, EndSec: 1, Text: "first"},
+			{StartSec: 1, EndSec: 2, Text: "second"},
+			{StartSec: 2, EndSec: 3, Text: "third"},
+		},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	item, ok, err := transcriptRepo.GetByMediaID(ctx, mediaID)
+	if err != nil {
+		t.Fatalf("GetByMediaID() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("GetByMediaID() ok = false, want true")
+	}
+	if item.FullText != "first second third" {
+		t.Fatalf("FullText = %q, want %q", item.FullText, "first second third")
+	}
+	if len(item.Segments) != 3 {
+		t.Fatalf("segments = %d, want 3", len(item.Segments))
+	}
+	if item.Segments[0].Text != "first" || item.Segments[2].Text != "third" {
+		t.Fatalf("segments = %#v, want ordered segments", item.Segments)
+	}
+}

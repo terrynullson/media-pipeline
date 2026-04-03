@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"media-pipeline/internal/app/command"
+	mediaapp "media-pipeline/internal/app/media"
 	transcriptionapp "media-pipeline/internal/app/transcription"
 	domaintranscription "media-pipeline/internal/domain/transcription"
 	"media-pipeline/internal/infra/config"
@@ -42,20 +43,26 @@ func main() {
 
 	mediaRepo := repositories.NewMediaRepository(sqlDB)
 	jobRepo := repositories.NewJobRepository(sqlDB)
+	transcriptRepo := repositories.NewTranscriptRepository(sqlDB)
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
 	fileStorage := storage.NewLocalStorage(cfg.UploadDir)
+	audioStorage := storage.NewLocalStorage(cfg.AudioDir)
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
+	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, jobRepo)
+	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, fileStorage, audioStorage, logger)
 
 	uploadUC := command.NewUploadMediaUseCase(mediaRepo, jobRepo, fileStorage, cfg.MaxUploadSizeBytes(), logger)
-	templatePath, err := infraRuntime.ResolvePath("internal/transport/http/views/templates/index.html")
+	templatesDir, err := infraRuntime.ResolvePath("internal/transport/http/views/templates")
 	if err != nil {
-		logger.Error("resolve template path", slog.Any("error", err))
+		logger.Error("resolve templates path", slog.Any("error", err))
 		os.Exit(1)
 	}
 	uploadHandler, err := handlers.NewUploadHandler(
 		uploadUC,
 		profileService,
-		templatePath,
+		transcriptViewUC,
+		deleteMediaUC,
+		templatesDir,
 		cfg.MaxUploadSizeBytes(),
 		logger,
 	)

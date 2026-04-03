@@ -205,6 +205,52 @@ func TestJobRepository_ExistsActiveOrDone(t *testing.T) {
 	}
 }
 
+func TestJobRepository_FindLatestByMediaAndTypeReturnsNewest(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
+
+	mediaRepo := NewMediaRepository(sqlDB)
+	jobRepo := NewJobRepository(sqlDB)
+
+	mediaID := createTestMedia(t, ctx, mediaRepo)
+	nowUTC := time.Date(2026, 4, 3, 15, 0, 0, 0, time.UTC)
+
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeTranscribe,
+		Payload:      `{"settings":{"model_name":"tiny"}}`,
+		Status:       job.StatusPending,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		t.Fatalf("Create(first job) error = %v", err)
+	}
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeTranscribe,
+		Payload:      `{"settings":{"model_name":"small"}}`,
+		Status:       job.StatusDone,
+		CreatedAtUTC: nowUTC.Add(time.Minute),
+		UpdatedAtUTC: nowUTC.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Create(second job) error = %v", err)
+	}
+
+	item, ok, err := jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeTranscribe)
+	if err != nil {
+		t.Fatalf("FindLatestByMediaAndType() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("FindLatestByMediaAndType() ok = false, want true")
+	}
+	if item.Payload != `{"settings":{"model_name":"small"}}` {
+		t.Fatalf("Payload = %q, want newest payload", item.Payload)
+	}
+}
+
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 

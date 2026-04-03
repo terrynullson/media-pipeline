@@ -19,6 +19,8 @@ func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, stati
 	r.Get("/", uploadHandler.Index)
 	r.Post("/upload", uploadHandler.Upload)
 	r.Get("/media/statuses", uploadHandler.MediaStatuses)
+	r.Get("/media/{mediaID}/transcript", uploadHandler.Transcript)
+	r.Post("/media/{mediaID}/delete", uploadHandler.DeleteMedia)
 	r.Post("/settings/transcription", uploadHandler.SaveTranscriptionSettings)
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

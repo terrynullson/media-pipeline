@@ -10,7 +10,7 @@
 <main class="page">
     <section class="hero">
         <div class="hero-copy">
-            <p class="eyebrow">Stage 3.2</p>
+            <p class="eyebrow">Stage 3.3</p>
             <h1>Media Pipeline</h1>
             <p class="subtitle">Upload once, then watch the real pipeline state move from upload to audio extraction and transcription. The page stays server-rendered and uses light polling for current statuses.</p>
         </div>
@@ -127,6 +127,14 @@
                         {{end}}
                         <span>{{.Extension}}</span>
                     </div>
+                    <div class="pipeline-item-actions">
+                        {{if .HasTranscript}}
+                        <a class="button-link" href="{{.TranscriptURL}}">Open transcript</a>
+                        {{end}}
+                        <form action="{{.DeleteURL}}" method="post" class="delete-media-form" data-media-id="{{.ID}}" data-media-name="{{.OriginalName}}">
+                            <button type="submit" class="button-danger">Delete</button>
+                        </form>
+                    </div>
                 </article>
                 {{end}}
             {{else}}
@@ -232,6 +240,7 @@
                     <th>Status</th>
                     <th>Pipeline stage</th>
                     <th>Uploaded at (UTC)</th>
+                    <th>Actions</th>
                 </tr>
                 </thead>
                 <tbody id="recent-table-body">
@@ -244,6 +253,16 @@
                     <td><span class="status-chip status-chip-{{.StatusTone}}">{{.StatusLabel}}</span></td>
                     <td>{{.StageLabel}}</td>
                     <td>{{.CreatedAtUTC}}</td>
+                    <td>
+                        <div class="row-actions">
+                            {{if .HasTranscript}}
+                            <a class="button-link button-link-compact" href="{{.TranscriptURL}}">Open transcript</a>
+                            {{end}}
+                            <form action="{{.DeleteURL}}" method="post" class="delete-media-form" data-media-id="{{.ID}}" data-media-name="{{.OriginalName}}">
+                                <button type="submit" class="button-danger button-danger-compact">Delete</button>
+                            </form>
+                        </div>
+                    </td>
                 </tr>
                 {{end}}
                 </tbody>
@@ -400,6 +419,12 @@
                     <span>${item.StageValue > 0 ? `Stage ${item.StageValue} / ${item.StageTotal}` : "Needs attention"}</span>
                     <span>${escapeHtml(item.Extension)}</span>
                 </div>
+                <div class="pipeline-item-actions">
+                    ${item.HasTranscript ? `<a class="button-link" href="${escapeHtml(item.TranscriptURL)}">Open transcript</a>` : ""}
+                    <form action="${escapeHtml(item.DeleteURL)}" method="post" class="delete-media-form" data-media-id="${item.ID}" data-media-name="${escapeHtml(item.OriginalName)}">
+                        <button type="submit" class="button-danger">Delete</button>
+                    </form>
+                </div>
             </article>
         `).join("");
     }
@@ -424,8 +449,57 @@
                 <td><span class="status-chip status-chip-${escapeHtml(item.StatusTone)}">${escapeHtml(item.StatusLabel)}</span></td>
                 <td>${escapeHtml(item.StageLabel)}</td>
                 <td>${escapeHtml(item.CreatedAtUTC)}</td>
+                <td>
+                    <div class="row-actions">
+                        ${item.HasTranscript ? `<a class="button-link button-link-compact" href="${escapeHtml(item.TranscriptURL)}">Open transcript</a>` : ""}
+                        <form action="${escapeHtml(item.DeleteURL)}" method="post" class="delete-media-form" data-media-id="${item.ID}" data-media-name="${escapeHtml(item.OriginalName)}">
+                            <button type="submit" class="button-danger button-danger-compact">Delete</button>
+                        </form>
+                    </div>
+                </td>
             </tr>
         `).join("");
+    }
+
+    async function submitDeleteForm(form) {
+        const mediaName = form.dataset.mediaName || "this media item";
+        const confirmed = window.confirm(`Delete ${mediaName}? This removes transcript data, jobs, and stored files when present.`);
+        if (!confirmed) {
+            return;
+        }
+
+        const submitButton = form.querySelector("button[type='submit']");
+        if (submitButton) {
+            submitButton.disabled = true;
+        }
+
+        try {
+            const response = await fetch(form.action, {
+                method: "POST",
+                headers: {
+                    "Accept": "application/json",
+                    "X-Requested-With": "XMLHttpRequest"
+                }
+            });
+            let payload = null;
+            try {
+                payload = await response.json();
+            } catch (_) {
+            }
+
+            if (!response.ok) {
+                throw new Error(payload && payload.message ? payload.message : "Delete failed.");
+            }
+
+            renderNotice("success", payload && payload.message ? payload.message : "Media item was deleted.");
+            await refreshStatuses();
+        } catch (error) {
+            renderNotice("error", error && error.message ? error.message : "Delete failed.");
+        } finally {
+            if (submitButton) {
+                submitButton.disabled = false;
+            }
+        }
     }
 
     function scheduleNextPoll(delayMs) {
@@ -566,6 +640,16 @@
             clearUploadProgress();
         });
         xhr.send(payload);
+    });
+
+    document.addEventListener("submit", (event) => {
+        const deleteForm = event.target.closest(".delete-media-form");
+        if (!deleteForm) {
+            return;
+        }
+
+        event.preventDefault();
+        submitDeleteForm(deleteForm);
     });
 
     renderSelectedFile(fileInput.files && fileInput.files[0] ? fileInput.files[0] : null);

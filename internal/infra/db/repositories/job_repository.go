@@ -229,6 +229,52 @@ func (r *JobRepository) Requeue(ctx context.Context, id int64, errorMessage stri
 	return ensureRowsAffected(result, id, "requeue job")
 }
 
+func (r *JobRepository) FindLatestByMediaAndType(ctx context.Context, mediaID int64, jobType job.Type) (job.Job, bool, error) {
+	row := r.db.QueryRowContext(
+		ctx,
+		`SELECT id, media_id, type, payload, status, attempts, error_message, created_at, updated_at
+		 FROM jobs
+		 WHERE media_id = ? AND type = ?
+		 ORDER BY datetime(created_at) DESC, id DESC
+		 LIMIT 1`,
+		mediaID,
+		jobType,
+	)
+
+	var item job.Job
+	var createdAt string
+	var updatedAt string
+	if err := row.Scan(
+		&item.ID,
+		&item.MediaID,
+		&item.Type,
+		&item.Payload,
+		&item.Status,
+		&item.Attempts,
+		&item.ErrorMessage,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return job.Job{}, false, nil
+		}
+		return job.Job{}, false, fmt.Errorf("scan latest job by media id %d and type %s: %w", mediaID, jobType, err)
+	}
+
+	parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return job.Job{}, false, fmt.Errorf("parse latest job created_at: %w", err)
+	}
+	parsedUpdatedAt, err := time.Parse(time.RFC3339, updatedAt)
+	if err != nil {
+		return job.Job{}, false, fmt.Errorf("parse latest job updated_at: %w", err)
+	}
+	item.CreatedAtUTC = parsedCreatedAt
+	item.UpdatedAtUTC = parsedUpdatedAt
+
+	return item, true, nil
+}
+
 func ensureRowsAffected(result sql.Result, id int64, action string) error {
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {

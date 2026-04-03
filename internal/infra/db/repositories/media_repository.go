@@ -56,6 +56,54 @@ func (r *MediaRepository) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+func (r *MediaRepository) DeleteWithAssociations(ctx context.Context, id int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin media delete tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(
+		ctx,
+		`DELETE FROM transcript_segments
+		 WHERE transcript_id IN (
+		 	SELECT id
+		 	FROM transcripts
+		 	WHERE media_id = ?
+		 )`,
+		id,
+	); err != nil {
+		return fmt.Errorf("delete transcript segments by media id: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM transcripts WHERE media_id = ?", id); err != nil {
+		return fmt.Errorf("delete transcripts by media id: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM jobs WHERE media_id = ?", id); err != nil {
+		return fmt.Errorf("delete jobs by media id: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, "DELETE FROM media WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete media by id: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete media rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("delete media by id: media %d not found", id)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit media delete tx: %w", err)
+	}
+
+	return nil
+}
+
 func (r *MediaRepository) ListRecent(ctx context.Context, limit int) ([]media.Media, error) {
 	rows, err := r.db.QueryContext(
 		ctx,

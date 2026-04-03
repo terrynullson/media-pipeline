@@ -4,6 +4,9 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"media-pipeline/internal/domain/job"
+	"media-pipeline/internal/domain/transcript"
 )
 
 func TestMediaRepository_StatusOnlyUpdatesPreservePathsAndTranscript(t *testing.T) {
@@ -37,4 +40,64 @@ func TestMediaRepository_StatusOnlyUpdatesPreservePathsAndTranscript(t *testing.
 	if item.TranscriptText != "hello world" {
 		t.Fatalf("TranscriptText = %q, want preserved value", item.TranscriptText)
 	}
+}
+
+func TestMediaRepository_DeleteWithAssociationsRemovesRows(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
+
+	mediaRepo := NewMediaRepository(sqlDB)
+	jobRepo := NewJobRepository(sqlDB)
+	transcriptRepo := NewTranscriptRepository(sqlDB)
+
+	mediaID := createTestMedia(t, ctx, mediaRepo)
+	nowUTC := time.Date(2026, 4, 3, 12, 0, 0, 0, time.UTC)
+
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeExtractAudio,
+		Status:       job.StatusDone,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		t.Fatalf("Create(job) error = %v", err)
+	}
+
+	if err := transcriptRepo.Save(ctx, transcript.Transcript{
+		MediaID:      mediaID,
+		Language:     "ru",
+		FullText:     "hello world",
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+		Segments: []transcript.Segment{
+			{StartSec: 0, EndSec: 1, Text: "hello"},
+		},
+	}); err != nil {
+		t.Fatalf("Save(transcript) error = %v", err)
+	}
+
+	if err := mediaRepo.DeleteWithAssociations(ctx, mediaID); err != nil {
+		t.Fatalf("DeleteWithAssociations() error = %v", err)
+	}
+
+	assertCount := func(query string, want int) {
+		t.Helper()
+		var count int
+		if err := sqlDB.QueryRowContext(ctx, query, mediaID).Scan(&count); err != nil {
+			t.Fatalf("QueryRow(%q) error = %v", query, err)
+		}
+		if count != want {
+			t.Fatalf("count for %q = %d, want %d", query, count, want)
+		}
+	}
+
+	assertCount("SELECT COUNT(*) FROM media WHERE id = ?", 0)
+	assertCount("SELECT COUNT(*) FROM jobs WHERE media_id = ?", 0)
+	assertCount("SELECT COUNT(*) FROM transcripts WHERE media_id = ?", 0)
+	assertCount(`SELECT COUNT(*)
+		FROM transcript_segments
+		WHERE transcript_id IN (SELECT id FROM transcripts WHERE media_id = ?)`, 0)
 }
