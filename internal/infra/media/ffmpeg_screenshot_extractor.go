@@ -29,45 +29,60 @@ func (e *FFmpegScreenshotExtractor) Extract(
 	relativeOutputPath := BuildScreenshotRelativePath(in.MediaID, in.TriggerEventID, in.TimestampSec, in.ProcessedAt)
 	fullOutputPath := filepath.Join(in.OutputDir, filepath.FromSlash(relativeOutputPath))
 	outputDir := filepath.Dir(fullOutputPath)
+	tempOutputPath := buildTempScreenshotPath(fullOutputPath)
 
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return ports.ExtractScreenshotOutput{}, fmt.Errorf("create screenshot output dir: %w", err)
 	}
-	if err := os.Remove(fullOutputPath); err != nil && !os.IsNotExist(err) {
-		return ports.ExtractScreenshotOutput{}, fmt.Errorf("remove stale screenshot output: %w", err)
+	if err := os.Remove(tempOutputPath); err != nil && !os.IsNotExist(err) {
+		return ports.ExtractScreenshotOutput{}, fmt.Errorf("remove stale temporary screenshot output: %w", err)
 	}
 
-	args := BuildScreenshotFFmpegArgs(in.InputPath, fullOutputPath, in.TimestampSec)
+	args := BuildScreenshotFFmpegArgs(in.InputPath, tempOutputPath, in.TimestampSec)
 	cmd := exec.CommandContext(ctx, e.binary, args...)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		_ = os.Remove(fullOutputPath)
+		_ = os.Remove(tempOutputPath)
 		return ports.ExtractScreenshotOutput{
 			ImagePath: relativeOutputPath,
 			Stderr:    stderr.String(),
 		}, fmt.Errorf("run ffmpeg screenshot extraction: %w", err)
 	}
 
-	file, err := os.Open(fullOutputPath)
+	file, err := os.Open(tempOutputPath)
 	if err != nil {
-		_ = os.Remove(fullOutputPath)
+		_ = os.Remove(tempOutputPath)
 		return ports.ExtractScreenshotOutput{
 			ImagePath: relativeOutputPath,
 			Stderr:    stderr.String(),
 		}, fmt.Errorf("open screenshot output: %w", err)
 	}
-	defer file.Close()
 
 	config, _, err := image.DecodeConfig(file)
+	closeErr := file.Close()
 	if err != nil {
-		_ = os.Remove(fullOutputPath)
+		_ = os.Remove(tempOutputPath)
 		return ports.ExtractScreenshotOutput{
 			ImagePath: relativeOutputPath,
 			Stderr:    stderr.String(),
 		}, fmt.Errorf("decode screenshot dimensions: %w", err)
+	}
+	if closeErr != nil {
+		_ = os.Remove(tempOutputPath)
+		return ports.ExtractScreenshotOutput{
+			ImagePath: relativeOutputPath,
+			Stderr:    stderr.String(),
+		}, fmt.Errorf("close screenshot output: %w", closeErr)
+	}
+	if err := replaceFileAtomically(tempOutputPath, fullOutputPath); err != nil {
+		_ = os.Remove(tempOutputPath)
+		return ports.ExtractScreenshotOutput{
+			ImagePath: relativeOutputPath,
+			Stderr:    stderr.String(),
+		}, fmt.Errorf("promote screenshot output: %w", err)
 	}
 
 	return ports.ExtractScreenshotOutput{
@@ -97,4 +112,46 @@ func BuildScreenshotFFmpegArgs(inputPath string, outputPath string, timestampSec
 		"-q:v", "2",
 		outputPath,
 	}
+}
+
+func replaceFileAtomically(tempPath string, finalPath string) error {
+	backupPath := finalPath + ".bak"
+	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale backup file: %w", err)
+	}
+
+	if _, err := os.Stat(finalPath); err == nil {
+		if err := os.Rename(finalPath, backupPath); err != nil {
+			return fmt.Errorf("move existing screenshot to backup: %w", err)
+		}
+		if err := os.Rename(tempPath, finalPath); err != nil {
+			restoreErr := os.Rename(backupPath, finalPath)
+			if restoreErr != nil {
+				return fmt.Errorf("replace screenshot file: %w (restore backup: %v)", err, restoreErr)
+			}
+			return fmt.Errorf("replace screenshot file: %w", err)
+		}
+		if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove screenshot backup file: %w", err)
+		}
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat final screenshot output: %w", err)
+	}
+
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		return fmt.Errorf("move screenshot output into place: %w", err)
+	}
+
+	return nil
+}
+
+func buildTempScreenshotPath(finalPath string) string {
+	ext := filepath.Ext(finalPath)
+	base := finalPath[:len(finalPath)-len(ext)]
+	if ext == "" {
+		return finalPath + ".tmp"
+	}
+
+	return base + ".tmp" + ext
 }

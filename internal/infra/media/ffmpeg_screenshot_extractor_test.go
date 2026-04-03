@@ -38,6 +38,49 @@ func TestBuildScreenshotFFmpegArgs(t *testing.T) {
 	}
 }
 
+func TestReplaceFileAtomically_ReplacesExistingFile(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	finalPath := filepath.Join(tempDir, "frame.jpg")
+	tempPath := finalPath + ".tmp"
+
+	if err := os.WriteFile(finalPath, []byte("old"), 0o644); err != nil {
+		t.Fatalf("WriteFile(finalPath) error = %v", err)
+	}
+	if err := os.WriteFile(tempPath, []byte("new"), 0o644); err != nil {
+		t.Fatalf("WriteFile(tempPath) error = %v", err)
+	}
+
+	if err := replaceFileAtomically(tempPath, finalPath); err != nil {
+		t.Fatalf("replaceFileAtomically() error = %v", err)
+	}
+
+	content, err := os.ReadFile(finalPath)
+	if err != nil {
+		t.Fatalf("ReadFile(finalPath) error = %v", err)
+	}
+	if string(content) != "new" {
+		t.Fatalf("final file content = %q, want %q", string(content), "new")
+	}
+	if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
+		t.Fatalf("temp file still exists, stat err = %v", err)
+	}
+	if _, err := os.Stat(finalPath + ".bak"); !os.IsNotExist(err) {
+		t.Fatalf("backup file still exists, stat err = %v", err)
+	}
+}
+
+func TestBuildTempScreenshotPath_PreservesImageExtension(t *testing.T) {
+	t.Parallel()
+
+	got := buildTempScreenshotPath(filepath.Join("shots", "frame.jpg"))
+	want := filepath.Join("shots", "frame.tmp.jpg")
+	if got != want {
+		t.Fatalf("buildTempScreenshotPath() = %q, want %q", got, want)
+	}
+}
+
 func TestFFmpegScreenshotExtractor_Extract_Smoke(t *testing.T) {
 	t.Parallel()
 
