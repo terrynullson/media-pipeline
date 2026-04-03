@@ -10,6 +10,7 @@ import (
 	domainmedia "media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/transcript"
 	"media-pipeline/internal/domain/transcription"
+	domaintrigger "media-pipeline/internal/domain/trigger"
 )
 
 func TestTranscriptViewUseCase_LoadIncludesTranscriptAndSettings(t *testing.T) {
@@ -49,6 +50,7 @@ func TestTranscriptViewUseCase_LoadIncludesTranscriptAndSettings(t *testing.T) {
 	uc := NewTranscriptViewUseCase(
 		stubTranscriptMediaReader{item: mediaItem},
 		stubTranscriptReader{item: transcriptItem, ok: true},
+		stubTriggerEventReader{},
 		stubTranscriptJobReader{item: job.Job{MediaID: 42, Type: job.TypeTranscribe, Payload: payload}, ok: true},
 	)
 
@@ -76,6 +78,7 @@ func TestTranscriptViewUseCase_LoadKeepsWorkingWhenPayloadInvalid(t *testing.T) 
 	uc := NewTranscriptViewUseCase(
 		stubTranscriptMediaReader{item: domainmedia.Media{ID: 11, Status: domainmedia.StatusTranscribed}},
 		stubTranscriptReader{item: transcript.Transcript{MediaID: 11, FullText: "text"}, ok: true},
+		stubTriggerEventReader{},
 		stubTranscriptJobReader{item: job.Job{MediaID: 11, Type: job.TypeTranscribe, Payload: `{"broken":true}`}, ok: true},
 	)
 
@@ -132,12 +135,25 @@ func (s stubTranscriptJobReader) FindLatestByMediaAndType(context.Context, int64
 	return s.item, s.ok, nil
 }
 
+type stubTriggerEventReader struct {
+	items []domaintrigger.Event
+	err   error
+}
+
+func (s stubTriggerEventReader) ListByMediaID(context.Context, int64) ([]domaintrigger.Event, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.items, nil
+}
+
 func TestTranscriptViewUseCase_LoadPropagatesMediaError(t *testing.T) {
 	t.Parallel()
 
 	uc := NewTranscriptViewUseCase(
 		stubTranscriptMediaReader{err: errors.New("boom")},
 		stubTranscriptReader{},
+		stubTriggerEventReader{},
 		stubTranscriptJobReader{},
 	)
 

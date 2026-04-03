@@ -10,9 +10,9 @@
 <main class="page">
     <section class="hero">
         <div class="hero-copy">
-            <p class="eyebrow">Stage 3.3</p>
+            <p class="eyebrow">Stage 4</p>
             <h1>Media Pipeline</h1>
-            <p class="subtitle">Upload once, then watch the real pipeline state move from upload to audio extraction and transcription. The page stays server-rendered and uses light polling for current statuses.</p>
+            <p class="subtitle">Upload once, then watch the real pipeline state move from upload to audio extraction and transcription. Trigger rules and trigger event review stay server-rendered and minimal.</p>
         </div>
         <div class="hero-meta">
             <div class="meta-card">
@@ -218,6 +218,84 @@
                 <p class="hint">CPU supports <code>int8</code> and <code>float32</code>. CUDA supports <code>float16</code> and <code>int8_float16</code>.</p>
             </div>
         </form>
+    </section>
+
+    <section class="card">
+        <div class="section-header">
+            <div>
+                <h2>Trigger rules</h2>
+                <p class="hint">Rules are stored in SQLite and used by the worker after transcription completes. Matching is deterministic and case-insensitive.</p>
+            </div>
+        </div>
+
+        {{if .TriggerRuleError}}
+        <div class="notice notice-error">{{.TriggerRuleError}}</div>
+        {{end}}
+        {{if .TriggerRuleSuccess}}
+        <div class="notice notice-success">{{.TriggerRuleSuccess}}</div>
+        {{end}}
+
+        <form action="/trigger-rules" method="post" class="trigger-rules-form">
+            <label>
+                <span>Name</span>
+                <input type="text" name="name" value="{{.TriggerRuleForm.Name}}" placeholder="Billing complaint">
+            </label>
+
+            <label>
+                <span>Category</span>
+                <input type="text" name="category" value="{{.TriggerRuleForm.Category}}" placeholder="billing">
+            </label>
+
+            <label>
+                <span>Pattern</span>
+                <input type="text" name="pattern" value="{{.TriggerRuleForm.Pattern}}" placeholder="refund">
+            </label>
+
+            <label>
+                <span>Match mode</span>
+                <select name="match_mode">
+                    {{range .MatchModeOptions}}
+                    <option value="{{.}}" {{if eq $.TriggerRuleForm.MatchMode .}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+            </label>
+
+            <div class="settings-actions">
+                <button type="submit">Add rule</button>
+                <p class="hint"><code>contains</code> finds a phrase inside a segment. <code>exact</code> requires the full segment text to match.</p>
+            </div>
+        </form>
+
+        {{if .TriggerRules}}
+        <div class="trigger-rule-list">
+            {{range .TriggerRules}}
+            <article class="trigger-rule-item">
+                <div class="trigger-rule-copy">
+                    <div class="trigger-rule-header">
+                        <strong>{{.Name}}</strong>
+                        <span class="status-chip status-chip-{{.EnabledTone}}">{{.EnabledLabel}}</span>
+                    </div>
+                    <p class="hint">{{.Category}} · {{.MatchMode}}</p>
+                    <p class="trigger-rule-pattern">{{.Pattern}}</p>
+                </div>
+                <div class="trigger-rule-actions">
+                    <form action="{{.ToggleURL}}" method="post">
+                        <input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}">
+                        <button type="submit" class="button-link button-link-compact">{{.ToggleLabel}}</button>
+                    </form>
+                    <form action="{{.DeleteURL}}" method="post">
+                        <button type="submit" class="button-danger button-danger-compact">Delete</button>
+                    </form>
+                </div>
+            </article>
+            {{end}}
+        </div>
+        {{else}}
+        <div class="empty-state">
+            <p>No trigger rules yet.</p>
+            <p class="hint">Create the first rule above. New transcripts will be analyzed by the worker.</p>
+        </div>
+        {{end}}
     </section>
 
     <section class="card">

@@ -8,6 +8,7 @@ import (
 	"media-pipeline/internal/app/command"
 	mediaapp "media-pipeline/internal/app/media"
 	transcriptionapp "media-pipeline/internal/app/transcription"
+	triggerapp "media-pipeline/internal/app/trigger"
 	domaintranscription "media-pipeline/internal/domain/transcription"
 	"media-pipeline/internal/infra/config"
 	"media-pipeline/internal/infra/db"
@@ -44,11 +45,14 @@ func main() {
 	mediaRepo := repositories.NewMediaRepository(sqlDB)
 	jobRepo := repositories.NewJobRepository(sqlDB)
 	transcriptRepo := repositories.NewTranscriptRepository(sqlDB)
+	triggerRuleRepo := repositories.NewTriggerRuleRepository(sqlDB)
+	triggerEventRepo := repositories.NewTriggerEventRepository(sqlDB)
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
 	fileStorage := storage.NewLocalStorage(cfg.UploadDir)
 	audioStorage := storage.NewLocalStorage(cfg.AudioDir)
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
-	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, jobRepo)
+	triggerRuleService := triggerapp.NewService(triggerRuleRepo)
+	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, triggerEventRepo, jobRepo)
 	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, fileStorage, audioStorage, logger)
 
 	uploadUC := command.NewUploadMediaUseCase(mediaRepo, jobRepo, fileStorage, cfg.MaxUploadSizeBytes(), logger)
@@ -60,6 +64,7 @@ func main() {
 	uploadHandler, err := handlers.NewUploadHandler(
 		uploadUC,
 		profileService,
+		triggerRuleService,
 		transcriptViewUC,
 		deleteMediaUC,
 		templatesDir,

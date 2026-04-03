@@ -11,8 +11,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/transcript"
 	"media-pipeline/internal/domain/transcription"
+	domaintrigger "media-pipeline/internal/domain/trigger"
 	"media-pipeline/internal/observability"
 )
 
@@ -29,6 +31,11 @@ type TranscriptPageViewData struct {
 	SettingsUnavailable bool
 	FullTextParagraphs  []string
 	Segments            []TranscriptSegmentView
+	TriggerMatches      []TriggerEventView
+	TriggerStatusLabel  string
+	TriggerStatusTone   string
+	TriggerNotice       string
+	TriggerNoticeTone   string
 }
 
 type TranscriptSettingItem struct {
@@ -42,6 +49,15 @@ type TranscriptSegmentView struct {
 	Text          string
 	Confidence    string
 	HasConfidence bool
+}
+
+type TriggerEventView struct {
+	Category      string
+	RuleName      string
+	MatchedPhrase string
+	Timestamp     string
+	SegmentText   string
+	ContextText   string
 }
 
 func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +100,8 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		data.FullTextParagraphs = buildTranscriptParagraphs(result.Transcript.Segments, result.Transcript.FullText)
 		data.Segments = buildTranscriptSegments(result.Transcript.Segments)
 	}
+	data.TriggerMatches = buildTriggerEventViews(result.TriggerEvents)
+	data.TriggerStatusLabel, data.TriggerStatusTone, data.TriggerNotice, data.TriggerNoticeTone = describeTriggerAnalysis(result.AnalyzeJob, len(data.TriggerMatches))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if execErr := h.tmpl.ExecuteTemplate(w, "transcript.html", data); execErr != nil {
@@ -192,6 +210,57 @@ func buildTranscriptSegments(items []transcript.Segment) []TranscriptSegmentView
 	}
 
 	return segments
+}
+
+func buildTriggerEventViews(items []domaintrigger.Event) []TriggerEventView {
+	views := make([]TriggerEventView, 0, len(items))
+	for _, item := range items {
+		contextText := strings.TrimSpace(item.ContextText)
+		segmentText := strings.TrimSpace(item.SegmentText)
+		if contextText == segmentText {
+			contextText = ""
+		}
+
+		views = append(views, TriggerEventView{
+			Category:      item.Category,
+			RuleName:      item.RuleName,
+			MatchedPhrase: item.MatchedText,
+			Timestamp:     FormatTimestamp(item.StartSec),
+			SegmentText:   segmentText,
+			ContextText:   contextText,
+		})
+	}
+
+	return views
+}
+
+func describeTriggerAnalysis(currentJob *job.Job, triggerCount int) (label string, tone string, notice string, noticeTone string) {
+	if currentJob == nil {
+		if triggerCount > 0 {
+			return "Ready", "success", "", ""
+		}
+		return "Not started", "neutral", "Trigger analysis has not started yet.", "neutral"
+	}
+
+	switch currentJob.Status {
+	case job.StatusPending:
+		return "Queued", "ready", "Trigger analysis is queued and will run in the worker.", "neutral"
+	case job.StatusRunning:
+		return "Running", "running", "Trigger analysis is running now.", "neutral"
+	case job.StatusFailed:
+		message := "Trigger analysis failed."
+		if strings.TrimSpace(currentJob.ErrorMessage) != "" {
+			message = currentJob.ErrorMessage
+		}
+		return "Failed", "error", message, "error"
+	case job.StatusDone:
+		if triggerCount == 0 {
+			return "Done", "success", "No trigger matches were found for this transcript.", "neutral"
+		}
+		return "Done", "success", "", ""
+	default:
+		return string(currentJob.Status), "neutral", "", ""
+	}
 }
 
 func buildTranscriptParagraphs(items []transcript.Segment, fullText string) []string {

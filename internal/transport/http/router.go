@@ -21,6 +21,9 @@ func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, stati
 	r.Get("/media/statuses", uploadHandler.MediaStatuses)
 	r.Get("/media/{mediaID}/transcript", uploadHandler.Transcript)
 	r.Post("/media/{mediaID}/delete", uploadHandler.DeleteMedia)
+	r.Post("/trigger-rules", uploadHandler.CreateTriggerRule)
+	r.Post("/trigger-rules/{ruleID}/toggle", uploadHandler.ToggleTriggerRule)
+	r.Post("/trigger-rules/{ruleID}/delete", uploadHandler.DeleteTriggerRule)
 	r.Post("/settings/transcription", uploadHandler.SaveTranscriptionSettings)
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

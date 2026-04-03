@@ -45,6 +45,8 @@ func main() {
 	jobRepo := repositories.NewJobRepository(sqlDB)
 	mediaRepo := repositories.NewMediaRepository(sqlDB)
 	transcriptRepo := repositories.NewTranscriptRepository(sqlDB)
+	triggerRuleRepo := repositories.NewTriggerRuleRepository(sqlDB)
+	triggerEventRepo := repositories.NewTriggerEventRepository(sqlDB)
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
 	audioExtractor := infraMedia.NewFFmpegExtractor(cfg.FFmpegBinary)
@@ -59,6 +61,8 @@ func main() {
 		jobRepo,
 		mediaRepo,
 		transcriptRepo,
+		triggerRuleRepo,
+		triggerEventRepo,
 		audioExtractor,
 		transcriber,
 		profileService,

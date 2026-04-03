@@ -14,6 +14,7 @@ import (
 	"media-pipeline/internal/domain/ports"
 	"media-pipeline/internal/domain/transcript"
 	"media-pipeline/internal/domain/transcription"
+	domaintrigger "media-pipeline/internal/domain/trigger"
 )
 
 func TestProcessor_RecoverInterruptedJobs(t *testing.T) {
@@ -90,6 +91,8 @@ func TestProcessor_ProcessNextExtractAudioEnqueuesTranscribe(t *testing.T) {
 		jobRepo,
 		mediaRepo,
 		&stubTranscriptRepository{},
+		&stubTriggerRuleRepository{},
+		&stubTriggerEventRepository{},
 		audioExtractor,
 		&stubTranscriber{},
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("ru")},
@@ -188,6 +191,8 @@ func TestProcessor_ProcessNextTranscribePersistsTranscript(t *testing.T) {
 		jobRepo,
 		mediaRepo,
 		transcriptRepo,
+		&stubTriggerRuleRepository{},
+		&stubTriggerEventRepository{},
 		&stubAudioExtractor{},
 		transcriber,
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
@@ -274,6 +279,8 @@ func TestProcessor_ProcessNextExtractAudioDoesNotDuplicateTranscribeJob(t *testi
 		jobRepo,
 		mediaRepo,
 		&stubTranscriptRepository{},
+		&stubTriggerRuleRepository{},
+		&stubTriggerEventRepository{},
 		audioExtractor,
 		&stubTranscriber{},
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("ru")},
@@ -296,6 +303,77 @@ func TestProcessor_ProcessNextExtractAudioDoesNotDuplicateTranscribeJob(t *testi
 	}
 }
 
+func TestProcessor_ProcessNextAnalyzeTriggersPersistsEvents(t *testing.T) {
+	t.Parallel()
+
+	jobRepo := &stubJobRepository{
+		claimByType: map[job.Type]claimResult{
+			job.TypeAnalyzeTriggers: {
+				job: job.Job{ID: 33, MediaID: 60, Type: job.TypeAnalyzeTriggers, Status: job.StatusRunning},
+				ok:  true,
+			},
+		},
+	}
+	mediaRepo := &stubMediaRepository{}
+	transcriptID := int64(12)
+	transcriptRepo := &stubTranscriptRepository{
+		item: transcript.Transcript{
+			ID:      transcriptID,
+			MediaID: 60,
+			Segments: []transcript.Segment{
+				{StartSec: 0, EndSec: 2, Text: "Customer asked for a refund today."},
+				{StartSec: 2, EndSec: 4, Text: "No escalation requested."},
+			},
+		},
+		ok: true,
+	}
+	triggerRuleRepo := &stubTriggerRuleRepository{
+		items: []domaintrigger.Rule{
+			{ID: 7, Name: "Refund", Category: "billing", Pattern: "refund", MatchMode: domaintrigger.MatchModeContains, Enabled: true},
+		},
+	}
+	triggerEventRepo := &stubTriggerEventRepository{}
+
+	processor := NewProcessor(
+		jobRepo,
+		mediaRepo,
+		transcriptRepo,
+		triggerRuleRepo,
+		triggerEventRepo,
+		&stubAudioExtractor{},
+		&stubTranscriber{},
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
+		t.TempDir(),
+		t.TempDir(),
+		10*time.Second,
+		10*time.Second,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	processed, err := processor.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessNext() error = %v", err)
+	}
+	if !processed {
+		t.Fatal("ProcessNext() processed = false, want true")
+	}
+	if len(triggerEventRepo.replaceCalls) != 1 {
+		t.Fatalf("replace calls = %d, want 1", len(triggerEventRepo.replaceCalls))
+	}
+	if got := len(triggerEventRepo.replaceCalls[0].events); got != 1 {
+		t.Fatalf("saved trigger events = %d, want 1", got)
+	}
+	if triggerEventRepo.replaceCalls[0].events[0].MatchedText != "refund" {
+		t.Fatalf("matched text = %q, want %q", triggerEventRepo.replaceCalls[0].events[0].MatchedText, "refund")
+	}
+	if len(jobRepo.markDoneIDs) != 1 || jobRepo.markDoneIDs[0] != 33 {
+		t.Fatalf("mark done ids = %#v, want [33]", jobRepo.markDoneIDs)
+	}
+	if len(mediaRepo.markFailedIDs) != 0 {
+		t.Fatalf("mark failed ids = %#v, want none", mediaRepo.markFailedIDs)
+	}
+}
+
 func newTestProcessor(
 	jobRepo *stubJobRepository,
 	mediaRepo *stubMediaRepository,
@@ -307,6 +385,8 @@ func newTestProcessor(
 		jobRepo,
 		mediaRepo,
 		transcriptRepo,
+		&stubTriggerRuleRepository{},
+		&stubTriggerEventRepository{},
 		audioExtractor,
 		transcriber,
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
@@ -440,10 +520,61 @@ func (s *stubMediaRepository) MarkUploaded(_ context.Context, id int64, _ time.T
 
 type stubTranscriptRepository struct {
 	saved []transcript.Transcript
+	item  transcript.Transcript
+	ok    bool
+	err   error
 }
 
 func (s *stubTranscriptRepository) Save(_ context.Context, item transcript.Transcript) error {
 	s.saved = append(s.saved, item)
+	return nil
+}
+
+func (s *stubTranscriptRepository) GetByMediaID(_ context.Context, _ int64) (transcript.Transcript, bool, error) {
+	if s.err != nil {
+		return transcript.Transcript{}, false, s.err
+	}
+	if s.ok {
+		return s.item, true, nil
+	}
+	if len(s.saved) > 0 {
+		return s.saved[len(s.saved)-1], true, nil
+	}
+	return transcript.Transcript{}, false, nil
+}
+
+type stubTriggerRuleRepository struct {
+	items []domaintrigger.Rule
+	err   error
+}
+
+func (s *stubTriggerRuleRepository) ListEnabled(context.Context) ([]domaintrigger.Rule, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.items, nil
+}
+
+type replaceTriggerEventsCall struct {
+	mediaID      int64
+	transcriptID *int64
+	events       []domaintrigger.Event
+}
+
+type stubTriggerEventRepository struct {
+	replaceCalls []replaceTriggerEventsCall
+	err          error
+}
+
+func (s *stubTriggerEventRepository) ReplaceForMedia(_ context.Context, mediaID int64, transcriptID *int64, events []domaintrigger.Event) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.replaceCalls = append(s.replaceCalls, replaceTriggerEventsCall{
+		mediaID:      mediaID,
+		transcriptID: transcriptID,
+		events:       append([]domaintrigger.Event(nil), events...),
+	})
 	return nil
 }
 

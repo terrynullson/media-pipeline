@@ -20,10 +20,12 @@ import (
 	"media-pipeline/internal/app/command"
 	mediaapp "media-pipeline/internal/app/media"
 	transcriptionapp "media-pipeline/internal/app/transcription"
+	triggerapp "media-pipeline/internal/app/trigger"
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/transcript"
 	domaintranscription "media-pipeline/internal/domain/transcription"
+	domaintrigger "media-pipeline/internal/domain/trigger"
 	"media-pipeline/internal/infra/db"
 	"media-pipeline/internal/infra/db/repositories"
 	infraRuntime "media-pipeline/internal/infra/runtime"
@@ -217,6 +219,8 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 	mediaRepo := repositories.NewMediaRepository(app.db)
 	jobRepo := repositories.NewJobRepository(app.db)
 	transcriptRepo := repositories.NewTranscriptRepository(app.db)
+	triggerEventRepo := repositories.NewTriggerEventRepository(app.db)
+	triggerRuleRepo := repositories.NewTriggerRuleRepository(app.db)
 
 	nowUTC := time.Date(2026, 4, 3, 16, 0, 0, 0, time.UTC)
 	mediaID, err := mediaRepo.Create(ctx, media.Media{
@@ -258,6 +262,15 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Create(job) error = %v", err)
 	}
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeAnalyzeTriggers,
+		Status:       job.StatusDone,
+		CreatedAtUTC: nowUTC.Add(time.Minute),
+		UpdatedAtUTC: nowUTC.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Create(analyze job) error = %v", err)
+	}
 
 	confidence := 0.87
 	if err := transcriptRepo.Save(ctx, transcript.Transcript{
@@ -276,6 +289,38 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 	if err := mediaRepo.MarkTranscribed(ctx, mediaID, "Hello world. Nice to meet you.", nowUTC); err != nil {
 		t.Fatalf("MarkTranscribed() error = %v", err)
 	}
+	transcriptItem, ok, err := transcriptRepo.GetByMediaID(ctx, mediaID)
+	if err != nil {
+		t.Fatalf("GetByMediaID(transcript) error = %v", err)
+	}
+	if !ok {
+		t.Fatal("GetByMediaID(transcript) ok = false, want true")
+	}
+	triggerRules, err := triggerRuleRepo.List(ctx)
+	if err != nil {
+		t.Fatalf("List(trigger rules) error = %v", err)
+	}
+	if len(triggerRules) == 0 {
+		t.Fatal("trigger rules are empty, want seeded rules")
+	}
+	transcriptID := transcriptItem.ID
+	if err := triggerEventRepo.ReplaceForMedia(ctx, mediaID, &transcriptID, []domaintrigger.Event{
+		{
+			MediaID:      mediaID,
+			TranscriptID: &transcriptID,
+			RuleID:       triggerRules[0].ID,
+			Category:     "billing",
+			MatchedText:  "refund",
+			SegmentIndex: 1,
+			StartSec:     2.1,
+			EndSec:       3.8,
+			SegmentText:  "Nice to meet you. Please refund this order.",
+			ContextText:  "Hello world. Nice to meet you. Please refund this order.",
+			CreatedAtUTC: nowUTC,
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceForMedia(trigger events) error = %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(mediaID, 10)+"/transcript", nil)
 	rec := httptest.NewRecorder()
@@ -291,6 +336,9 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 		"timeline.wav",
 		"Full text",
 		"Timeline / segments",
+		"Trigger matches",
+		"refund",
+		"billing",
 		"00:00:00.000",
 		"00:00:01.400",
 		"Confidence 0.87",
@@ -298,6 +346,78 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("transcript page body missing %q", want)
+		}
+	}
+}
+
+func TestUploadHandler_CreateToggleDeleteTriggerRule(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+
+	createBody := strings.NewReader("name=Test+Rule&category=support&pattern=speak+to+a+manager&match_mode=contains")
+	createReq := httptest.NewRequest(http.MethodPost, "/trigger-rules", createBody)
+	createReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	createRec := httptest.NewRecorder()
+
+	app.router.ServeHTTP(createRec, createReq)
+
+	if createRec.Code != http.StatusSeeOther {
+		t.Fatalf("create trigger rule status = %d, want %d", createRec.Code, http.StatusSeeOther)
+	}
+
+	ruleRepo := repositories.NewTriggerRuleRepository(app.db)
+	rules, err := ruleRepo.List(context.Background())
+	if err != nil {
+		t.Fatalf("List(trigger rules) error = %v", err)
+	}
+
+	var created domaintrigger.Rule
+	for _, item := range rules {
+		if item.Name == "Test Rule" {
+			created = item
+			break
+		}
+	}
+	if created.ID == 0 {
+		t.Fatalf("created rule not found in %#v", rules)
+	}
+
+	toggleBody := strings.NewReader("enabled=false")
+	toggleReq := httptest.NewRequest(http.MethodPost, "/trigger-rules/"+strconv.FormatInt(created.ID, 10)+"/toggle", toggleBody)
+	toggleReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	toggleRec := httptest.NewRecorder()
+	app.router.ServeHTTP(toggleRec, toggleReq)
+
+	if toggleRec.Code != http.StatusSeeOther {
+		t.Fatalf("toggle trigger rule status = %d, want %d", toggleRec.Code, http.StatusSeeOther)
+	}
+
+	rules, err = ruleRepo.List(context.Background())
+	if err != nil {
+		t.Fatalf("List(trigger rules after toggle) error = %v", err)
+	}
+	for _, item := range rules {
+		if item.ID == created.ID && item.Enabled {
+			t.Fatalf("rule %d still enabled after toggle", created.ID)
+		}
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodPost, "/trigger-rules/"+strconv.FormatInt(created.ID, 10)+"/delete", nil)
+	deleteRec := httptest.NewRecorder()
+	app.router.ServeHTTP(deleteRec, deleteReq)
+
+	if deleteRec.Code != http.StatusSeeOther {
+		t.Fatalf("delete trigger rule status = %d, want %d", deleteRec.Code, http.StatusSeeOther)
+	}
+
+	rules, err = ruleRepo.List(context.Background())
+	if err != nil {
+		t.Fatalf("List(trigger rules after delete) error = %v", err)
+	}
+	for _, item := range rules {
+		if item.ID == created.ID {
+			t.Fatalf("rule %d still exists after delete", created.ID)
 		}
 	}
 }
@@ -482,12 +602,15 @@ func newTestApp(t *testing.T) testWebApp {
 	mediaRepo := repositories.NewMediaRepository(sqlDB)
 	jobRepo := repositories.NewJobRepository(sqlDB)
 	transcriptRepo := repositories.NewTranscriptRepository(sqlDB)
+	triggerRuleRepo := repositories.NewTriggerRuleRepository(sqlDB)
+	triggerEventRepo := repositories.NewTriggerEventRepository(sqlDB)
 	uploadStorage := storage.NewLocalStorage(uploadDir)
 	audioStorage := storage.NewLocalStorage(audioDir)
 	profileService := transcriptionapp.NewService(
 		repositories.NewTranscriptionProfileRepository(sqlDB),
 		domaintranscription.DefaultProfile("ru"),
 	)
+	triggerRuleService := triggerapp.NewService(triggerRuleRepo)
 	uploadUC := command.NewUploadMediaUseCase(
 		mediaRepo,
 		jobRepo,
@@ -495,11 +618,12 @@ func newTestApp(t *testing.T) testWebApp {
 		10*1024*1024,
 		logger,
 	)
-	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, jobRepo)
+	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, triggerEventRepo, jobRepo)
 	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, uploadStorage, audioStorage, logger)
 	handler, err := handlers.NewUploadHandler(
 		uploadUC,
 		profileService,
+		triggerRuleService,
 		transcriptViewUC,
 		deleteMediaUC,
 		templatesDir,

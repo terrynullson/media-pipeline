@@ -9,6 +9,7 @@ import (
 	domainmedia "media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/transcript"
 	"media-pipeline/internal/domain/transcription"
+	domaintrigger "media-pipeline/internal/domain/trigger"
 )
 
 type TranscriptMediaReader interface {
@@ -23,9 +24,14 @@ type TranscriptJobReader interface {
 	FindLatestByMediaAndType(ctx context.Context, mediaID int64, jobType job.Type) (job.Job, bool, error)
 }
 
+type TriggerEventReader interface {
+	ListByMediaID(ctx context.Context, mediaID int64) ([]domaintrigger.Event, error)
+}
+
 type TranscriptViewUseCase struct {
 	mediaRepo      TranscriptMediaReader
 	transcriptRepo TranscriptReader
+	triggerEvents  TriggerEventReader
 	jobRepo        TranscriptJobReader
 }
 
@@ -33,6 +39,8 @@ type TranscriptViewResult struct {
 	Media               domainmedia.Media
 	Transcript          transcript.Transcript
 	HasTranscript       bool
+	TriggerEvents       []domaintrigger.Event
+	AnalyzeJob          *job.Job
 	Settings            *transcription.Settings
 	SettingsUnavailable bool
 }
@@ -40,11 +48,13 @@ type TranscriptViewResult struct {
 func NewTranscriptViewUseCase(
 	mediaRepo TranscriptMediaReader,
 	transcriptRepo TranscriptReader,
+	triggerEventRepo TriggerEventReader,
 	jobRepo TranscriptJobReader,
 ) *TranscriptViewUseCase {
 	return &TranscriptViewUseCase{
 		mediaRepo:      mediaRepo,
 		transcriptRepo: transcriptRepo,
+		triggerEvents:  triggerEventRepo,
 		jobRepo:        jobRepo,
 	}
 }
@@ -66,6 +76,20 @@ func (u *TranscriptViewUseCase) Load(ctx context.Context, mediaID int64) (Transc
 	if ok {
 		result.Transcript = transcriptItem
 		result.HasTranscript = true
+	}
+
+	triggerEvents, err := u.triggerEvents.ListByMediaID(ctx, mediaID)
+	if err != nil {
+		return TranscriptViewResult{}, fmt.Errorf("load trigger events for media %d: %w", mediaID, err)
+	}
+	result.TriggerEvents = triggerEvents
+
+	analyzeJob, ok, err := u.jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeAnalyzeTriggers)
+	if err != nil {
+		return TranscriptViewResult{}, fmt.Errorf("load analyze job for media %d: %w", mediaID, err)
+	}
+	if ok {
+		result.AnalyzeJob = &analyzeJob
 	}
 
 	currentJob, ok, err := u.jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeTranscribe)

@@ -10,9 +10,9 @@
 <main class="page page-transcript">
     <section class="hero hero-transcript">
         <div class="hero-copy">
-            <p class="eyebrow">Stage 3.3</p>
+            <p class="eyebrow">Stage 4</p>
             <h1 class="hero-title-transcript">Transcript Viewer</h1>
-            <p class="subtitle">A readable transcript view for one media item, with clean full-text reading and timeline-aligned segments.</p>
+            <p class="subtitle">A readable transcript view for one media item, with transcript text, timeline segments, and deterministic trigger phrase matches.</p>
         </div>
         <div class="hero-meta hero-meta-actions">
             <div class="meta-card">
@@ -123,6 +123,46 @@
                     </div>
                 </div>
             </div>
+
+            <div class="card transcript-trigger-card">
+                <div class="section-header section-header-wide">
+                    <div>
+                        <h2>Trigger matches</h2>
+                        <p class="hint">Enabled trigger rules run over transcript segments and save explainable phrase hits.</p>
+                    </div>
+                    <span class="status-chip status-chip-{{.TriggerStatusTone}}">{{.TriggerStatusLabel}}</span>
+                </div>
+
+                {{if .TriggerNotice}}
+                    {{if eq .TriggerNoticeTone "error"}}
+                    <div class="notice notice-error">{{.TriggerNotice}}</div>
+                    {{else}}
+                    <div class="empty-state transcript-empty">
+                        <p>{{.TriggerNotice}}</p>
+                    </div>
+                    {{end}}
+                {{end}}
+
+                {{if .TriggerMatches}}
+                <div class="trigger-match-list">
+                    {{range .TriggerMatches}}
+                    <article class="trigger-match-card">
+                        <div class="trigger-match-header">
+                            <div class="trigger-match-meta">
+                                <span class="pill">{{.Category}}</span>
+                                <strong>{{.MatchedPhrase}}</strong>
+                                <span class="hint">Rule: {{.RuleName}}</span>
+                            </div>
+                            <span class="timeline-time">{{.Timestamp}}</span>
+                        </div>
+                        <p class="trigger-match-text">{{.SegmentText}}</p>
+                        {{if .ContextText}}
+                        <p class="trigger-match-context">Context: {{.ContextText}}</p>
+                        {{end}}
+                    </article>
+                    {{end}}
+                </div>
+                {{end}}
             {{else}}
             <div class="card">
                 <div class="section-header">

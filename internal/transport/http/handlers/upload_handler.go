@@ -13,16 +13,20 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"media-pipeline/internal/app/command"
 	mediaapp "media-pipeline/internal/app/media"
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/transcription"
+	domaintrigger "media-pipeline/internal/domain/trigger"
 	"media-pipeline/internal/observability"
 )
 
 type UploadHandler struct {
 	uploadUC         *command.UploadMediaUseCase
 	transcriptionSvc TranscriptionSettingsService
+	triggerRulesSvc  TriggerRulesService
 	transcriptViewUC TranscriptViewService
 	deleteMediaUC    MediaDeletionService
 	tmpl             *template.Template
@@ -41,6 +45,13 @@ type TranscriptionSettingsService interface {
 
 type TranscriptViewService interface {
 	Load(ctx context.Context, mediaID int64) (mediaapp.TranscriptViewResult, error)
+}
+
+type TriggerRulesService interface {
+	List(ctx context.Context) ([]domaintrigger.Rule, error)
+	Create(ctx context.Context, rule domaintrigger.Rule) (domaintrigger.Rule, error)
+	SetEnabled(ctx context.Context, id int64, enabled bool) error
+	Delete(ctx context.Context, id int64) error
 }
 
 type MediaDeletionService interface {
@@ -63,6 +74,7 @@ type MediaListItem struct {
 	CreatedAtUTC      string
 	CanOpenTranscript bool
 	HasTranscript     bool
+	TriggerCount      int
 	TranscriptURL     string
 	DeleteURL         string
 }
@@ -73,15 +85,20 @@ type IndexViewData struct {
 	UploadSuccess       string
 	SettingsError       string
 	SettingsSuccess     string
+	TriggerRuleError    string
+	TriggerRuleSuccess  string
 	MaxUploadMB         string
 	MaxUploadHuman      string
 	SettingsForm        TranscriptionSettingsForm
+	TriggerRuleForm     TriggerRuleForm
+	TriggerRules        []TriggerRuleView
 	BackendOptions      []string
 	ModelOptions        []string
 	DeviceOptions       []string
 	CurrentComputeTypes []string
 	CPUComputeTypes     []string
 	CUDAComputeTypes    []string
+	MatchModeOptions    []string
 }
 
 type TranscriptionSettingsForm struct {
@@ -94,9 +111,31 @@ type TranscriptionSettingsForm struct {
 	VADEnabled  bool
 }
 
+type TriggerRuleForm struct {
+	Name      string
+	Category  string
+	Pattern   string
+	MatchMode string
+}
+
+type TriggerRuleView struct {
+	ID           int64
+	Name         string
+	Category     string
+	Pattern      string
+	MatchMode    string
+	Enabled      bool
+	ToggleURL    string
+	DeleteURL    string
+	ToggleLabel  string
+	EnabledLabel string
+	EnabledTone  string
+}
+
 func NewUploadHandler(
 	uploadUC *command.UploadMediaUseCase,
 	transcriptionSvc TranscriptionSettingsService,
+	triggerRulesSvc TriggerRulesService,
 	transcriptViewUC TranscriptViewService,
 	deleteMediaUC MediaDeletionService,
 	templatesDir string,
@@ -115,6 +154,7 @@ func NewUploadHandler(
 	return &UploadHandler{
 		uploadUC:         uploadUC,
 		transcriptionSvc: transcriptionSvc,
+		triggerRulesSvc:  triggerRulesSvc,
 		transcriptViewUC: transcriptViewUC,
 		deleteMediaUC:    deleteMediaUC,
 		tmpl:             tmpl,
@@ -129,18 +169,25 @@ func NewUploadHandler(
 
 func (h *UploadHandler) Index(w http.ResponseWriter, r *http.Request) {
 	successMessage := ""
-	if r.URL.Query().Get("status") == "uploaded" {
+	triggerRuleSuccess := ""
+	switch r.URL.Query().Get("status") {
+	case "uploaded":
 		successMessage = "Upload completed. Media record and pending job were created."
-	}
-	if r.URL.Query().Get("status") == "deleted" {
+	case "deleted":
 		successMessage = "Media item was deleted. Related records were removed and file cleanup was attempted."
+	case "trigger_rule_saved":
+		triggerRuleSuccess = "Trigger rule was created."
+	case "trigger_rule_updated":
+		triggerRuleSuccess = "Trigger rule status was updated."
+	case "trigger_rule_deleted":
+		triggerRuleSuccess = "Trigger rule was deleted."
 	}
 	settingsSuccess := ""
 	if r.URL.Query().Get("status") == "settings_saved" {
 		settingsSuccess = "Transcription settings were saved."
 	}
 
-	h.renderIndex(w, r, "", successMessage, "", settingsSuccess, nil)
+	h.renderIndex(w, r, "", successMessage, "", settingsSuccess, "", triggerRuleSuccess, nil, nil)
 }
 
 func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
@@ -236,7 +283,7 @@ func (h *UploadHandler) renderUploadFailure(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	h.renderIndex(w, r, message, "", "", "", nil)
+	h.renderIndex(w, r, message, "", "", "", "", "", nil, nil)
 }
 
 func (h *UploadHandler) SaveTranscriptionSettings(w http.ResponseWriter, r *http.Request) {
@@ -248,19 +295,19 @@ func (h *UploadHandler) SaveTranscriptionSettings(w http.ResponseWriter, r *http
 	r.Body = http.MaxBytesReader(w, r.Body, h.maxSettingsBodyB)
 	if err := r.ParseForm(); err != nil {
 		logger.Warn("settings request rejected: invalid form", slog.Any("error", err))
-		h.renderIndex(w, r, "", "", "Could not read the settings form. Please try again.", "", buildSettingsFormFromRequest(r))
+		h.renderIndex(w, r, "", "", "Could not read the settings form. Please try again.", "", "", "", buildSettingsFormFromRequest(r), nil)
 		return
 	}
 
 	profile, form, err := parseTranscriptionProfileForm(r)
 	if err != nil {
-		h.renderIndex(w, r, "", "", err.Error(), "", &form)
+		h.renderIndex(w, r, "", "", err.Error(), "", "", "", &form, nil)
 		return
 	}
 
 	if _, err := h.transcriptionSvc.SaveCurrent(r.Context(), profile); err != nil {
 		logger.Warn("save transcription settings failed", slog.Any("error", err))
-		h.renderIndex(w, r, "", "", "Could not save settings: "+err.Error(), "", &form)
+		h.renderIndex(w, r, "", "", "Could not save settings: "+err.Error(), "", "", "", &form, nil)
 		return
 	}
 
@@ -273,6 +320,70 @@ func (h *UploadHandler) SaveTranscriptionSettings(w http.ResponseWriter, r *http
 	http.Redirect(w, r, "/?status=settings_saved", http.StatusSeeOther)
 }
 
+func (h *UploadHandler) CreateTriggerRule(w http.ResponseWriter, r *http.Request) {
+	logger := observability.LoggerFromContext(r.Context(), h.logger).With(
+		slog.String("method", r.Method),
+		slog.String("path", r.URL.Path),
+	)
+
+	r.Body = http.MaxBytesReader(w, r.Body, h.maxSettingsBodyB)
+	if err := r.ParseForm(); err != nil {
+		logger.Warn("trigger rule request rejected: invalid form", slog.Any("error", err))
+		h.renderIndex(w, r, "", "", "", "", "Could not read the trigger rule form. Please try again.", "", nil, buildTriggerRuleFormFromRequest(r))
+		return
+	}
+
+	rule, form, err := parseTriggerRuleForm(r)
+	if err != nil {
+		h.renderIndex(w, r, "", "", "", "", err.Error(), "", nil, &form)
+		return
+	}
+
+	if _, err := h.triggerRulesSvc.Create(r.Context(), rule); err != nil {
+		logger.Warn("create trigger rule failed", slog.Any("error", err))
+		h.renderIndex(w, r, "", "", "", "", "Could not save trigger rule: "+err.Error(), "", nil, &form)
+		return
+	}
+
+	http.Redirect(w, r, "/?status=trigger_rule_saved", http.StatusSeeOther)
+}
+
+func (h *UploadHandler) ToggleTriggerRule(w http.ResponseWriter, r *http.Request) {
+	ruleID, err := triggerRuleIDFromRequest(r)
+	if err != nil {
+		http.Error(w, "invalid trigger rule id", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		h.renderIndex(w, r, "", "", "", "", "Could not read the trigger rule action.", "", nil, nil)
+		return
+	}
+
+	enabled := r.FormValue("enabled") == "true"
+	if err := h.triggerRulesSvc.SetEnabled(r.Context(), ruleID, enabled); err != nil {
+		h.renderIndex(w, r, "", "", "", "", "Could not update trigger rule: "+err.Error(), "", nil, nil)
+		return
+	}
+
+	http.Redirect(w, r, "/?status=trigger_rule_updated", http.StatusSeeOther)
+}
+
+func (h *UploadHandler) DeleteTriggerRule(w http.ResponseWriter, r *http.Request) {
+	ruleID, err := triggerRuleIDFromRequest(r)
+	if err != nil {
+		http.Error(w, "invalid trigger rule id", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.triggerRulesSvc.Delete(r.Context(), ruleID); err != nil {
+		h.renderIndex(w, r, "", "", "", "", "Could not delete trigger rule: "+err.Error(), "", nil, nil)
+		return
+	}
+
+	http.Redirect(w, r, "/?status=trigger_rule_deleted", http.StatusSeeOther)
+}
+
 func (h *UploadHandler) renderIndex(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -280,7 +391,10 @@ func (h *UploadHandler) renderIndex(
 	uploadSuccess string,
 	settingsError string,
 	settingsSuccess string,
+	triggerRuleError string,
+	triggerRuleSuccess string,
 	settingsForm *TranscriptionSettingsForm,
+	triggerRuleForm *TriggerRuleForm,
 ) {
 	viewItems, err := h.buildMediaListItems(r.Context())
 	if err != nil {
@@ -294,9 +408,19 @@ func (h *UploadHandler) renderIndex(
 		http.Error(w, "failed to load transcription settings", http.StatusInternalServerError)
 		return
 	}
+	triggerRules, err := h.triggerRulesSvc.List(r.Context())
+	if err != nil {
+		observability.LoggerFromContext(r.Context(), h.logger).Error("load trigger rules failed", slog.Any("error", err))
+		http.Error(w, "failed to load trigger rules", http.StatusInternalServerError)
+		return
+	}
 	currentForm := buildSettingsForm(currentProfile)
 	if settingsForm != nil {
 		currentForm = *settingsForm
+	}
+	currentTriggerRuleForm := TriggerRuleForm{MatchMode: string(domaintrigger.MatchModeContains)}
+	if triggerRuleForm != nil {
+		currentTriggerRuleForm = *triggerRuleForm
 	}
 	computeTypes := transcription.SupportedComputeTypes(strings.ToLower(strings.TrimSpace(currentForm.Device)))
 	if len(computeTypes) == 0 {
@@ -310,15 +434,20 @@ func (h *UploadHandler) renderIndex(
 		UploadSuccess:       uploadSuccess,
 		SettingsError:       settingsError,
 		SettingsSuccess:     settingsSuccess,
+		TriggerRuleError:    triggerRuleError,
+		TriggerRuleSuccess:  triggerRuleSuccess,
 		MaxUploadMB:         strconv.FormatInt(h.maxUploadSizeB/(1024*1024), 10),
 		MaxUploadHuman:      HumanSize(h.maxUploadSizeB),
 		SettingsForm:        currentForm,
+		TriggerRuleForm:     currentTriggerRuleForm,
+		TriggerRules:        buildTriggerRuleViews(triggerRules),
 		BackendOptions:      backendOptions(),
 		ModelOptions:        transcription.SupportedModels(),
 		DeviceOptions:       transcription.SupportedDevices(),
 		CurrentComputeTypes: computeTypes,
 		CPUComputeTypes:     transcription.SupportedComputeTypes("cpu"),
 		CUDAComputeTypes:    transcription.SupportedComputeTypes("cuda"),
+		MatchModeOptions:    matchModeOptions(),
 	}
 	if execErr := h.tmpl.ExecuteTemplate(w, "index.html", data); execErr != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("render index template failed", slog.Any("error", execErr))
@@ -510,4 +639,90 @@ func backendOptions() []string {
 		values = append(values, string(item))
 	}
 	return values
+}
+
+func parseTriggerRuleForm(r *http.Request) (domaintrigger.Rule, TriggerRuleForm, error) {
+	form := *buildTriggerRuleFormFromRequest(r)
+	rule := domaintrigger.NormalizeRule(domaintrigger.Rule{
+		Name:      form.Name,
+		Category:  form.Category,
+		Pattern:   form.Pattern,
+		MatchMode: domaintrigger.MatchMode(form.MatchMode),
+		Enabled:   true,
+	})
+	form = buildTriggerRuleForm(rule)
+
+	if err := domaintrigger.ValidateRule(rule); err != nil {
+		return domaintrigger.Rule{}, form, err
+	}
+
+	return rule, form, nil
+}
+
+func buildTriggerRuleForm(rule domaintrigger.Rule) TriggerRuleForm {
+	return TriggerRuleForm{
+		Name:      rule.Name,
+		Category:  rule.Category,
+		Pattern:   rule.Pattern,
+		MatchMode: string(rule.MatchMode),
+	}
+}
+
+func buildTriggerRuleFormFromRequest(r *http.Request) *TriggerRuleForm {
+	return &TriggerRuleForm{
+		Name:      strings.TrimSpace(r.FormValue("name")),
+		Category:  strings.TrimSpace(r.FormValue("category")),
+		Pattern:   strings.TrimSpace(r.FormValue("pattern")),
+		MatchMode: strings.TrimSpace(r.FormValue("match_mode")),
+	}
+}
+
+func buildTriggerRuleViews(items []domaintrigger.Rule) []TriggerRuleView {
+	views := make([]TriggerRuleView, 0, len(items))
+	for _, item := range items {
+		view := TriggerRuleView{
+			ID:           item.ID,
+			Name:         item.Name,
+			Category:     item.Category,
+			Pattern:      item.Pattern,
+			MatchMode:    string(item.MatchMode),
+			Enabled:      item.Enabled,
+			ToggleURL:    fmt.Sprintf("/trigger-rules/%d/toggle", item.ID),
+			DeleteURL:    fmt.Sprintf("/trigger-rules/%d/delete", item.ID),
+			EnabledLabel: "Disabled",
+			EnabledTone:  "neutral",
+			ToggleLabel:  "Enable",
+		}
+		if item.Enabled {
+			view.EnabledLabel = "Enabled"
+			view.EnabledTone = "success"
+			view.ToggleLabel = "Disable"
+		}
+		views = append(views, view)
+	}
+
+	return views
+}
+
+func matchModeOptions() []string {
+	options := domaintrigger.SupportedMatchModes()
+	values := make([]string, 0, len(options))
+	for _, option := range options {
+		values = append(values, string(option))
+	}
+	return values
+}
+
+func triggerRuleIDFromRequest(r *http.Request) (int64, error) {
+	raw := strings.TrimSpace(chi.URLParam(r, "ruleID"))
+	if raw == "" {
+		return 0, fmt.Errorf("trigger rule id is required")
+	}
+
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("invalid trigger rule id %q", raw)
+	}
+
+	return value, nil
 }
