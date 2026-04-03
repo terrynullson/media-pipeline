@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	transcriptionapp "media-pipeline/internal/app/transcription"
@@ -17,11 +18,17 @@ import (
 	infraRuntime "media-pipeline/internal/infra/runtime"
 	infraSummary "media-pipeline/internal/infra/summary"
 	infraTranscription "media-pipeline/internal/infra/transcription"
+	"media-pipeline/internal/observability"
 )
 
 func main() {
 	cfg := config.Load()
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger, closeLog, err := observability.NewTextLogger(filepath.Join("data", "logs", "worker.log"))
+	if err != nil {
+		logger.Error("configure worker logger", slog.Any("error", err))
+		os.Exit(1)
+	}
+	defer closeLog()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

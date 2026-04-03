@@ -5,6 +5,21 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
+function Use-Utf8Console {
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [Console]::InputEncoding = $utf8NoBom
+    [Console]::OutputEncoding = $utf8NoBom
+    $script:OutputEncoding = $utf8NoBom
+
+    try {
+        chcp.com 65001 > $null
+    }
+    catch {
+    }
+}
+
+Use-Utf8Console
+
 $logDir = Join-Path $repoRoot "data\logs"
 $null = New-Item -ItemType Directory -Force -Path $logDir
 
@@ -55,4 +70,4 @@ Write-Host "Whisper model: $($env:WHISPER_MODEL)"
 Write-Host "Log file: $logPath"
 Write-Host "Stop: press Ctrl+C in this window"
 
-go run ./cmd/worker 2>&1 | Tee-Object -FilePath $logPath -Append
+go run ./cmd/worker

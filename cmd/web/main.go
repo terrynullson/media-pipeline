@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"media-pipeline/internal/app/command"
 	mediaapp "media-pipeline/internal/app/media"
@@ -15,13 +16,19 @@ import (
 	"media-pipeline/internal/infra/db/repositories"
 	infraRuntime "media-pipeline/internal/infra/runtime"
 	"media-pipeline/internal/infra/storage"
+	"media-pipeline/internal/observability"
 	httptransport "media-pipeline/internal/transport/http"
 	"media-pipeline/internal/transport/http/handlers"
 )
 
 func main() {
 	cfg := config.Load()
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger, closeLog, err := observability.NewTextLogger(filepath.Join("data", "logs", "web.log"))
+	if err != nil {
+		logger.Error("configure web logger", slog.Any("error", err))
+		os.Exit(1)
+	}
+	defer closeLog()
 
 	sqlDB, err := db.OpenSQLite(cfg.DBPath)
 	if err != nil {
