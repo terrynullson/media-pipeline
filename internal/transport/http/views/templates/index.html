@@ -9,10 +9,10 @@
 <body>
 <main class="page">
     <section class="hero">
-        <div>
+        <div class="hero-copy">
             <p class="eyebrow">Stage 3</p>
             <h1>Media Pipeline</h1>
-            <p class="subtitle">Local upload entrypoint for the Stage 3 pipeline with worker-based audio extraction and transcription.</p>
+            <p class="subtitle">Server-rendered control panel for local media intake. Upload a source file, persist it safely, and let the worker continue audio extraction and transcription in the background.</p>
         </div>
         <div class="hero-meta">
             <div class="meta-card">
@@ -27,8 +27,13 @@
     </section>
 
     <section class="card">
-        <h2>Upload media</h2>
-        <p class="hint">The server stores the upload and creates a pending <code>extract_audio</code> job. The worker then extracts audio and creates a <code>transcribe</code> job.</p>
+        <div class="section-header section-header-wide">
+            <div>
+                <h2>Upload media</h2>
+                <p class="hint">The web app only accepts the file and creates a pending <code>extract_audio</code> job. Heavy processing still runs later in the worker.</p>
+            </div>
+            <div class="inline-badge">Limit: {{.MaxUploadMB}} MB</div>
+        </div>
 
         {{if .UploadError}}
         <div class="notice notice-error">{{.UploadError}}</div>
@@ -38,11 +43,44 @@
         {{end}}
 
         <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form">
-            <label class="file-field">
-                <span>Select file</span>
-                <input type="file" name="media" required>
-            </label>
-            <button type="submit">Upload</button>
+            <input
+                type="file"
+                name="media"
+                id="media-file-input"
+                class="file-input-native"
+                accept=".mp4,.mov,.mkv,.avi,.webm,.mp3,.wav,.m4a,.aac,.flac,audio/*,video/*"
+                required
+            >
+
+            <div
+                class="upload-dropzone"
+                id="media-file-trigger"
+                role="button"
+                tabindex="0"
+                aria-controls="media-file-input"
+                aria-describedby="media-file-help media-file-status"
+            >
+                <div class="upload-dropzone-copy">
+                    <span class="upload-kicker">Dropzone</span>
+                    <strong>Choose a media file</strong>
+                    <p id="media-file-help">Click this area or the button below. Audio and video formats listed above are accepted up to {{.MaxUploadMB}} MB.</p>
+                </div>
+                <div class="upload-dropzone-action">
+                    <span class="file-picker-button" id="media-file-button">Choose file</span>
+                    <span class="file-picker-meta">Ready for local upload</span>
+                </div>
+            </div>
+
+            <div class="file-selection" id="media-file-status" aria-live="polite">
+                <span class="file-selection-label">Selected file</span>
+                <strong class="file-picker-name" id="media-file-name">No file selected</strong>
+                <span class="file-selection-hint">Maximum file size: {{.MaxUploadMB}} MB</span>
+            </div>
+
+            <div class="upload-actions">
+                <button type="submit">Upload media</button>
+                <p class="hint">The upload starts immediately after submit. If the file is too large or has an unsupported type, the page shows a clear server-side error.</p>
+            </div>
         </form>
     </section>
 
@@ -121,11 +159,12 @@
     </section>
 
     <section class="card">
-        <div class="section-header">
+        <div class="section-header section-header-wide">
             <div>
                 <h2>Recent uploads</h2>
                 <p class="hint">Newest items first. Timestamps are shown in UTC.</p>
             </div>
+            <div class="inline-badge inline-badge-muted">{{len .Items}} item{{if ne (len .Items) 1}}s{{end}}</div>
         </div>
 
         {{if .Items}}
@@ -158,12 +197,50 @@
         {{else}}
         <div class="empty-state">
             <p>No uploads yet.</p>
-            <p class="hint">Upload one audio or video file to create the first media row and pending job.</p>
+            <p class="hint">Choose one audio or video file above to create the first media row and a pending worker job.</p>
         </div>
         {{end}}
     </section>
 </main>
 <script>
+(() => {
+    const fileInput = document.getElementById("media-file-input");
+    const fileName = document.getElementById("media-file-name");
+    const trigger = document.getElementById("media-file-trigger");
+    const button = document.getElementById("media-file-button");
+
+    if (!fileInput || !fileName || !trigger || !button) {
+        return;
+    }
+
+    const renderSelectedFile = () => {
+        const selected = fileInput.files && fileInput.files.length > 0
+            ? fileInput.files[0].name
+            : "No file selected";
+        fileName.textContent = selected;
+        trigger.classList.toggle("has-file", selected !== "No file selected");
+    };
+
+    const openPicker = () => {
+        fileInput.click();
+    };
+
+    trigger.addEventListener("click", openPicker);
+    button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openPicker();
+    });
+    trigger.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openPicker();
+        }
+    });
+    fileInput.addEventListener("change", renderSelectedFile);
+    renderSelectedFile();
+})();
+
 (() => {
     const deviceSelect = document.getElementById("device-select");
     const computeTypeSelect = document.getElementById("compute-type-select");

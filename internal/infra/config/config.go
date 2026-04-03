@@ -31,13 +31,13 @@ func Load() Config {
 		PythonBinary:         getEnv("PYTHON_BINARY", "python"),
 		TranscribeScript:     getEnv("TRANSCRIBE_SCRIPT", "./scripts/transcribe.py"),
 		TranscribeLanguage:   getEnv("TRANSCRIBE_LANGUAGE", ""),
-		MaxUploadSizeMB:      getEnvInt64("MAX_UPLOAD_SIZE_MB", 200),
+		MaxUploadSizeMB:      getEnvInt64("MAX_UPLOAD_SIZE_MB", 500),
 		WorkerPollIntervalMS: getEnvInt64("WORKER_POLL_INTERVAL_MS", 2000),
 		FFmpegTimeoutSec:     getEnvInt64("FFMPEG_TIMEOUT_SEC", 120),
 		TranscribeTimeoutSec: getEnvInt64("TRANSCRIBE_TIMEOUT_SEC", 300),
 	}
 	if cfg.MaxUploadSizeMB <= 0 {
-		cfg.MaxUploadSizeMB = 200
+		cfg.MaxUploadSizeMB = 500
 	}
 	if cfg.WorkerPollIntervalMS <= 0 {
 		cfg.WorkerPollIntervalMS = 2000

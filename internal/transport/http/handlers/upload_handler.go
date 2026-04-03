@@ -121,7 +121,7 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			logger.Warn("upload request rejected: request body too large", slog.Any("error", err))
-			h.renderIndex(w, r, "File is too large. Please check the upload limit and try again.", "", "", "", nil)
+			h.renderIndex(w, r, h.uploadLimitMessage("File is too large."), "", "", "", nil)
 			return
 		}
 
@@ -165,7 +165,7 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logger.Warn("upload failed", slog.Any("error", err), slog.String("filename", fileHeader.Filename))
-		h.renderIndex(w, r, userFacingUploadError(err), "", "", "", nil)
+		h.renderIndex(w, r, h.userFacingUploadError(err), "", "", "", nil)
 		return
 	}
 
@@ -273,7 +273,11 @@ func (h *UploadHandler) renderIndex(
 	}
 }
 
-func userFacingUploadError(err error) string {
+func (h *UploadHandler) uploadLimitMessage(prefix string) string {
+	return fmt.Sprintf("%s Maximum supported size is %s.", strings.TrimSpace(prefix), HumanSize(h.maxUploadSizeB))
+}
+
+func (h *UploadHandler) userFacingUploadError(err error) string {
 	if err == nil {
 		return ""
 	}
@@ -287,7 +291,7 @@ func userFacingUploadError(err error) string {
 	case strings.Contains(msg, "empty file"):
 		return "Empty upload is not allowed."
 	case strings.Contains(msg, "exceeds max size"):
-		return "File exceeds the configured upload limit."
+		return h.uploadLimitMessage("File exceeds the upload limit.")
 	case strings.Contains(msg, "upload canceled"):
 		return "Upload was canceled before completion."
 	default:
