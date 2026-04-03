@@ -41,19 +41,6 @@ func NewPythonTranscriber(pythonBinary string, scriptPath string, logger *slog.L
 func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeInput) (ports.TranscribeOutput, error) {
 	startedAt := time.Now()
 	settings := transcription.NormalizeSettings(in.Settings)
-	args := []string{
-		t.scriptPath,
-		"--audio-path", in.AudioPath,
-		"--backend", string(settings.Backend),
-		"--model-name", settings.ModelName,
-		"--device", settings.Device,
-		"--compute-type", settings.ComputeType,
-		"--beam-size", fmt.Sprintf("%d", settings.BeamSize),
-		"--vad-enabled", fmt.Sprintf("%t", settings.VADEnabled),
-	}
-	if strings.TrimSpace(settings.Language) != "" {
-		args = append(args, "--language", settings.Language)
-	}
 	resultPath, err := createTranscriptionResultPath()
 	if err != nil {
 		return ports.TranscribeOutput{}, &ports.TranscriptionError{
@@ -61,7 +48,6 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 		}
 	}
 	defer cleanupTranscriptionResultPath(resultPath)
-	args = append(args, "--output-path", resultPath)
 	progressPath, err := createTranscriptionResultPath()
 	if err != nil {
 		return ports.TranscribeOutput{}, &ports.TranscriptionError{
@@ -69,10 +55,36 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 		}
 	}
 	defer cleanupTranscriptionResultPath(progressPath)
-	if in.Progress != nil {
-		args = append(args, "--progress-path", progressPath)
+	parsed, runErr := t.runTranscriptionAttempt(ctx, in, settings, resultPath, progressPath, startedAt)
+	if runErr == nil {
+		return parsed, nil
 	}
+	if fallback, ok := fallbackTranscriptionSettings(settings, runErr); ok {
+		t.logger.Warn("python transcription retrying with fallback compute type",
+			slog.String("audio_path", in.AudioPath),
+			slog.String("device", settings.Device),
+			slog.String("compute_type", settings.ComputeType),
+			slog.String("fallback_compute_type", fallback.ComputeType),
+		)
+		parsed, retryErr := t.runTranscriptionAttempt(ctx, in, fallback, resultPath, progressPath, startedAt)
+		if retryErr == nil {
+			return parsed, nil
+		}
+		return ports.TranscribeOutput{}, retryErr
+	}
+	return ports.TranscribeOutput{}, runErr
 
+}
+
+func (t *PythonTranscriber) runTranscriptionAttempt(
+	ctx context.Context,
+	in ports.TranscribeInput,
+	settings transcription.Settings,
+	resultPath string,
+	progressPath string,
+	startedAt time.Time,
+) (ports.TranscribeOutput, error) {
+	args := buildTranscriptionArgs(t.scriptPath, in.AudioPath, settings, resultPath, progressPath, in.Progress != nil)
 	cmd := exec.CommandContext(ctx, t.pythonBinary, args...)
 
 	stdout := newLimitedBuffer(maxScriptOutputBytes)
@@ -172,6 +184,57 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 	)
 
 	return parsed, nil
+}
+
+func buildTranscriptionArgs(
+	scriptPath string,
+	audioPath string,
+	settings transcription.Settings,
+	resultPath string,
+	progressPath string,
+	withProgress bool,
+) []string {
+	args := []string{
+		scriptPath,
+		"--audio-path", audioPath,
+		"--backend", string(settings.Backend),
+		"--model-name", settings.ModelName,
+		"--device", settings.Device,
+		"--compute-type", settings.ComputeType,
+		"--beam-size", fmt.Sprintf("%d", settings.BeamSize),
+		"--vad-enabled", fmt.Sprintf("%t", settings.VADEnabled),
+		"--output-path", resultPath,
+	}
+	if strings.TrimSpace(settings.Language) != "" {
+		args = append(args, "--language", settings.Language)
+	}
+	if withProgress {
+		args = append(args, "--progress-path", progressPath)
+	}
+
+	return args
+}
+
+func fallbackTranscriptionSettings(
+	settings transcription.Settings,
+	err error,
+) (transcription.Settings, bool) {
+	transcriptionErr, ok := ports.AsTranscriptionError(err)
+	if !ok {
+		return transcription.Settings{}, false
+	}
+
+	diagnostics := strings.ToLower(strings.TrimSpace(transcriptionErr.Diagnostics))
+	if settings.Device != "cuda" || settings.ComputeType != "float16" {
+		return transcription.Settings{}, false
+	}
+	if !strings.Contains(diagnostics, "requested float16 compute type") {
+		return transcription.Settings{}, false
+	}
+
+	fallback := settings
+	fallback.ComputeType = "int8_float16"
+	return fallback, true
 }
 
 type transcriptionProgressFile struct {

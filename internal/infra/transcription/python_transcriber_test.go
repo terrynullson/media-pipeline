@@ -136,3 +136,70 @@ func TestPythonTranscriberUsesResultFileTransport(t *testing.T) {
 		t.Fatal("segments[1].confidence = nil, want value")
 	}
 }
+
+func TestPythonTranscriberRetriesFloat16FallbackOnUnsupportedBackend(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("batch-script subprocess test is only enabled on Windows")
+	}
+
+	tempDir := t.TempDir()
+	binaryPath := filepath.Join(tempDir, "fake-python.cmd")
+	scriptPath := filepath.Join(tempDir, "placeholder.py")
+	audioPath := filepath.Join(tempDir, "audio.wav")
+	if err := os.WriteFile(scriptPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("WriteFile(scriptPath) error = %v", err)
+	}
+	if err := os.WriteFile(audioPath, []byte("wav"), 0o644); err != nil {
+		t.Fatalf("WriteFile(audioPath) error = %v", err)
+	}
+
+	batch := "@echo off\r\n" +
+		"setlocal EnableDelayedExpansion\r\n" +
+		"set OUTPUT=\r\n" +
+		"set COMPUTE=\r\n" +
+		":loop\r\n" +
+		"if \"%~1\"==\"\" goto done\r\n" +
+		"if /I \"%~1\"==\"--output-path\" (\r\n" +
+		"  set OUTPUT=%~2\r\n" +
+		"  shift\r\n" +
+		")\r\n" +
+		"if /I \"%~1\"==\"--compute-type\" (\r\n" +
+		"  set COMPUTE=%~2\r\n" +
+		"  shift\r\n" +
+		")\r\n" +
+		"shift\r\n" +
+		"goto loop\r\n" +
+		":done\r\n" +
+		"if \"%COMPUTE%\"==\"float16\" (\r\n" +
+		"  1>&2 echo ValueError: Requested float16 compute type, but the target device or backend do not support efficient float16 computation.\r\n" +
+		"  exit /b 1\r\n" +
+		")\r\n" +
+		"if \"%OUTPUT%\"==\"\" exit /b 9\r\n" +
+		"> \"%OUTPUT%\" echo {\"full_text\":\"fallback ok\",\"segments\":[{\"start_sec\":0,\"end_sec\":1.0,\"text\":\"fallback ok\"}]}\r\n"
+	if err := os.WriteFile(binaryPath, []byte(batch), 0o644); err != nil {
+		t.Fatalf("WriteFile(binaryPath) error = %v", err)
+	}
+
+	transcriber := NewPythonTranscriber(binaryPath, scriptPath, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	output, err := transcriber.Transcribe(context.Background(), ports.TranscribeInput{
+		AudioPath: audioPath,
+		Settings: domaintranscription.Settings{
+			Backend:     domaintranscription.BackendFasterWhisper,
+			ModelName:   "base",
+			Device:      "cuda",
+			ComputeType: "float16",
+			Language:    "ru",
+			BeamSize:    5,
+			VADEnabled:  true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Transcribe() error = %v", err)
+	}
+	if output.FullText != "fallback ok" {
+		t.Fatalf("full text = %q, want fallback ok", output.FullText)
+	}
+	if len(output.Segments) != 1 {
+		t.Fatalf("segments = %d, want 1", len(output.Segments))
+	}
+}
