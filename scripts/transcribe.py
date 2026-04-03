@@ -49,12 +49,13 @@ def parse_bool(value):
 
 
 def load_backend_config(args):
-    model_name = args.model_name or os.environ.get("WHISPER_MODEL", "tiny")
-    device = args.device or os.environ.get("WHISPER_DEVICE", "cpu")
-    compute_type = args.compute_type or os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
+    model_name = (args.model_name or os.environ.get("WHISPER_MODEL", "tiny")).strip().lower()
+    device = (args.device or os.environ.get("WHISPER_DEVICE", "cpu")).strip().lower()
+    compute_type = (args.compute_type or os.environ.get("WHISPER_COMPUTE_TYPE", "int8")).strip().lower()
+    backend = (args.backend or "faster-whisper").strip().lower()
 
     return {
-        "backend": args.backend,
+        "backend": backend,
         "model": model_name,
         "device": device,
         "compute_type": compute_type,

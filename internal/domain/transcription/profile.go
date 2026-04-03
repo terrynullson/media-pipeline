@@ -88,6 +88,7 @@ func SupportedComputeTypes(device string) []string {
 }
 
 func NormalizeSettings(in Settings) Settings {
+	in.Backend = Backend(strings.TrimSpace(strings.ToLower(string(in.Backend))))
 	in.ModelName = strings.TrimSpace(strings.ToLower(in.ModelName))
 	in.Device = strings.TrimSpace(strings.ToLower(in.Device))
 	in.ComputeType = strings.TrimSpace(strings.ToLower(in.ComputeType))

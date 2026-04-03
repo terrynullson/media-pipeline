@@ -39,7 +39,7 @@ func TestNormalizeSettingsTreatsAutoLanguageAsEmpty(t *testing.T) {
 	t.Parallel()
 
 	normalized := NormalizeSettings(Settings{
-		Backend:     BackendFasterWhisper,
+		Backend:     " Faster-Whisper ",
 		ModelName:   "Tiny",
 		Device:      "CPU",
 		ComputeType: "INT8",
@@ -52,5 +52,8 @@ func TestNormalizeSettingsTreatsAutoLanguageAsEmpty(t *testing.T) {
 	}
 	if normalized.ModelName != "tiny" {
 		t.Fatalf("normalized model = %q, want tiny", normalized.ModelName)
+	}
+	if normalized.Backend != BackendFasterWhisper {
+		t.Fatalf("normalized backend = %q, want %q", normalized.Backend, BackendFasterWhisper)
 	}
 }
