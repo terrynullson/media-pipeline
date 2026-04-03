@@ -314,12 +314,21 @@
 
     function setUploadProgress(percent, text) {
         uploadProgress.hidden = false;
+        uploadProgress.classList.remove("upload-progress-indeterminate");
         uploadProgressFill.style.width = `${Math.max(0, Math.min(percent, 100))}%`;
+        uploadProgressText.textContent = text;
+    }
+
+    function setUploadProgressIndeterminate(text) {
+        uploadProgress.hidden = false;
+        uploadProgress.classList.add("upload-progress-indeterminate");
+        uploadProgressFill.style.width = "45%";
         uploadProgressText.textContent = text;
     }
 
     function clearUploadProgress() {
         uploadProgress.hidden = true;
+        uploadProgress.classList.remove("upload-progress-indeterminate");
         uploadProgressFill.style.width = "0%";
         uploadProgressText.textContent = "Waiting to start";
     }
@@ -345,7 +354,14 @@
         if (!files || files.length === 0) {
             return;
         }
-        fileInput.files = files;
+        try {
+            const dataTransfer = new DataTransfer();
+            Array.from(files).forEach((file) => dataTransfer.items.add(file));
+            fileInput.files = dataTransfer.files;
+        } catch (_) {
+            fileInput.files = files;
+        }
+        fileInput.dispatchEvent(new Event("change", { bubbles: true }));
         renderSelectedFile(files[0]);
     }
 
@@ -412,40 +428,44 @@
         `).join("");
     }
 
-    async function refreshStatuses() {
-        const response = await fetch("/media/statuses", {
-            headers: {
-                "Accept": "application/json"
-            },
-            cache: "no-store"
-        });
-        if (!response.ok) {
-            throw new Error(`status polling failed with ${response.status}`);
-        }
-
-        const payload = await response.json();
-        const items = Array.isArray(payload.items) ? payload.items : [];
-        renderPipelineItems(items);
-        renderRecentTable(items);
-
-        const hasActive = items.some((item) => item && item.IsActive);
+    function scheduleNextPoll(delayMs) {
         if (pollTimer) {
             window.clearTimeout(pollTimer);
         }
         pollTimer = window.setTimeout(() => {
-            refreshStatuses().catch(() => {
-                pollTimer = window.setTimeout(() => refreshStatuses().catch(() => {}), 10000);
+            refreshStatuses();
+        }, delayMs);
+    }
+
+    async function refreshStatuses() {
+        let nextDelayMs = 8000;
+        try {
+            const response = await fetch("/media/statuses", {
+                headers: {
+                    "Accept": "application/json"
+                },
+                cache: "no-store"
             });
-        }, hasActive ? 3000 : 8000);
+            if (!response.ok) {
+                throw new Error(`status polling failed with ${response.status}`);
+            }
+
+            const payload = await response.json();
+            const items = Array.isArray(payload.items) ? payload.items : [];
+            renderPipelineItems(items);
+            renderRecentTable(items);
+
+            const hasActive = items.some((item) => item && item.IsActive);
+            nextDelayMs = hasActive ? 3000 : 8000;
+        } catch (_) {
+            nextDelayMs = 10000;
+        } finally {
+            scheduleNextPoll(nextDelayMs);
+        }
     }
 
     function startPollingSoon() {
-        if (pollTimer) {
-            window.clearTimeout(pollTimer);
-        }
-        pollTimer = window.setTimeout(() => {
-            refreshStatuses().catch(() => {});
-        }, 800);
+        scheduleNextPoll(800);
     }
 
     trigger.addEventListener("click", openPicker);
@@ -505,7 +525,7 @@
         xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
         xhr.upload.addEventListener("progress", (progressEvent) => {
             if (!progressEvent.lengthComputable) {
-                setUploadProgress(100, "Uploading...");
+                setUploadProgressIndeterminate("Uploading...");
                 return;
             }
 

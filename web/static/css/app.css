@@ -389,6 +389,15 @@ button:disabled {
     transition: width 0.18s ease;
 }
 
+.upload-progress-indeterminate .progress-track {
+    overflow: hidden;
+}
+
+.upload-progress-indeterminate .progress-fill {
+    width: 45%;
+    animation: upload-indeterminate 1.2s ease-in-out infinite;
+}
+
 .upload-actions {
     display: flex;
     justify-content: space-between;
@@ -657,6 +666,18 @@ code {
     }
     to {
         transform: translateX(100%);
+    }
+}
+
+@keyframes upload-indeterminate {
+    0% {
+        transform: translateX(-90%);
+    }
+    50% {
+        transform: translateX(70%);
+    }
+    100% {
+        transform: translateX(180%);
     }
 }
 
