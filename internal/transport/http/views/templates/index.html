@@ -219,7 +219,7 @@
     </section>
 </main>
 <div class="drawer-overlay{{if .SettingsPanelOpen}} is-open{{end}}" id="settings-overlay" hidden></div>
-<aside class="settings-sheet{{if .SettingsPanelOpen}} is-open{{end}}" id="settings-sheet" aria-hidden="{{if .SettingsPanelOpen}}false{{else}}true{{end}}">
+<aside class="settings-sheet{{if .SettingsPanelOpen}} is-open{{end}}" id="settings-sheet" aria-hidden="{{if .SettingsPanelOpen}}false{{else}}true{{end}}" {{if not .SettingsPanelOpen}}hidden inert{{end}}>
     <div class="settings-sheet-header">
         <div>
             <p class="eyebrow">Настройки</p>
@@ -882,6 +882,12 @@
         sheet.classList.toggle("is-open", isOpen);
         overlay.classList.toggle("is-open", isOpen);
         overlay.hidden = !isOpen;
+        sheet.hidden = !isOpen;
+        if (isOpen) {
+            sheet.removeAttribute("inert");
+        } else {
+            sheet.setAttribute("inert", "");
+        }
         sheet.setAttribute("aria-hidden", isOpen ? "false" : "true");
         document.body.classList.toggle("sheet-open", isOpen);
     }

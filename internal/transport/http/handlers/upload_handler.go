@@ -853,20 +853,6 @@ func parseOptionalFloat(raw string) (float64, bool) {
 }
 
 func requestIPFromRequest(r *http.Request) string {
-	for _, header := range []string{"X-Forwarded-For", "X-Real-IP"} {
-		value := strings.TrimSpace(r.Header.Get(header))
-		if value == "" {
-			continue
-		}
-		if header == "X-Forwarded-For" {
-			parts := strings.Split(value, ",")
-			if len(parts) > 0 {
-				return strings.TrimSpace(parts[0])
-			}
-		}
-		return value
-	}
-
 	hostPort := strings.TrimSpace(r.RemoteAddr)
 	if hostPort == "" {
 		return ""

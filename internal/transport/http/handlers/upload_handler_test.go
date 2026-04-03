@@ -255,11 +255,11 @@ func TestUploadHandler_MediaStatuses(t *testing.T) {
 	if payload.Items[0].Status != "uploaded" {
 		t.Fatalf("status = %q, want uploaded", payload.Items[0].Status)
 	}
-	if payload.Items[0].StatusLabel != "Ожидает следующий шаг" {
-		t.Fatalf("status label = %q, want Ожидает следующий шаг", payload.Items[0].StatusLabel)
+	if payload.Items[0].StatusLabel != "Загружен" {
+		t.Fatalf("status label = %q, want Загружен", payload.Items[0].StatusLabel)
 	}
-	if payload.Items[0].StageLabel != "Дальше: Извлечение аудио" {
-		t.Fatalf("stage label = %q, want Дальше: Извлечение аудио", payload.Items[0].StageLabel)
+	if payload.Items[0].StageLabel != "Дальше: извлечение аудио" {
+		t.Fatalf("stage label = %q, want Дальше: извлечение аудио", payload.Items[0].StageLabel)
 	}
 	if payload.Items[0].FailedStage != "" || payload.Items[0].ErrorSummary != "" {
 		t.Fatalf("unexpected failure details: %#v", payload.Items[0])
@@ -678,6 +678,9 @@ func TestUploadHandler_IndexShowsRussianStepFlow(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index body missing %q", want)
 		}
+	}
+	if !strings.Contains(body, `id="settings-sheet"`) || !strings.Contains(body, "hidden inert") {
+		t.Fatalf("settings sheet should be hidden by default: %s", body)
 	}
 }
 

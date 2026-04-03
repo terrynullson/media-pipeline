@@ -127,12 +127,19 @@ func buildMediaPipelineView(mediaItem media.Media, jobs []job.Job) MediaPipeline
 		view.StageValue = len(steps)
 		view.CurrentStage = "Завершено"
 		view.CurrentTimingText = steps[len(steps)-1].timingText
+	case lastCompletedIndex == 0:
+		view.StatusLabel = "Загружен"
+		view.StatusTone = "uploaded"
+		view.StageValue = 1
+		view.StageLabel = "Дальше: извлечение аудио"
+		view.CurrentStage = "Извлечение аудио"
+		view.CurrentTimingText = steps[0].timingText
 	default:
 		view.StatusLabel = "Ожидает следующий шаг"
 		view.StatusTone = "ready"
 		view.StageValue = max(1, lastCompletedIndex+1)
 		if pendingIndex >= 0 {
-			view.StageLabel = "Дальше: " + steps[pendingIndex].label
+			view.StageLabel = "Дальше: " + strings.ToLower(steps[pendingIndex].label)
 			view.CurrentStage = steps[pendingIndex].label
 			view.CurrentTimingText = steps[pendingIndex].timingText
 		} else {
@@ -254,11 +261,7 @@ func describeJobBackedStep(label string, currentJob *job.Job, nowUTC time.Time) 
 		step.statusLabel = "Готово"
 		step.tone = "success"
 		step.kind = "done"
-		if step.durationLabel != "" {
-			step.timingText = "Готово за " + step.durationLabel
-		} else {
-			step.timingText = "Готово"
-		}
+		step.timingText = buildTimingText(step.startedAtLabel, step.finishedAtLabel, "Готово", step.durationLabel)
 	case job.StatusRunning:
 		step.statusLabel = "В работе"
 		step.tone = "running"
@@ -267,25 +270,25 @@ func describeJobBackedStep(label string, currentJob *job.Job, nowUTC time.Time) 
 			step.progressVisible = true
 			step.progressPercent = clampPercent(*currentJob.ProgressPercent)
 			if currentJob.ProgressIsEstimated {
-				step.progressLabel = fmt.Sprintf("Оценка %d%%", step.progressPercent)
+				label := strings.TrimSpace(currentJob.ProgressLabel)
+				if label == "" {
+					label = "Оценка по сегментам"
+				}
+				step.progressLabel = fmt.Sprintf("%s: %d%%", label, step.progressPercent)
 			} else {
 				step.progressLabel = fmt.Sprintf("%d%%", step.progressPercent)
 			}
 		}
-		if step.durationLabel != "" {
-			step.timingText = "В работе " + step.durationLabel
-		} else {
-			step.timingText = "В работе"
-		}
+		step.timingText = buildTimingText(step.startedAtLabel, "", "В работе", step.durationLabel)
 	case job.StatusFailed:
 		step.statusLabel = "Ошибка"
 		step.tone = "error"
 		step.kind = "failed"
+		status := "Ошибка"
 		if step.durationLabel != "" {
-			step.timingText = "Ошибка через " + step.durationLabel
-		} else {
-			step.timingText = "Завершилось ошибкой"
+			status = "Ошибка через " + step.durationLabel
 		}
+		step.timingText = buildTimingText(step.startedAtLabel, step.finishedAtLabel, status, "")
 	case job.StatusPending:
 		step.statusLabel = "Ждёт"
 		step.tone = "ready"
@@ -299,6 +302,27 @@ func describeJobBackedStep(label string, currentJob *job.Job, nowUTC time.Time) 
 	}
 
 	return step
+}
+
+func buildTimingText(startedAt string, finishedAt string, status string, duration string) string {
+	parts := make([]string, 0, 4)
+	if strings.TrimSpace(startedAt) != "" {
+		parts = append(parts, "Старт "+startedAt)
+	}
+	if strings.TrimSpace(finishedAt) != "" {
+		parts = append(parts, "Финиш "+finishedAt)
+	}
+	if strings.TrimSpace(status) != "" {
+		if duration != "" && strings.HasPrefix(status, "Готово") {
+			parts = append(parts, status+" за "+duration)
+		} else {
+			parts = append(parts, status)
+		}
+	} else if strings.TrimSpace(duration) != "" {
+		parts = append(parts, duration)
+	}
+
+	return strings.Join(parts, " · ")
 }
 
 func formatOptionalClock(value *time.Time) string {
