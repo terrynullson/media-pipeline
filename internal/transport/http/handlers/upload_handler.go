@@ -8,10 +8,12 @@ import (
 	"html/template"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -83,6 +85,7 @@ type MediaListItem struct {
 	StagePercent      int
 	IsActive          bool
 	CurrentStage      string
+	CurrentTimingText string
 	FailedStage       string
 	ErrorSummary      string
 	ErrorLocation     string
@@ -96,7 +99,10 @@ type MediaListItem struct {
 }
 
 type IndexViewData struct {
+	Spotlight           *MediaListItem
 	Items               []MediaListItem
+	ItemsTotal          int
+	ItemsActive         int
 	UploadError         string
 	UploadSuccess       string
 	SettingsError       string
@@ -217,6 +223,7 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		slog.String("method", r.Method),
 		slog.String("path", r.URL.Path),
 	)
+	startedAtUTC := time.Now().UTC()
 
 	r.Body = http.MaxBytesReader(w, r.Body, h.maxRequestBodyB)
 	if err := r.ParseMultipartForm(h.maxFormMemoryB); err != nil {
@@ -260,10 +267,12 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	)
 
 	result, err := h.uploadUC.Upload(r.Context(), command.UploadMediaInput{
-		OriginalName: fileHeader.Filename,
-		MIMEType:     normalizeMIMEType(fileHeader.Header.Get("Content-Type")),
-		SizeBytes:    fileHeader.Size,
-		Content:      file,
+		OriginalName:        fileHeader.Filename,
+		MIMEType:            normalizeMIMEType(fileHeader.Header.Get("Content-Type")),
+		SizeBytes:           fileHeader.Size,
+		Content:             file,
+		StartedAtUTC:        startedAtUTC,
+		RuntimeSnapshotJSON: buildRuntimeSnapshotJSON(r),
 	})
 	if err != nil {
 		logger.Warn("upload failed", slog.Any("error", err), slog.String("filename", fileHeader.Filename))
@@ -450,13 +459,17 @@ func (h *UploadHandler) renderIndex(
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	spotlight := pickSpotlightItem(viewItems)
 	data := IndexViewData{
+		Spotlight:           spotlight,
 		Items:               viewItems,
+		ItemsTotal:          len(viewItems),
+		ItemsActive:         countActiveItems(viewItems),
 		UploadError:         uploadError,
 		UploadSuccess:       uploadSuccess,
 		SettingsError:       settingsError,
 		SettingsSuccess:     settingsSuccess,
-		SettingsPanelOpen:   settingsError != "" || settingsSuccess != "",
+		SettingsPanelOpen:   settingsError != "" || settingsSuccess != "" || triggerRuleError != "" || triggerRuleSuccess != "",
 		SettingsWarnings:    buildSettingsWarnings(currentForm),
 		TriggerRuleError:    triggerRuleError,
 		TriggerRuleSuccess:  triggerRuleSuccess,
@@ -506,6 +519,7 @@ func (h *UploadHandler) buildMediaListItems(ctx context.Context) ([]MediaListIte
 			StagePercent:      stagePercent(pipelineView.StageValue, pipelineView.StageTotal),
 			IsActive:          pipelineView.IsActive,
 			CurrentStage:      pipelineView.CurrentStage,
+			CurrentTimingText: pipelineView.CurrentTimingText,
 			FailedStage:       pipelineView.FailedStage,
 			ErrorSummary:      pipelineView.ErrorSummary,
 			ErrorLocation:     pipelineView.ErrorLocation,
@@ -519,6 +533,32 @@ func (h *UploadHandler) buildMediaListItems(ctx context.Context) ([]MediaListIte
 	}
 
 	return viewItems, nil
+}
+
+func pickSpotlightItem(items []MediaListItem) *MediaListItem {
+	for _, item := range items {
+		if item.IsActive {
+			current := item
+			return &current
+		}
+	}
+	if len(items) == 0 {
+		return nil
+	}
+
+	current := items[0]
+	return &current
+}
+
+func countActiveItems(items []MediaListItem) int {
+	total := 0
+	for _, item := range items {
+		if item.IsActive {
+			total++
+		}
+	}
+
+	return total
 }
 
 func canOpenTranscript(item media.Media) bool {
@@ -752,4 +792,89 @@ func triggerRuleIDFromRequest(r *http.Request) (int64, error) {
 	}
 
 	return value, nil
+}
+
+func buildRuntimeSnapshotJSON(r *http.Request) string {
+	snapshot := media.RuntimeSnapshot{
+		CapturedAtUTC:      time.Now().UTC(),
+		RequestIP:          requestIPFromRequest(r),
+		UserAgent:          strings.TrimSpace(r.UserAgent()),
+		AcceptLanguage:     strings.TrimSpace(r.Header.Get("Accept-Language")),
+		ClientLanguage:     strings.TrimSpace(r.FormValue("client_language")),
+		ClientPlatform:     strings.TrimSpace(r.FormValue("client_platform")),
+		ClientHintPlatform: strings.Trim(strings.TrimSpace(r.Header.Get("Sec-CH-UA-Platform")), `"`),
+		ClientHintMobile:   strings.Trim(strings.TrimSpace(r.Header.Get("Sec-CH-UA-Mobile")), `"`),
+		ClientHintArch:     strings.Trim(strings.TrimSpace(r.Header.Get("Sec-CH-UA-Arch")), `"`),
+		ClientHintBitness:  strings.Trim(strings.TrimSpace(r.Header.Get("Sec-CH-UA-Bitness")), `"`),
+	}
+
+	if value, ok := parseOptionalInt(strings.TrimSpace(r.FormValue("hardware_concurrency"))); ok {
+		snapshot.HardwareConcurrency = &value
+	}
+	if value, ok := parseOptionalFloat(strings.TrimSpace(r.FormValue("device_memory_gb"))); ok {
+		snapshot.DeviceMemoryGB = &value
+	}
+	if value, ok := parseOptionalInt(strings.TrimSpace(r.FormValue("timezone_offset_minutes"))); ok {
+		snapshot.TimezoneOffsetMinutes = &value
+	}
+
+	raw, err := media.EncodeRuntimeSnapshot(snapshot)
+	if err != nil {
+		return ""
+	}
+
+	return raw
+}
+
+func parseOptionalInt(raw string) (int, bool) {
+	if raw == "" {
+		return 0, false
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+
+	return value, true
+}
+
+func parseOptionalFloat(raw string) (float64, bool) {
+	if raw == "" {
+		return 0, false
+	}
+
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, false
+	}
+
+	return value, true
+}
+
+func requestIPFromRequest(r *http.Request) string {
+	for _, header := range []string{"X-Forwarded-For", "X-Real-IP"} {
+		value := strings.TrimSpace(r.Header.Get(header))
+		if value == "" {
+			continue
+		}
+		if header == "X-Forwarded-For" {
+			parts := strings.Split(value, ",")
+			if len(parts) > 0 {
+				return strings.TrimSpace(parts[0])
+			}
+		}
+		return value
+	}
+
+	hostPort := strings.TrimSpace(r.RemoteAddr)
+	if hostPort == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(hostPort)
+	if err == nil {
+		return host
+	}
+
+	return hostPort
 }

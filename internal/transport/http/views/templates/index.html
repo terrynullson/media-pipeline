@@ -8,232 +8,150 @@
 </head>
 <body>
 <main class="page">
-    <section class="hero">
-        <div class="hero-copy">
-            <p class="eyebrow">Этап 6</p>
-            <h1>Media Pipeline</h1>
-            <p class="subtitle">Загрузите медиафайл, дождитесь обработки и просматривайте расшифровку, таймлайн, триггеры и саммари в одном спокойном интерфейсе. Саммари создаётся только по вашему явному запросу.</p>
+    <section class="app-header">
+        <div>
+            <p class="eyebrow">Media Pipeline</p>
+            <h1>Быстрая загрузка и прозрачный пайплайн</h1>
+            <p class="subtitle">Загрузите файл, следите за этапами обработки и открывайте расшифровку, когда она будет готова. Настройки и правила убраны в отдельную панель.</p>
         </div>
-        <div class="hero-meta">
-            <div class="meta-card">
-                <span class="meta-label">Лимит загрузки</span>
-                <strong>{{.MaxUploadHuman}}</strong>
-            </div>
-            <div class="meta-card">
-                <span class="meta-label">Поддерживаемые форматы</span>
-                <strong>.mp4 .mov .mkv .avi .webm .mp3 .wav .m4a .aac .flac</strong>
-            </div>
-        </div>
+        <button type="button" class="button-link settings-button" id="open-settings-button">
+            <span aria-hidden="true">&#9881;</span>
+            <span>Настройки</span>
+        </button>
     </section>
 
-    <section class="settings-entry-card">
-        <details class="settings-drawer" {{if .SettingsPanelOpen}}open{{end}}>
-            <summary class="settings-drawer-summary">
-                <span class="settings-trigger-icon" aria-hidden="true">&#9881;</span>
-                <span>
-                    <strong>Настройки распознавания</strong>
-                    <span class="settings-trigger-hint">Откройте эту панель, чтобы поменять модель, устройство и другие параметры новых задач.</span>
-                </span>
-            </summary>
-            <div class="card settings-drawer-panel">
-                <div class="section-header">
+    <section class="shell-grid">
+        <article class="card card-highlight upload-shell">
+            <div class="section-header section-header-wide">
+                <div>
+                    <h2>Новая загрузка</h2>
+                    <p class="hint">Поддерживаются видео и аудио. Тяжёлая обработка по-прежнему выполняется только в worker.</p>
+                </div>
+                <span class="inline-badge">Лимит: {{.MaxUploadHuman}}</span>
+            </div>
+
+            <div id="upload-notices">
+                {{if .UploadError}}
+                <div class="notice notice-error">{{.UploadError}}</div>
+                {{end}}
+                {{if .UploadSuccess}}
+                <div class="notice notice-success">{{.UploadSuccess}}</div>
+                {{end}}
+            </div>
+
+            <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form" id="upload-form">
+                <input type="hidden" name="hardware_concurrency" id="hardware-concurrency-input">
+                <input type="hidden" name="device_memory_gb" id="device-memory-input">
+                <input type="hidden" name="timezone_offset_minutes" id="timezone-offset-input">
+                <input type="hidden" name="client_platform" id="client-platform-input">
+                <input type="hidden" name="client_language" id="client-language-input">
+
+                <input
+                    type="file"
+                    name="media"
+                    id="media-file-input"
+                    class="file-input-native"
+                    accept=".mp4,.mov,.mkv,.avi,.webm,.mp3,.wav,.m4a,.aac,.flac,audio/*,video/*"
+                    required
+                >
+
+                <div
+                    class="upload-dropzone"
+                    id="media-file-trigger"
+                    role="button"
+                    tabindex="0"
+                    aria-controls="media-file-input"
+                    aria-describedby="media-file-help media-file-status upload-progress-text"
+                >
+                    <div class="upload-dropzone-copy">
+                        <span class="upload-kicker">Основное действие</span>
+                        <strong>Перетащите файл сюда или выберите его вручную</strong>
+                        <p id="media-file-help">Точный процент показывается только во время отправки файла из браузера. После этого интерфейс переключается на реальные статусы этапов.</p>
+                    </div>
+                    <div class="upload-dropzone-action">
+                        <span class="file-picker-button" id="media-file-button">Выбрать файл</span>
+                        <span class="file-picker-meta" id="dropzone-meta">Готово к загрузке</span>
+                    </div>
+                </div>
+
+                <div class="file-selection" id="media-file-status" aria-live="polite">
+                    <span class="file-selection-label">Выбранный файл</span>
+                    <strong class="file-picker-name" id="media-file-name">Файл не выбран</strong>
+                    <span class="file-selection-hint" id="media-file-size">Максимальный размер: {{.MaxUploadHuman}}</span>
+                </div>
+
+                <div class="upload-progress" id="upload-progress" hidden>
+                    <div class="progress-header">
+                        <span class="progress-label">Ход загрузки</span>
+                        <strong id="upload-progress-text">Ожидание запуска</strong>
+                    </div>
+                    <div class="progress-track" aria-hidden="true">
+                        <span class="progress-fill" id="upload-progress-fill"></span>
+                    </div>
+                </div>
+
+                <div class="upload-actions">
+                    <button type="submit" id="upload-submit">Загрузить файл</button>
+                    <p class="hint">Подходящие форматы: .mp4, .mov, .mkv, .avi, .webm, .mp3, .wav, .m4a, .aac, .flac.</p>
+                </div>
+            </form>
+        </article>
+
+        <aside class="card spotlight-card">
+            <div class="section-header">
+                <div>
+                    <h2>Текущий статус</h2>
+                    <p class="hint">Карточка показывает самую активную запись, чтобы не искать её в списке.</p>
+                </div>
+            </div>
+
+            <div class="spotlight-stats">
+                <div class="stat-row">
+                    <span>Файлов в ленте</span>
+                    <strong id="items-total">{{.ItemsTotal}}</strong>
+                </div>
+                <div class="stat-row">
+                    <span>Сейчас в работе</span>
+                    <strong id="items-active">{{.ItemsActive}}</strong>
+                </div>
+            </div>
+
+            {{if .Spotlight}}
+            <article class="spotlight-entry" id="spotlight-entry" data-media-id="{{.Spotlight.ID}}">
+                <div class="pipeline-item-header">
                     <div>
-                        <h2>Настройки распознавания</h2>
-                        <p class="hint">Эти настройки хранятся в SQLite. Каждая новая задача <code>transcribe</code> сохраняет свой снимок параметров, а лимит времени теперь подбирается по длительности файла, модели и устройству. Для слишком тяжёлых сочетаний worker завершит задачу сразу с понятным объяснением.</p>
+                        <strong class="pipeline-item-title" id="spotlight-title">{{.Spotlight.OriginalName}}</strong>
+                        <p class="pipeline-item-meta" id="spotlight-meta">{{.Spotlight.SizeHuman}} · {{.Spotlight.CreatedAtUTC}} UTC</p>
                     </div>
+                    <span class="status-chip status-chip-{{.Spotlight.StatusTone}}" id="spotlight-status">{{.Spotlight.StatusLabel}}</span>
                 </div>
-
-                {{if .SettingsError}}
-                <div class="notice notice-error">{{.SettingsError}}</div>
-                {{end}}
-                {{if .SettingsSuccess}}
-                <div class="notice notice-success">{{.SettingsSuccess}}</div>
-                {{end}}
-                {{if .SettingsWarnings}}
-                <div class="notice notice-warning">
-                    <strong>Что важно знать</strong>
-                    <ul class="notice-list">
-                        {{range .SettingsWarnings}}
-                        <li>{{.}}</li>
-                        {{end}}
-                    </ul>
+                <p class="spotlight-stage" id="spotlight-stage">{{.Spotlight.StageLabel}}</p>
+                <p class="spotlight-timing hint" id="spotlight-timing">{{.Spotlight.CurrentTimingText}}</p>
+                <div class="stage-meter{{if .Spotlight.IsActive}} stage-meter-active{{end}}{{if eq .Spotlight.StatusTone "error"}} stage-meter-error{{end}}" aria-hidden="true">
+                    <span class="stage-meter-fill" id="spotlight-progress-fill" style="width: {{.Spotlight.StagePercent}}%;"></span>
                 </div>
-                {{end}}
-
-                <form action="/settings/transcription" method="post" class="settings-form">
-                    <label>
-                        <span>Бэкенд</span>
-                        <select name="backend">
-                            {{range .BackendOptions}}
-                            <option value="{{.}}" {{if eq $.SettingsForm.Backend .}}selected{{end}}>{{.}}</option>
-                            {{end}}
-                        </select>
-                    </label>
-
-                    <label>
-                        <span>Модель</span>
-                        <select name="model_name">
-                            {{range .ModelOptions}}
-                            <option value="{{.}}" {{if eq $.SettingsForm.ModelName .}}selected{{end}}>{{.}}</option>
-                            {{end}}
-                        </select>
-                    </label>
-
-                    <label>
-                        <span>Устройство</span>
-                        <select name="device" id="device-select">
-                            {{range .DeviceOptions}}
-                            <option value="{{.}}" {{if eq $.SettingsForm.Device .}}selected{{end}}>{{.}}</option>
-                            {{end}}
-                        </select>
-                    </label>
-
-                    <label>
-                        <span>Тип вычислений</span>
-                        <select name="compute_type" id="compute-type-select" data-selected="{{.SettingsForm.ComputeType}}">
-                            {{range .CurrentComputeTypes}}
-                            <option value="{{.}}" {{if eq $.SettingsForm.ComputeType .}}selected{{end}}>{{.}}</option>
-                            {{end}}
-                        </select>
-                    </label>
-
-                    <label>
-                        <span>Язык</span>
-                        <input type="text" name="language" value="{{.SettingsForm.Language}}" placeholder="ru или пусто для автоопределения">
-                    </label>
-
-                    <label>
-                        <span>Лучей поиска</span>
-                        <input type="number" name="beam_size" min="1" max="10" value="{{.SettingsForm.BeamSize}}">
-                    </label>
-
-                    <label class="checkbox-field">
-                        <input type="checkbox" name="vad_enabled" {{if .SettingsForm.VADEnabled}}checked{{end}}>
-                        <span>Включить VAD-фильтр</span>
-                    </label>
-
-                    <div class="settings-actions">
-                        <button type="submit">Сохранить настройки</button>
-                        <p class="hint">Эти настройки применяются только к новым задачам. Для CPU обычно подходят <code>int8</code> и <code>float32</code>, для CUDA — <code>float16</code> и <code>int8_float16</code>.</p>
-                    </div>
-                </form>
+                <div class="pipeline-item-actions">
+                    {{if .Spotlight.CanOpenTranscript}}
+                    <a class="button-link" id="spotlight-link" href="{{.Spotlight.TranscriptURL}}">Открыть карточку</a>
+                    {{end}}
+                </div>
+            </article>
+            {{else}}
+            <div class="empty-state" id="spotlight-empty">
+                <p>Пока нет загруженных файлов.</p>
+                <p class="hint">После первой загрузки здесь появится живая сводка по текущему этапу.</p>
             </div>
-        </details>
-    </section>
-
-    <section class="card">
-        <div class="section-header">
-            <div>
-                <h2>Пошаговый сценарий</h2>
-                <p class="hint">Главная страница подсказывает, что делать дальше, и показывает реальные шаги пайплайна без искусственных процентов после загрузки.</p>
-            </div>
-        </div>
-        <div class="steps-grid">
-            <article class="step-card">
-                <span class="step-index">Шаг 1</span>
-                <strong>Загрузите видео или аудио</strong>
-                <p>Файл будет сохранён, а тяжёлая обработка уйдёт в worker.</p>
-            </article>
-            <article class="step-card">
-                <span class="step-index">Шаг 2</span>
-                <strong>Настройте распознавание</strong>
-                <p>Параметры сохраняются в SQLite, а время ожидания распознавания теперь подбирается под файл автоматически.</p>
-            </article>
-            <article class="step-card">
-                <span class="step-index">Шаг 3</span>
-                <strong>Дождитесь обработки файла</strong>
-                <p>Сначала извлекается аудио, затем запускается распознавание.</p>
-            </article>
-            <article class="step-card">
-                <span class="step-index">Шаг 4</span>
-                <strong>Просмотрите текст, таймлайн и триггеры</strong>
-                <p>На странице файла доступны расшифровка, сегменты и найденные события.</p>
-            </article>
-            <article class="step-card">
-                <span class="step-index">Шаг 5</span>
-                <strong>Сделайте саммари при необходимости</strong>
-                <p>Саммари создаётся только по кнопке и не запускается автоматически.</p>
-            </article>
-        </div>
-    </section>
-
-    <section class="card card-highlight">
-        <div class="section-header section-header-wide">
-            <div>
-                <h2>Загрузка медиа</h2>
-                <p class="hint">Веб-приложение сохраняет файл и создаёт задачу <code>extract_audio</code>. Вся тяжёлая обработка по-прежнему выполняется только в worker.</p>
-            </div>
-            <div class="inline-badge">Лимит: {{.MaxUploadMB}} МБ</div>
-        </div>
-
-        <div id="upload-notices">
-            {{if .UploadError}}
-            <div class="notice notice-error">{{.UploadError}}</div>
             {{end}}
-            {{if .UploadSuccess}}
-            <div class="notice notice-success">{{.UploadSuccess}}</div>
-            {{end}}
-        </div>
-
-        <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form" id="upload-form">
-            <input
-                type="file"
-                name="media"
-                id="media-file-input"
-                class="file-input-native"
-                accept=".mp4,.mov,.mkv,.avi,.webm,.mp3,.wav,.m4a,.aac,.flac,audio/*,video/*"
-                required
-            >
-
-            <div
-                class="upload-dropzone"
-                id="media-file-trigger"
-                role="button"
-                tabindex="0"
-                aria-controls="media-file-input"
-                aria-describedby="media-file-help media-file-status upload-progress-text"
-            >
-                <div class="upload-dropzone-copy">
-                    <span class="upload-kicker">Зона загрузки</span>
-                    <strong>Перетащите сюда файл или нажмите для выбора</strong>
-                    <p id="media-file-help">Поддерживается drag-and-drop. С клавиатуры можно нажать Enter или пробел.</p>
-                </div>
-                <div class="upload-dropzone-action">
-                    <span class="file-picker-button" id="media-file-button">Выбрать файл</span>
-                    <span class="file-picker-meta" id="dropzone-meta">Готово к локальной загрузке</span>
-                </div>
-            </div>
-
-            <div class="file-selection" id="media-file-status" aria-live="polite">
-                <span class="file-selection-label">Выбранный файл</span>
-                <strong class="file-picker-name" id="media-file-name">Файл не выбран</strong>
-                <span class="file-selection-hint" id="media-file-size">Максимальный размер: {{.MaxUploadHuman}}</span>
-            </div>
-
-            <div class="upload-progress" id="upload-progress" hidden>
-                <div class="progress-header">
-                    <span class="progress-label">Ход загрузки</span>
-                    <strong id="upload-progress-text">Ожидание запуска</strong>
-                </div>
-                <div class="progress-track" aria-hidden="true">
-                    <span class="progress-fill" id="upload-progress-fill"></span>
-                </div>
-            </div>
-
-            <div class="upload-actions">
-                <button type="submit" id="upload-submit">Загрузить файл</button>
-                <p class="hint">Процент показывается только пока браузер отправляет файл. Дальше интерфейс переключается на реальные статусы пайплайна.</p>
-            </div>
-        </form>
+        </aside>
     </section>
 
     <section class="card">
         <div class="section-header section-header-wide">
             <div>
-                <h2>Прогресс пайплайна</h2>
-                <p class="hint">Статусы приходят с бэкенда. Извлечение аудио и распознавание показываются как реальные шаги обработки.</p>
+                <h2>Очередь и этапы</h2>
+                <p class="hint">Каждый шаг показывает статус, время старта, завершение и длительность. Для распознавания процент помечается как оценка, только если он построен по реальным сегментам.</p>
             </div>
-            <div class="inline-badge inline-badge-muted">Автообновление каждые несколько секунд</div>
+            <span class="inline-badge inline-badge-muted">Автообновление каждые несколько секунд</span>
         </div>
         <div class="pipeline-grid" id="pipeline-grid">
             {{if .Items}}
@@ -247,21 +165,36 @@
                         <span class="status-chip status-chip-{{.StatusTone}}">{{.StatusLabel}}</span>
                     </div>
                     <p class="pipeline-stage-text">{{.StageLabel}}</p>
+                    {{if .CurrentTimingText}}
+                    <p class="hint pipeline-stage-timing">{{.CurrentTimingText}}</p>
+                    {{end}}
                     <div class="stage-meter{{if .IsActive}} stage-meter-active{{end}}{{if eq .StatusTone "error"}} stage-meter-error{{end}}" aria-hidden="true">
                         <span class="stage-meter-fill" style="width: {{.StagePercent}}%;"></span>
                     </div>
                     <div class="pipeline-stage-foot">
-                        <span>Шаг {{.StageValue}} / {{.StageTotal}}</span>
+                        <span>Этап {{.StageValue}} / {{.StageTotal}}</span>
                         <span>{{.Extension}}</span>
                     </div>
-                    <div class="pipeline-step-list">
+                    <div class="step-detail-list">
                         {{range .Steps}}
-                        <span class="step-pill step-pill-{{.Tone}}{{if .IsCurrent}} is-current{{end}}{{if .IsFailed}} is-failed{{end}}">{{.Label}}: {{.StatusLabel}}</span>
+                        <div class="step-detail step-detail-{{.Tone}}{{if .IsCurrent}} is-current{{end}}{{if .IsFailed}} is-failed{{end}}">
+                            <div class="step-detail-head">
+                                <strong>{{.Label}}</strong>
+                                <span>{{.StatusLabel}}</span>
+                            </div>
+                            <p class="step-detail-meta">{{.TimingText}}</p>
+                            {{if .ProgressVisible}}
+                            <div class="step-progress-mini" aria-hidden="true">
+                                <span class="step-progress-mini-fill" style="width: {{.ProgressPercent}}%;"></span>
+                            </div>
+                            <p class="step-detail-progress">{{.ProgressLabel}}</p>
+                            {{end}}
+                        </div>
                         {{end}}
                     </div>
                     {{if .FailedStage}}
                     <div class="pipeline-problem">
-                        <strong>Ошибка на шаге: {{.FailedStage}}</strong>
+                        <strong>Ошибка на этапе: {{.FailedStage}}</strong>
                         <p>Причина: {{.ErrorSummary}}</p>
                         <p class="hint">{{.ErrorLocation}}</p>
                     </div>
@@ -279,17 +212,105 @@
             {{else}}
             <div class="empty-state" id="pipeline-empty">
                 <p>Пока нет загруженных файлов.</p>
-                <p class="hint">После первой загрузки здесь появятся реальные статусы обработки.</p>
+                <p class="hint">После первой загрузки здесь появятся статусы этапов и длительности.</p>
             </div>
             {{end}}
         </div>
     </section>
+</main>
+<div class="drawer-overlay{{if .SettingsPanelOpen}} is-open{{end}}" id="settings-overlay" hidden></div>
+<aside class="settings-sheet{{if .SettingsPanelOpen}} is-open{{end}}" id="settings-sheet" aria-hidden="{{if .SettingsPanelOpen}}false{{else}}true{{end}}">
+    <div class="settings-sheet-header">
+        <div>
+            <p class="eyebrow">Настройки</p>
+            <h2>Параметры распознавания и правила</h2>
+            <p class="hint">Основной сценарий остаётся на главной. Управление вынесено в отдельную панель.</p>
+        </div>
+        <button type="button" class="button-link button-link-compact" id="close-settings-button">Закрыть</button>
+    </div>
 
-    <section class="card">
+    {{if .SettingsError}}
+    <div class="notice notice-error">{{.SettingsError}}</div>
+    {{end}}
+    {{if .SettingsSuccess}}
+    <div class="notice notice-success">{{.SettingsSuccess}}</div>
+    {{end}}
+    {{if .SettingsWarnings}}
+    <div class="notice notice-warning">
+        <strong>Что важно учесть</strong>
+        <ul class="notice-list">
+            {{range .SettingsWarnings}}
+            <li>{{.}}</li>
+            {{end}}
+        </ul>
+    </div>
+    {{end}}
+
+    <section class="card settings-drawer-panel">
+        <div class="section-header">
+            <div>
+                <h2>Распознавание</h2>
+                <p class="hint">Настройки сохраняются в SQLite и применяются только к новым задачам.</p>
+            </div>
+        </div>
+
+        <form action="/settings/transcription" method="post" class="settings-form">
+            <label>
+                <span>Бэкенд</span>
+                <select name="backend">
+                    {{range .BackendOptions}}
+                    <option value="{{.}}" {{if eq $.SettingsForm.Backend .}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+            </label>
+            <label>
+                <span>Модель</span>
+                <select name="model_name">
+                    {{range .ModelOptions}}
+                    <option value="{{.}}" {{if eq $.SettingsForm.ModelName .}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+            </label>
+            <label>
+                <span>Устройство</span>
+                <select name="device" id="device-select">
+                    {{range .DeviceOptions}}
+                    <option value="{{.}}" {{if eq $.SettingsForm.Device .}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+            </label>
+            <label>
+                <span>Тип вычислений</span>
+                <select name="compute_type" id="compute-type-select" data-selected="{{.SettingsForm.ComputeType}}">
+                    {{range .CurrentComputeTypes}}
+                    <option value="{{.}}" {{if eq $.SettingsForm.ComputeType .}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+            </label>
+            <label>
+                <span>Язык</span>
+                <input type="text" name="language" value="{{.SettingsForm.Language}}" placeholder="ru или пусто для авто">
+            </label>
+            <label>
+                <span>Лучей поиска</span>
+                <input type="number" name="beam_size" min="1" max="10" value="{{.SettingsForm.BeamSize}}">
+            </label>
+            <label class="checkbox-field">
+                <input type="checkbox" name="vad_enabled" {{if .SettingsForm.VADEnabled}}checked{{end}}>
+                <span>Использовать VAD-фильтр</span>
+            </label>
+            <div class="settings-actions">
+                <button type="submit">Сохранить</button>
+                <p class="hint">Для CPU обычно подходят <code>int8</code> и <code>float32</code>, для CUDA — <code>float16</code> и <code>int8_float16</code>.</p>
+            </div>
+        </form>
+    </section>
+
+    <section class="card settings-drawer-panel">
         <div class="section-header">
             <div>
                 <h2>Правила триггеров</h2>
-                <p class="hint">Правила лежат в SQLite и применяются worker-процессом после готовой расшифровки. Поиск детерминированный и без учёта регистра.</p>
+                <p class="hint">Минимальное управление правилами без перегруза главной страницы.</p>
             </div>
         </div>
 
@@ -303,125 +324,61 @@
         <form action="/trigger-rules" method="post" class="trigger-rules-form">
             <label>
                 <span>Название</span>
-                <input type="text" name="name" value="{{.TriggerRuleForm.Name}}" placeholder="Жалоба по оплате">
+                <input type="text" name="name" value="{{.TriggerRuleForm.Name}}" placeholder="Возврат средств">
             </label>
-
             <label>
                 <span>Категория</span>
                 <input type="text" name="category" value="{{.TriggerRuleForm.Category}}" placeholder="billing">
             </label>
-
             <label>
-                <span>Шаблон</span>
+                <span>Фраза или шаблон</span>
                 <input type="text" name="pattern" value="{{.TriggerRuleForm.Pattern}}" placeholder="refund">
             </label>
-
             <label>
-                <span>Режим совпадения</span>
+                <span>Тип совпадения</span>
                 <select name="match_mode">
                     {{range .MatchModeOptions}}
                     <option value="{{.}}" {{if eq $.TriggerRuleForm.MatchMode .}}selected{{end}}>{{.}}</option>
                     {{end}}
                 </select>
             </label>
-
             <div class="settings-actions">
                 <button type="submit">Добавить правило</button>
-                <p class="hint"><code>contains</code> ищет фразу внутри сегмента. <code>exact</code> требует полного совпадения текста сегмента.</p>
             </div>
         </form>
 
-        {{if .TriggerRules}}
         <div class="trigger-rule-list">
-            {{range .TriggerRules}}
-            <article class="trigger-rule-item">
-                <div class="trigger-rule-copy">
+            {{if .TriggerRules}}
+                {{range .TriggerRules}}
+                <article class="trigger-rule-item">
                     <div class="trigger-rule-header">
-                        <strong>{{.Name}}</strong>
+                        <div class="trigger-rule-copy">
+                            <strong>{{.Name}}</strong>
+                            <p class="hint">{{.Category}} · {{.MatchMode}}</p>
+                        </div>
                         <span class="status-chip status-chip-{{.EnabledTone}}">{{.EnabledLabel}}</span>
                     </div>
-                    <p class="hint">{{.Category}} · {{.MatchMode}}</p>
                     <p class="trigger-rule-pattern">{{.Pattern}}</p>
-                </div>
-                <div class="trigger-rule-actions">
-                    <form action="{{.ToggleURL}}" method="post">
-                        <input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}">
-                        <button type="submit" class="button-link button-link-compact">{{.ToggleLabel}}</button>
-                    </form>
-                    <form action="{{.DeleteURL}}" method="post">
-                        <button type="submit" class="button-danger button-danger-compact">Удалить</button>
-                    </form>
-                </div>
-            </article>
+                    <div class="trigger-rule-actions">
+                        <form action="{{.ToggleURL}}" method="post">
+                            <input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}">
+                            <button type="submit" class="button-link button-link-compact">{{.ToggleLabel}}</button>
+                        </form>
+                        <form action="{{.DeleteURL}}" method="post">
+                            <button type="submit" class="button-danger button-danger-compact">Удалить</button>
+                        </form>
+                    </div>
+                </article>
+                {{end}}
+            {{else}}
+            <div class="empty-state">
+                <p>Правил пока нет.</p>
+                <p class="hint">Добавьте только те сигналы, которые реально нужны в анализе.</p>
+            </div>
             {{end}}
         </div>
-        {{else}}
-        <div class="empty-state">
-            <p>Правил триггеров пока нет.</p>
-            <p class="hint">Создайте первое правило выше. Новые расшифровки worker будет анализировать автоматически.</p>
-        </div>
-        {{end}}
     </section>
-
-    <section class="card">
-        <div class="section-header section-header-wide">
-            <div>
-                <h2>Последние загрузки</h2>
-                <p class="hint">Сначала идут самые новые файлы. Время показано в UTC.</p>
-            </div>
-            <div class="inline-badge inline-badge-muted" id="recent-count">Файлов: {{len .Items}}</div>
-        </div>
-
-        <div class="table-wrap" id="recent-table-wrap" {{if eq (len .Items) 0}}hidden{{end}}>
-            <table>
-                <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Имя файла</th>
-                    <th>Тип</th>
-                    <th>Размер</th>
-                    <th>Статус</th>
-                    <th>Шаг пайплайна</th>
-                    <th>Загружен (UTC)</th>
-                    <th>Действия</th>
-                </tr>
-                </thead>
-                <tbody id="recent-table-body">
-                {{range .Items}}
-                <tr data-media-id="{{.ID}}">
-                    <td>{{.ID}}</td>
-                    <td class="filename">{{.OriginalName}}</td>
-                    <td><span class="pill">{{.Extension}}</span></td>
-                    <td>{{.SizeHuman}}</td>
-                    <td><span class="status-chip status-chip-{{.StatusTone}}">{{.StatusLabel}}</span></td>
-                    <td>
-                        <div>{{.StageLabel}}</div>
-                        {{if .ErrorSummary}}
-                        <div class="table-problem">Ошибка: {{.ErrorSummary}}</div>
-                        {{end}}
-                    </td>
-                    <td>{{.CreatedAtUTC}}</td>
-                    <td>
-                        <div class="row-actions">
-                            {{if .CanOpenTranscript}}
-                            <a class="button-link button-link-compact" href="{{.TranscriptURL}}">Открыть расшифровку</a>
-                            {{end}}
-                            <form action="{{.DeleteURL}}" method="post" class="delete-media-form" data-media-id="{{.ID}}" data-media-name="{{.OriginalName}}">
-                                <button type="submit" class="button-danger button-danger-compact">Удалить</button>
-                            </form>
-                        </div>
-                    </td>
-                </tr>
-                {{end}}
-                </tbody>
-            </table>
-        </div>
-        <div class="empty-state" id="recent-empty" {{if gt (len .Items) 0}}hidden{{end}}>
-            <p>Пока нет загруженных файлов.</p>
-            <p class="hint">Выберите аудио или видео выше, чтобы создать первую запись и поставить задачу в очередь.</p>
-        </div>
-    </section>
-</main>
+</aside>
 <script>
 (() => {
     const form = document.getElementById("upload-form");
@@ -437,23 +394,33 @@
     const uploadProgressText = document.getElementById("upload-progress-text");
     const uploadSubmit = document.getElementById("upload-submit");
     const pipelineGrid = document.getElementById("pipeline-grid");
-    const recentCount = document.getElementById("recent-count");
-    const recentTableWrap = document.getElementById("recent-table-wrap");
-    const recentTableBody = document.getElementById("recent-table-body");
-    const recentEmpty = document.getElementById("recent-empty");
+    const itemsTotal = document.getElementById("items-total");
+    const itemsActive = document.getElementById("items-active");
+    const spotlightEntry = document.getElementById("spotlight-entry");
+    const spotlightEmpty = document.getElementById("spotlight-empty");
+    const spotlightTitle = document.getElementById("spotlight-title");
+    const spotlightMeta = document.getElementById("spotlight-meta");
+    const spotlightStatus = document.getElementById("spotlight-status");
+    const spotlightStage = document.getElementById("spotlight-stage");
+    const spotlightTiming = document.getElementById("spotlight-timing");
+    const spotlightProgressFill = document.getElementById("spotlight-progress-fill");
+    const spotlightLink = document.getElementById("spotlight-link");
+    const hardwareConcurrencyInput = document.getElementById("hardware-concurrency-input");
+    const deviceMemoryInput = document.getElementById("device-memory-input");
+    const timezoneOffsetInput = document.getElementById("timezone-offset-input");
+    const clientPlatformInput = document.getElementById("client-platform-input");
+    const clientLanguageInput = document.getElementById("client-language-input");
 
-    if (!form || !fileInput || !fileName || !fileSize || !trigger || !button || !dropzoneMeta || !notices || !uploadProgress || !uploadProgressFill || !uploadProgressText || !uploadSubmit || !pipelineGrid || !recentCount || !recentTableWrap || !recentTableBody || !recentEmpty) {
+    if (!form || !fileInput || !fileName || !fileSize || !trigger || !button || !dropzoneMeta || !notices || !uploadProgress || !uploadProgressFill || !uploadProgressText || !uploadSubmit || !pipelineGrid) {
         return;
     }
 
-    const stageTotal = 5;
     let pollTimer = null;
 
     function formatBytes(size) {
         if (!Number.isFinite(size) || size < 1024) {
             return `${size || 0} B`;
         }
-
         const units = ["KB", "MB", "GB", "TB"];
         let value = size;
         for (const unit of units) {
@@ -462,7 +429,6 @@
                 return `${value.toFixed(1)} ${unit}`;
             }
         }
-
         return `${(value / 1024).toFixed(1)} PB`;
     }
 
@@ -507,7 +473,6 @@
             trigger.classList.remove("has-file");
             return;
         }
-
         fileName.textContent = file.name;
         fileSize.textContent = `Размер: ${formatBytes(file.size)}`;
         trigger.classList.add("has-file");
@@ -539,16 +504,25 @@
         return Math.round((item.StageValue / item.StageTotal) * 100);
     }
 
-    function renderStepPills(item) {
+    function renderStepDetails(item) {
         const steps = Array.isArray(item && item.Steps) ? item.Steps : [];
         if (steps.length === 0) {
             return "";
         }
-
-        return `<div class="pipeline-step-list">${steps.map((step) => `
-            <span class="step-pill step-pill-${escapeHtml(step.Tone)}${step.IsCurrent ? " is-current" : ""}${step.IsFailed ? " is-failed" : ""}">
-                ${escapeHtml(step.Label)}: ${escapeHtml(step.StatusLabel)}
-            </span>
+        return `<div class="step-detail-list">${steps.map((step) => `
+            <div class="step-detail step-detail-${escapeHtml(step.Tone)}${step.IsCurrent ? " is-current" : ""}${step.IsFailed ? " is-failed" : ""}">
+                <div class="step-detail-head">
+                    <strong>${escapeHtml(step.Label)}</strong>
+                    <span>${escapeHtml(step.StatusLabel)}</span>
+                </div>
+                <p class="step-detail-meta">${escapeHtml(step.TimingText || "")}</p>
+                ${step.ProgressVisible ? `
+                    <div class="step-progress-mini" aria-hidden="true">
+                        <span class="step-progress-mini-fill" style="width: ${Math.max(0, Math.min(step.ProgressPercent || 0, 100))}%"></span>
+                    </div>
+                    <p class="step-detail-progress">${escapeHtml(step.ProgressLabel || "")}</p>
+                ` : ""}
+            </div>
         `).join("")}</div>`;
     }
 
@@ -556,10 +530,9 @@
         if (!item || !item.FailedStage) {
             return "";
         }
-
         return `
             <div class="pipeline-problem">
-                <strong>Ошибка на шаге: ${escapeHtml(item.FailedStage)}</strong>
+                <strong>Ошибка на этапе: ${escapeHtml(item.FailedStage)}</strong>
                 <p>Причина: ${escapeHtml(item.ErrorSummary || "Причина не указана.")}</p>
                 <p class="hint">${escapeHtml(item.ErrorLocation || "Подробности смотрите в логах worker.")}</p>
             </div>
@@ -571,12 +544,11 @@
             pipelineGrid.innerHTML = `
                 <div class="empty-state" id="pipeline-empty">
                     <p>Пока нет загруженных файлов.</p>
-                    <p class="hint">После первой загрузки здесь появятся реальные статусы обработки.</p>
+                    <p class="hint">После первой загрузки здесь появятся статусы этапов и длительности.</p>
                 </div>
             `;
             return;
         }
-
         pipelineGrid.innerHTML = items.map((item) => `
             <article class="pipeline-item pipeline-tone-${escapeHtml(item.StatusTone)}" data-media-id="${item.ID}">
                 <div class="pipeline-item-header">
@@ -587,14 +559,15 @@
                     <span class="status-chip status-chip-${escapeHtml(item.StatusTone)}">${escapeHtml(item.StatusLabel)}</span>
                 </div>
                 <p class="pipeline-stage-text">${escapeHtml(item.StageLabel)}</p>
+                ${item.CurrentTimingText ? `<p class="hint pipeline-stage-timing">${escapeHtml(item.CurrentTimingText)}</p>` : ""}
                 <div class="stage-meter${item.IsActive ? " stage-meter-active" : ""}${item.StatusTone === "error" ? " stage-meter-error" : ""}" aria-hidden="true">
                     <span class="stage-meter-fill" style="width: ${deriveStageWidth(item)}%;"></span>
                 </div>
                 <div class="pipeline-stage-foot">
-                    <span>Шаг ${item.StageValue} / ${item.StageTotal}</span>
+                    <span>Этап ${item.StageValue} / ${item.StageTotal}</span>
                     <span>${escapeHtml(item.Extension)}</span>
                 </div>
-                ${renderStepPills(item)}
+                ${renderStepDetails(item)}
                 ${renderProblemBlock(item)}
                 <div class="pipeline-item-actions">
                     ${item.CanOpenTranscript ? `<a class="button-link" href="${escapeHtml(item.TranscriptURL)}">Открыть расшифровку</a>` : ""}
@@ -606,39 +579,57 @@
         `).join("");
     }
 
-    function renderRecentTable(items) {
-        recentCount.textContent = `Файлов: ${items.length}`;
-        if (!items || items.length === 0) {
-            recentTableWrap.hidden = true;
-            recentEmpty.hidden = false;
-            recentTableBody.innerHTML = "";
+    function updateSpotlight(items) {
+        const spotlight = (items || []).find((item) => item && item.IsActive) || (items || [])[0];
+        if (itemsTotal) {
+            itemsTotal.textContent = String((items || []).length);
+        }
+        if (itemsActive) {
+            itemsActive.textContent = String((items || []).filter((item) => item && item.IsActive).length);
+        }
+        if (!spotlight) {
+            if (spotlightEntry) {
+                spotlightEntry.hidden = true;
+            }
+            if (spotlightEmpty) {
+                spotlightEmpty.hidden = false;
+            }
             return;
         }
-
-        recentTableWrap.hidden = false;
-        recentEmpty.hidden = true;
-        recentTableBody.innerHTML = items.map((item) => `
-            <tr data-media-id="${item.ID}">
-                <td>${item.ID}</td>
-                <td class="filename">${escapeHtml(item.OriginalName)}</td>
-                <td><span class="pill">${escapeHtml(item.Extension)}</span></td>
-                <td>${escapeHtml(item.SizeHuman)}</td>
-                <td><span class="status-chip status-chip-${escapeHtml(item.StatusTone)}">${escapeHtml(item.StatusLabel)}</span></td>
-                <td>
-                    <div>${escapeHtml(item.StageLabel)}</div>
-                    ${item.ErrorSummary ? `<div class="table-problem">Ошибка: ${escapeHtml(item.ErrorSummary)}</div>` : ""}
-                </td>
-                <td>${escapeHtml(item.CreatedAtUTC)}</td>
-                <td>
-                    <div class="row-actions">
-                        ${item.CanOpenTranscript ? `<a class="button-link button-link-compact" href="${escapeHtml(item.TranscriptURL)}">Открыть расшифровку</a>` : ""}
-                        <form action="${escapeHtml(item.DeleteURL)}" method="post" class="delete-media-form" data-media-id="${item.ID}" data-media-name="${escapeHtml(item.OriginalName)}">
-                            <button type="submit" class="button-danger button-danger-compact">Удалить</button>
-                        </form>
-                    </div>
-                </td>
-            </tr>
-        `).join("");
+        if (spotlightEntry) {
+            spotlightEntry.hidden = false;
+            spotlightEntry.dataset.mediaId = spotlight.ID;
+        }
+        if (spotlightEmpty) {
+            spotlightEmpty.hidden = true;
+        }
+        if (spotlightTitle) {
+            spotlightTitle.textContent = spotlight.OriginalName || "";
+        }
+        if (spotlightMeta) {
+            spotlightMeta.textContent = `${spotlight.SizeHuman || ""} · ${spotlight.CreatedAtUTC || ""} UTC`;
+        }
+        if (spotlightStatus) {
+            spotlightStatus.textContent = spotlight.StatusLabel || "";
+            spotlightStatus.className = `status-chip status-chip-${spotlight.StatusTone || "neutral"}`;
+        }
+        if (spotlightStage) {
+            spotlightStage.textContent = spotlight.StageLabel || "";
+        }
+        if (spotlightTiming) {
+            spotlightTiming.textContent = spotlight.CurrentTimingText || "";
+        }
+        if (spotlightProgressFill) {
+            spotlightProgressFill.style.width = `${deriveStageWidth(spotlight)}%`;
+        }
+        if (spotlightLink) {
+            if (spotlight.CanOpenTranscript) {
+                spotlightLink.hidden = false;
+                spotlightLink.href = spotlight.TranscriptURL || "#";
+            } else {
+                spotlightLink.hidden = true;
+            }
+        }
     }
 
     async function submitDeleteForm(form) {
@@ -647,12 +638,10 @@
         if (!confirmed) {
             return;
         }
-
         const submitButton = form.querySelector("button[type='submit']");
         if (submitButton) {
             submitButton.disabled = true;
         }
-
         try {
             const response = await fetch(form.action, {
                 method: "POST",
@@ -664,13 +653,10 @@
             let payload = null;
             try {
                 payload = await response.json();
-            } catch (_) {
-            }
-
+            } catch (_) {}
             if (!response.ok) {
                 throw new Error(payload && payload.message ? payload.message : "Не удалось удалить файл.");
             }
-
             renderNotice("success", payload && payload.message ? payload.message : "Файл удалён.");
             await refreshStatuses();
         } catch (error) {
@@ -686,31 +672,24 @@
         if (pollTimer) {
             window.clearTimeout(pollTimer);
         }
-        pollTimer = window.setTimeout(() => {
-            refreshStatuses();
-        }, delayMs);
+        pollTimer = window.setTimeout(() => refreshStatuses(), delayMs);
     }
 
     async function refreshStatuses() {
         let nextDelayMs = 8000;
         try {
             const response = await fetch("/media/statuses", {
-                headers: {
-                    "Accept": "application/json"
-                },
+                headers: { "Accept": "application/json" },
                 cache: "no-store"
             });
             if (!response.ok) {
                 throw new Error(`status polling failed with ${response.status}`);
             }
-
             const payload = await response.json();
             const items = Array.isArray(payload.items) ? payload.items : [];
             renderPipelineItems(items);
-            renderRecentTable(items);
-
-            const hasActive = items.some((item) => item && item.IsActive);
-            nextDelayMs = hasActive ? 3000 : 8000;
+            updateSpotlight(items);
+            nextDelayMs = items.some((item) => item && item.IsActive) ? 3000 : 8000;
         } catch (_) {
             nextDelayMs = 10000;
         } finally {
@@ -718,8 +697,22 @@
         }
     }
 
-    function startPollingSoon() {
-        scheduleNextPoll(800);
+    function populateRuntimeSnapshot() {
+        if (hardwareConcurrencyInput && Number.isFinite(navigator.hardwareConcurrency)) {
+            hardwareConcurrencyInput.value = String(navigator.hardwareConcurrency);
+        }
+        if (deviceMemoryInput && Number.isFinite(navigator.deviceMemory)) {
+            deviceMemoryInput.value = String(navigator.deviceMemory);
+        }
+        if (timezoneOffsetInput) {
+            timezoneOffsetInput.value = String(new Date().getTimezoneOffset());
+        }
+        if (clientPlatformInput) {
+            clientPlatformInput.value = navigator.platform || "";
+        }
+        if (clientLanguageInput) {
+            clientLanguageInput.value = navigator.language || "";
+        }
     }
 
     trigger.addEventListener("click", openPicker);
@@ -752,7 +745,7 @@
                 applyDroppedFiles(event.dataTransfer.files);
             }
             trigger.classList.remove("is-dragover");
-            dropzoneMeta.textContent = fileInput.files && fileInput.files.length > 0 ? "Файл готов к загрузке" : "Готово к локальной загрузке";
+            dropzoneMeta.textContent = fileInput.files && fileInput.files.length > 0 ? "Файл готов к загрузке" : "Готово к загрузке";
         });
     });
 
@@ -760,12 +753,13 @@
         if (!window.XMLHttpRequest || !window.FormData) {
             return;
         }
-
         if (!fileInput.files || fileInput.files.length === 0) {
             return;
         }
 
         event.preventDefault();
+        populateRuntimeSnapshot();
+
         const xhr = new XMLHttpRequest();
         const payload = new FormData(form);
         const selectedFile = fileInput.files[0];
@@ -782,7 +776,6 @@
                 setUploadProgressIndeterminate("Загрузка...");
                 return;
             }
-
             const percent = Math.round((progressEvent.loaded / progressEvent.total) * 100);
             setUploadProgress(percent, `Загружаем ${selectedFile.name} (${percent}%)`);
         });
@@ -790,10 +783,10 @@
             uploadSubmit.disabled = false;
             if (xhr.status >= 200 && xhr.status < 300) {
                 setUploadProgress(100, "Загрузка завершена");
-                renderNotice("success", "Файл загружен. Ниже появятся шаги обработки.");
+                renderNotice("success", "Файл загружен. Ниже появятся этапы обработки.");
                 form.reset();
                 renderSelectedFile(null);
-                startPollingSoon();
+                refreshStatuses();
                 window.setTimeout(clearUploadProgress, 1200);
                 return;
             }
@@ -804,8 +797,7 @@
                 if (parsed && parsed.message) {
                     message = parsed.message;
                 }
-            } catch (_) {
-            }
+            } catch (_) {}
             renderNotice("error", message);
             clearUploadProgress();
         });
@@ -827,13 +819,13 @@
         if (!deleteForm) {
             return;
         }
-
         event.preventDefault();
         submitDeleteForm(deleteForm);
     });
 
     renderSelectedFile(fileInput.files && fileInput.files[0] ? fileInput.files[0] : null);
-    startPollingSoon();
+    populateRuntimeSnapshot();
+    refreshStatuses();
 })();
 
 (() => {
@@ -875,6 +867,38 @@
         computeTypeSelect.dataset.selected = computeTypeSelect.value;
     });
     renderComputeTypes();
+})();
+
+(() => {
+    const openButton = document.getElementById("open-settings-button");
+    const closeButton = document.getElementById("close-settings-button");
+    const overlay = document.getElementById("settings-overlay");
+    const sheet = document.getElementById("settings-sheet");
+    if (!openButton || !closeButton || !overlay || !sheet) {
+        return;
+    }
+
+    function setOpen(isOpen) {
+        sheet.classList.toggle("is-open", isOpen);
+        overlay.classList.toggle("is-open", isOpen);
+        overlay.hidden = !isOpen;
+        sheet.setAttribute("aria-hidden", isOpen ? "false" : "true");
+        document.body.classList.toggle("sheet-open", isOpen);
+    }
+
+    openButton.addEventListener("click", () => setOpen(true));
+    closeButton.addEventListener("click", () => setOpen(false));
+    overlay.addEventListener("click", () => setOpen(false));
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+            setOpen(false);
+        }
+    });
+
+    if (sheet.classList.contains("is-open")) {
+        overlay.hidden = false;
+        document.body.classList.add("sheet-open");
+    }
 })();
 </script>
 </body>

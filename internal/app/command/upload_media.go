@@ -25,10 +25,13 @@ type JobRepository interface {
 }
 
 type UploadMediaInput struct {
-	OriginalName string
-	MIMEType     string
-	SizeBytes    int64
-	Content      io.Reader
+	OriginalName        string
+	MIMEType            string
+	SizeBytes           int64
+	Content             io.Reader
+	StartedAtUTC        time.Time
+	FinishedAtUTC       time.Time
+	RuntimeSnapshotJSON string
 }
 
 type UploadMediaResult struct {
@@ -83,16 +86,29 @@ func (u *UploadMediaUseCase) Upload(ctx context.Context, in UploadMediaInput) (U
 	}
 
 	nowUTC := time.Now().UTC()
+	uploadStartedAt := in.StartedAtUTC.UTC()
+	if uploadStartedAt.IsZero() {
+		uploadStartedAt = nowUTC
+	}
+	uploadFinishedAt := in.FinishedAtUTC.UTC()
+	if uploadFinishedAt.IsZero() {
+		uploadFinishedAt = nowUTC
+	}
+	uploadDurationMS := uploadFinishedAt.Sub(uploadStartedAt).Milliseconds()
+	if uploadDurationMS < 0 {
+		uploadDurationMS = 0
+	}
 	mediaID, err := u.mediaRepo.Create(ctx, media.Media{
-		OriginalName: in.OriginalName,
-		StoredName:   storedFile.StoredName,
-		Extension:    ext,
-		MIMEType:     firstNonEmpty(detectedMIMEType, in.MIMEType),
-		SizeBytes:    storedFile.SizeBytes,
-		StoragePath:  storedFile.RelativePath,
-		Status:       media.StatusUploaded,
-		CreatedAtUTC: nowUTC,
-		UpdatedAtUTC: nowUTC,
+		OriginalName:        in.OriginalName,
+		StoredName:          storedFile.StoredName,
+		Extension:           ext,
+		MIMEType:            firstNonEmpty(detectedMIMEType, in.MIMEType),
+		SizeBytes:           storedFile.SizeBytes,
+		StoragePath:         storedFile.RelativePath,
+		RuntimeSnapshotJSON: in.RuntimeSnapshotJSON,
+		Status:              media.StatusUploaded,
+		CreatedAtUTC:        nowUTC,
+		UpdatedAtUTC:        nowUTC,
 	})
 	if err != nil {
 		logger.Error("create media record failed",
@@ -101,6 +117,31 @@ func (u *UploadMediaUseCase) Upload(ctx context.Context, in UploadMediaInput) (U
 		)
 		u.cleanupStoredFile(ctx, storedFile.RelativePath, "media create failure")
 		return UploadMediaResult{}, fmt.Errorf("create media record: %w", err)
+	}
+
+	durationPtr := &uploadDurationMS
+	startedAtPtr := &uploadStartedAt
+	finishedAtPtr := &uploadFinishedAt
+	_, err = u.jobRepo.Create(ctx, job.Job{
+		MediaID:       mediaID,
+		Type:          job.TypeUpload,
+		Status:        job.StatusDone,
+		Attempts:      0,
+		ErrorMessage:  "",
+		CreatedAtUTC:  uploadStartedAt,
+		UpdatedAtUTC:  uploadFinishedAt,
+		StartedAtUTC:  startedAtPtr,
+		FinishedAtUTC: finishedAtPtr,
+		DurationMS:    durationPtr,
+	})
+	if err != nil {
+		logger.Error("create upload job record failed",
+			slog.Any("error", err),
+			slog.Int64("media_id", mediaID),
+		)
+		u.cleanupMediaRecord(ctx, mediaID)
+		u.cleanupStoredFile(ctx, storedFile.RelativePath, "upload job create failure")
+		return UploadMediaResult{}, fmt.Errorf("create upload job record: %w", err)
 	}
 
 	_, err = u.jobRepo.Create(ctx, job.Job{

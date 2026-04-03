@@ -255,6 +255,105 @@ func TestProcessor_ProcessNextTranscribePersistsTranscript(t *testing.T) {
 	}
 }
 
+func TestProcessor_ProcessNextTranscribePersistsEstimatedProgress(t *testing.T) {
+	t.Parallel()
+
+	audioDir := t.TempDir()
+	audioRelativePath := filepath.ToSlash(filepath.Join("2026-04-03", "media_501_audio.wav"))
+	audioPath := filepath.Join(audioDir, filepath.FromSlash(audioRelativePath))
+	if err := os.MkdirAll(filepath.Dir(audioPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(audioPath, []byte("audio"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	jobRepo := &stubJobRepository{
+		claimByType: map[job.Type]claimResult{
+			job.TypeTranscribe: {
+				job: job.Job{
+					ID:      301,
+					MediaID: 501,
+					Type:    job.TypeTranscribe,
+					Payload: mustEncodeTranscribePayload(t, job.TranscribePayload{
+						Settings: transcription.Settings{
+							Backend:     transcription.BackendFasterWhisper,
+							ModelName:   "base",
+							Device:      "cpu",
+							ComputeType: "int8",
+							Language:    "ru",
+							BeamSize:    4,
+							VADEnabled:  true,
+						},
+					}),
+					Status: job.StatusRunning,
+				},
+				ok: true,
+			},
+		},
+	}
+	mediaRepo := &stubMediaRepository{
+		mediaByID: map[int64]media.Media{
+			501: {
+				ID:                 501,
+				ExtractedAudioPath: audioRelativePath,
+				Status:             media.StatusAudioExtracted,
+			},
+		},
+	}
+	transcriber := &stubTranscriber{
+		progress: []ports.TranscriptionProgress{
+			{ProcessedSec: 30, TotalSec: 60, Percent: 50, IsEstimate: true},
+		},
+		output: ports.TranscribeOutput{
+			FullText: "privet",
+			Segments: []ports.TranscriptionSegment{
+				{StartSec: 0, EndSec: 1, Text: "privet"},
+			},
+		},
+	}
+
+	processor := NewProcessor(
+		jobRepo,
+		mediaRepo,
+		&stubTranscriptRepository{},
+		&stubTriggerRuleRepository{},
+		&stubTriggerEventRepository{},
+		&stubTriggerScreenshotRepository{},
+		&stubSummaryRepository{},
+		&stubAudioExtractor{},
+		&stubAudioDurationReader{duration: time.Minute},
+		&stubScreenshotExtractor{},
+		transcriber,
+		&stubSummarizer{},
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
+		t.TempDir(),
+		audioDir,
+		t.TempDir(),
+		10*time.Second,
+		10*time.Second,
+		10*time.Second,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	processed, err := processor.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessNext() error = %v", err)
+	}
+	if !processed {
+		t.Fatal("ProcessNext() processed = false, want true")
+	}
+	if len(jobRepo.progressUpdates) != 1 {
+		t.Fatalf("progress updates = %d, want 1", len(jobRepo.progressUpdates))
+	}
+	if jobRepo.progressUpdates[0].percent == nil || *jobRepo.progressUpdates[0].percent != 50 {
+		t.Fatalf("progress percent = %#v, want 50", jobRepo.progressUpdates[0].percent)
+	}
+	if !jobRepo.progressUpdates[0].isEstimate {
+		t.Fatal("progress update should be marked as estimate")
+	}
+}
+
 func TestProcessor_ProcessNextExtractAudioDoesNotDuplicateTranscribeJob(t *testing.T) {
 	t.Parallel()
 
@@ -1052,6 +1151,7 @@ type stubJobRepository struct {
 	markDoneIDs         []int64
 	markFailedCalls     []markFailedCall
 	requeued            []requeueCall
+	progressUpdates     []progressUpdateCall
 }
 
 type claimResult struct {
@@ -1068,6 +1168,13 @@ type requeueCall struct {
 type markFailedCall struct {
 	id           int64
 	errorMessage string
+}
+
+type progressUpdateCall struct {
+	id         int64
+	percent    *float64
+	label      string
+	isEstimate bool
 }
 
 func (s *stubJobRepository) Create(_ context.Context, j job.Job) (int64, error) {
@@ -1094,6 +1201,16 @@ func (s *stubJobRepository) MarkDone(_ context.Context, id int64, _ time.Time) e
 
 func (s *stubJobRepository) MarkFailed(_ context.Context, id int64, errorMessage string, _ time.Time) error {
 	s.markFailedCalls = append(s.markFailedCalls, markFailedCall{id: id, errorMessage: errorMessage})
+	return nil
+}
+
+func (s *stubJobRepository) UpdateProgress(_ context.Context, id int64, progressPercent *float64, progressLabel string, isEstimate bool, _ time.Time) error {
+	s.progressUpdates = append(s.progressUpdates, progressUpdateCall{
+		id:         id,
+		percent:    progressPercent,
+		label:      progressLabel,
+		isEstimate: isEstimate,
+	})
 	return nil
 }
 
@@ -1333,6 +1450,7 @@ type stubTranscriber struct {
 	callCount   int
 	deadline    time.Time
 	deadlineSet bool
+	progress    []ports.TranscriptionProgress
 }
 
 func (s *stubTranscriber) Transcribe(ctx context.Context, in ports.TranscribeInput) (ports.TranscribeOutput, error) {
@@ -1341,6 +1459,11 @@ func (s *stubTranscriber) Transcribe(ctx context.Context, in ports.TranscribeInp
 	if deadline, ok := ctx.Deadline(); ok {
 		s.deadline = deadline
 		s.deadlineSet = true
+	}
+	for _, item := range s.progress {
+		if in.Progress != nil {
+			in.Progress(item)
+		}
 	}
 	return s.output, s.err
 }

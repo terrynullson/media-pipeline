@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"media-pipeline/internal/domain/job"
+	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/transcript"
 )
 
@@ -100,4 +101,38 @@ func TestMediaRepository_DeleteWithAssociationsRemovesRows(t *testing.T) {
 	assertCount(`SELECT COUNT(*)
 		FROM transcript_segments
 		WHERE transcript_id IN (SELECT id FROM transcripts WHERE media_id = ?)`, 0)
+}
+
+func TestMediaRepository_PersistsRuntimeSnapshot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
+
+	mediaRepo := NewMediaRepository(sqlDB)
+	nowUTC := time.Date(2026, 4, 3, 13, 0, 0, 0, time.UTC)
+	mediaID, err := mediaRepo.Create(ctx, media.Media{
+		OriginalName:        "snapshot.wav",
+		StoredName:          "snapshot.wav",
+		Extension:           ".wav",
+		MIMEType:            "audio/wav",
+		SizeBytes:           1024,
+		StoragePath:         "2026-04-03/snapshot.wav",
+		RuntimeSnapshotJSON: `{"request_ip":"127.0.0.1","user_agent":"test-agent"}`,
+		Status:              media.StatusUploaded,
+		CreatedAtUTC:        nowUTC,
+		UpdatedAtUTC:        nowUTC,
+	})
+	if err != nil {
+		t.Fatalf("Create(media) error = %v", err)
+	}
+
+	item, err := mediaRepo.GetByID(ctx, mediaID)
+	if err != nil {
+		t.Fatalf("GetByID() error = %v", err)
+	}
+	if item.RuntimeSnapshotJSON == "" {
+		t.Fatal("RuntimeSnapshotJSON = empty, want persisted value")
+	}
 }

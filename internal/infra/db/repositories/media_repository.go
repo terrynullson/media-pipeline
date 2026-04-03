@@ -22,8 +22,8 @@ func (r *MediaRepository) Create(ctx context.Context, m media.Media) (int64, err
 		ctx,
 		`INSERT INTO media (
 			original_name, stored_name, extension, mime_type,
-			size_bytes, storage_path, extracted_audio_path, transcript_text, status, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			size_bytes, storage_path, extracted_audio_path, transcript_text, runtime_snapshot_json, status, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.OriginalName,
 		m.StoredName,
 		m.Extension,
@@ -32,6 +32,7 @@ func (r *MediaRepository) Create(ctx context.Context, m media.Media) (int64, err
 		m.StoragePath,
 		m.ExtractedAudioPath,
 		m.TranscriptText,
+		m.RuntimeSnapshotJSON,
 		m.Status,
 		m.CreatedAtUTC.Format(time.RFC3339),
 		m.UpdatedAtUTC.Format(time.RFC3339),
@@ -108,7 +109,7 @@ func (r *MediaRepository) ListRecent(ctx context.Context, limit int) ([]media.Me
 	rows, err := r.db.QueryContext(
 		ctx,
 		`SELECT id, original_name, stored_name, extension, mime_type,
-			size_bytes, storage_path, extracted_audio_path, transcript_text, status, created_at, updated_at
+			size_bytes, storage_path, extracted_audio_path, transcript_text, runtime_snapshot_json, status, created_at, updated_at
 		 FROM media
 		 ORDER BY datetime(created_at) DESC
 		 LIMIT ?`,
@@ -133,6 +134,7 @@ func (r *MediaRepository) ListRecent(ctx context.Context, limit int) ([]media.Me
 			&item.StoragePath,
 			&item.ExtractedAudioPath,
 			&item.TranscriptText,
+			&item.RuntimeSnapshotJSON,
 			&item.Status,
 			&createdAt,
 			&updatedAt,
@@ -162,7 +164,7 @@ func (r *MediaRepository) GetByID(ctx context.Context, id int64) (media.Media, e
 	row := r.db.QueryRowContext(
 		ctx,
 		`SELECT id, original_name, stored_name, extension, mime_type,
-			size_bytes, storage_path, extracted_audio_path, transcript_text, status, created_at, updated_at
+			size_bytes, storage_path, extracted_audio_path, transcript_text, runtime_snapshot_json, status, created_at, updated_at
 		 FROM media
 		 WHERE id = ?`,
 		id,
@@ -181,6 +183,7 @@ func (r *MediaRepository) GetByID(ctx context.Context, id int64) (media.Media, e
 		&item.StoragePath,
 		&item.ExtractedAudioPath,
 		&item.TranscriptText,
+		&item.RuntimeSnapshotJSON,
 		&item.Status,
 		&createdAt,
 		&updatedAt,

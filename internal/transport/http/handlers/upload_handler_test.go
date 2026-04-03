@@ -154,6 +154,55 @@ func TestUploadHandler_UploadHappyPathJSON(t *testing.T) {
 	}
 }
 
+func TestUploadHandler_UploadPersistsRuntimeSnapshot(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	router := app.router
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("hardware_concurrency", "8"); err != nil {
+		t.Fatalf("WriteField(hardware_concurrency) error = %v", err)
+	}
+	if err := writer.WriteField("device_memory_gb", "16"); err != nil {
+		t.Fatalf("WriteField(device_memory_gb) error = %v", err)
+	}
+	part, err := writer.CreateFormFile("media", "sample.wav")
+	if err != nil {
+		t.Fatalf("CreateFormFile() error = %v", err)
+	}
+	if _, err := part.Write(testWAVBytes()); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() multipart error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("User-Agent", "snapshot-agent")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("upload status = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+
+	mediaRepo := repositories.NewMediaRepository(app.db)
+	items, err := mediaRepo.ListRecent(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("ListRecent() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("ListRecent() len = %d, want 1", len(items))
+	}
+	if !strings.Contains(items[0].RuntimeSnapshotJSON, "snapshot-agent") {
+		t.Fatalf("RuntimeSnapshotJSON = %q, want user agent", items[0].RuntimeSnapshotJSON)
+	}
+}
+
 func TestUploadHandler_MediaStatuses(t *testing.T) {
 	t.Parallel()
 
@@ -206,11 +255,11 @@ func TestUploadHandler_MediaStatuses(t *testing.T) {
 	if payload.Items[0].Status != "uploaded" {
 		t.Fatalf("status = %q, want uploaded", payload.Items[0].Status)
 	}
-	if payload.Items[0].StatusLabel != "Загружен" {
-		t.Fatalf("status label = %q, want Загружен", payload.Items[0].StatusLabel)
+	if payload.Items[0].StatusLabel != "Ожидает следующий шаг" {
+		t.Fatalf("status label = %q, want Ожидает следующий шаг", payload.Items[0].StatusLabel)
 	}
-	if payload.Items[0].StageLabel != "Дальше: извлечение аудио" {
-		t.Fatalf("stage label = %q, want Дальше: извлечение аудио", payload.Items[0].StageLabel)
+	if payload.Items[0].StageLabel != "Дальше: Извлечение аудио" {
+		t.Fatalf("stage label = %q, want Дальше: Извлечение аудио", payload.Items[0].StageLabel)
 	}
 	if payload.Items[0].FailedStage != "" || payload.Items[0].ErrorSummary != "" {
 		t.Fatalf("unexpected failure details: %#v", payload.Items[0])
@@ -232,15 +281,16 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 
 	nowUTC := time.Date(2026, 4, 3, 16, 0, 0, 0, time.UTC)
 	mediaID, err := mediaRepo.Create(ctx, media.Media{
-		OriginalName: "timeline.mp4",
-		StoredName:   "timeline.mp4",
-		Extension:    ".mp4",
-		MIMEType:     "video/mp4",
-		SizeBytes:    2048,
-		StoragePath:  "2026-04-03/timeline.mp4",
-		Status:       media.StatusTranscribed,
-		CreatedAtUTC: nowUTC,
-		UpdatedAtUTC: nowUTC,
+		OriginalName:        "timeline.mp4",
+		StoredName:          "timeline.mp4",
+		Extension:           ".mp4",
+		MIMEType:            "video/mp4",
+		SizeBytes:           2048,
+		StoragePath:         "2026-04-03/timeline.mp4",
+		RuntimeSnapshotJSON: `{"request_ip":"127.0.0.1","user_agent":"test-agent","hardware_concurrency":8}`,
+		Status:              media.StatusTranscribed,
+		CreatedAtUTC:        nowUTC,
+		UpdatedAtUTC:        nowUTC,
 	})
 	if err != nil {
 		t.Fatalf("Create(media) error = %v", err)
@@ -403,6 +453,8 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 		"Уверенность 0.87",
 		"small",
 		"Для длинных файлов модель small на CPU может работать очень долго.",
+		"Техническая среда",
+		"test-agent",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("transcript page body missing %q", want)
@@ -617,11 +669,11 @@ func TestUploadHandler_IndexShowsRussianStepFlow(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"Пошаговый сценарий",
-		"Шаг 1",
-		"Загрузите видео или аудио",
-		"Шаг 5",
-		"Сделайте саммари при необходимости",
+		"Быстрая загрузка и прозрачный пайплайн",
+		"Новая загрузка",
+		"Текущий статус",
+		"Очередь и этапы",
+		"Настройки",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index body missing %q", want)
@@ -681,9 +733,9 @@ func TestUploadHandler_IndexShowsSettingsBehindGearAndFailedStage(t *testing.T) 
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"settings-drawer-summary",
-		"Настройки распознавания",
-		"Ошибка на шаге: Распознавание текста",
+		"settings-sheet",
+		"Параметры распознавания и правила",
+		"Ошибка на этапе: Распознавание текста",
 		"Причина: Не удалось распознать текст: модель small вернула ошибку.",
 		"Подробности смотрите в логах worker.",
 	} {
@@ -717,7 +769,6 @@ func TestUploadHandler_IndexShowsAdaptiveSettingsWarningForHeavyCPUProfile(t *te
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"лимит времени теперь подбирается по длительности файла",
 		"Для длинных файлов модель small на CPU может работать очень долго.",
 		"Если доступна CUDA, для такой модели лучше использовать её вместо CPU.",
 		"Режим float32 на CPU обычно медленнее, чем int8.",

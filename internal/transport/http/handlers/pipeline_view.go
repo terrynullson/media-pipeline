@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
@@ -13,56 +15,69 @@ const (
 )
 
 type PipelineStepView struct {
-	Label       string
-	StatusLabel string
-	Tone        string
-	IsCurrent   bool
-	IsFailed    bool
+	Label           string
+	StatusLabel     string
+	Tone            string
+	IsCurrent       bool
+	IsFailed        bool
+	TimingText      string
+	StartedAtLabel  string
+	FinishedAtLabel string
+	DurationLabel   string
+	ProgressLabel   string
+	ProgressPercent int
+	ProgressVisible bool
 }
 
 type MediaPipelineView struct {
-	StatusLabel      string
-	StatusTone       string
-	StageLabel       string
-	StageValue       int
-	StageTotal       int
-	IsActive         bool
-	CurrentStage     string
-	FailedStage      string
-	ErrorSummary     string
-	ErrorLocation    string
-	Steps            []PipelineStepView
-	AutomaticJobFail *job.Job
+	StatusLabel       string
+	StatusTone        string
+	StageLabel        string
+	StageValue        int
+	StageTotal        int
+	IsActive          bool
+	CurrentStage      string
+	FailedStage       string
+	ErrorSummary      string
+	ErrorLocation     string
+	Steps             []PipelineStepView
+	AutomaticJobFail  *job.Job
+	CurrentTimingText string
 }
 
 type pipelineStepState struct {
-	label       string
-	statusLabel string
-	tone        string
-	kind        string
-	job         *job.Job
+	label           string
+	statusLabel     string
+	tone            string
+	kind            string
+	job             *job.Job
+	timingText      string
+	startedAtLabel  string
+	finishedAtLabel string
+	durationLabel   string
+	progressLabel   string
+	progressPercent int
+	progressVisible bool
 }
 
 func buildMediaPipelineView(mediaItem media.Media, jobs []job.Job) MediaPipelineView {
+	nowUTC := time.Now().UTC()
 	jobsByType := latestJobsByType(jobs)
 
-	uploadStep := pipelineStepState{
-		label:       "Загрузка файла",
-		statusLabel: "Готово",
-		tone:        "success",
-		kind:        "done",
-	}
-	extractStep := describeExtractAudioStep(mediaItem, jobsByType[job.TypeExtractAudio])
-	transcribeStep := describeTranscribeStep(mediaItem, jobsByType[job.TypeTranscribe])
+	uploadStep := describeUploadStep(mediaItem, jobsByType[job.TypeUpload], nowUTC)
+	extractStep := describeExtractAudioStep(mediaItem, jobsByType[job.TypeExtractAudio], nowUTC)
+	transcribeStep := describeTranscribeStep(mediaItem, jobsByType[job.TypeTranscribe], nowUTC)
 	analyzeStep := describeQueuedStep(
 		"Анализ триггеров",
 		jobsByType[job.TypeAnalyzeTriggers],
 		transcribeStep.kind == "done",
+		nowUTC,
 	)
 	screenshotStep := describeScreenshotStep(
 		mediaItem,
 		jobsByType[job.TypeExtractScreenshots],
 		analyzeStep.kind == "done",
+		nowUTC,
 	)
 
 	steps := []pipelineStepState{
@@ -88,10 +103,11 @@ func buildMediaPipelineView(mediaItem media.Media, jobs []job.Job) MediaPipeline
 		failedStep := steps[failedIndex]
 		view.StatusLabel = "Ошибка"
 		view.StatusTone = "error"
-		view.StageLabel = "Ошибка на шаге: " + strings.ToLower(failedStep.label)
+		view.StageLabel = "Сбой на этапе: " + strings.ToLower(failedStep.label)
 		view.StageValue = failedIndex + 1
 		view.FailedStage = failedStep.label
 		view.CurrentStage = failedStep.label
+		view.CurrentTimingText = failedStep.timingText
 		view.ErrorSummary = userFacingJobError(failedStep.job)
 		view.ErrorLocation = workerLogHintRU
 		view.AutomaticJobFail = failedStep.job
@@ -103,25 +119,22 @@ func buildMediaPipelineView(mediaItem media.Media, jobs []job.Job) MediaPipeline
 		view.StageValue = runningIndex + 1
 		view.IsActive = true
 		view.CurrentStage = currentStep.label
+		view.CurrentTimingText = currentStep.timingText
 	case lastCompletedIndex == len(steps)-1:
 		view.StatusLabel = "Готово"
 		view.StatusTone = "success"
-		view.StageLabel = "Все обязательные шаги завершены"
+		view.StageLabel = "Основные этапы завершены"
 		view.StageValue = len(steps)
 		view.CurrentStage = "Завершено"
-	case lastCompletedIndex == 0:
-		view.StatusLabel = "Загружен"
-		view.StatusTone = "uploaded"
-		view.StageLabel = "Дальше: извлечение аудио"
-		view.StageValue = 1
-		view.CurrentStage = "Извлечение аудио"
+		view.CurrentTimingText = steps[len(steps)-1].timingText
 	default:
 		view.StatusLabel = "Ожидает следующий шаг"
 		view.StatusTone = "ready"
-		view.StageValue = lastCompletedIndex + 1
+		view.StageValue = max(1, lastCompletedIndex+1)
 		if pendingIndex >= 0 {
 			view.StageLabel = "Дальше: " + steps[pendingIndex].label
 			view.CurrentStage = steps[pendingIndex].label
+			view.CurrentTimingText = steps[pendingIndex].timingText
 		} else {
 			view.StageLabel = "Ожидает продолжения обработки"
 		}
@@ -129,171 +142,195 @@ func buildMediaPipelineView(mediaItem media.Media, jobs []job.Job) MediaPipeline
 
 	for index, step := range steps {
 		view.Steps = append(view.Steps, PipelineStepView{
-			Label:       step.label,
-			StatusLabel: step.statusLabel,
-			Tone:        step.tone,
-			IsCurrent:   failedIndex < 0 && runningIndex == index,
-			IsFailed:    failedIndex == index,
+			Label:           step.label,
+			StatusLabel:     step.statusLabel,
+			Tone:            step.tone,
+			IsCurrent:       failedIndex < 0 && runningIndex == index,
+			IsFailed:        failedIndex == index,
+			TimingText:      step.timingText,
+			StartedAtLabel:  step.startedAtLabel,
+			FinishedAtLabel: step.finishedAtLabel,
+			DurationLabel:   step.durationLabel,
+			ProgressLabel:   step.progressLabel,
+			ProgressPercent: step.progressPercent,
+			ProgressVisible: step.progressVisible,
 		})
 	}
 
 	return view
 }
 
-func describeExtractAudioStep(mediaItem media.Media, currentJob *job.Job) pipelineStepState {
+func describeUploadStep(mediaItem media.Media, currentJob *job.Job, nowUTC time.Time) pipelineStepState {
 	if currentJob != nil {
-		switch currentJob.Status {
-		case job.StatusFailed:
-			return failedStep("Извлечение аудио", currentJob)
-		case job.StatusRunning:
-			return runningStep("Извлечение аудио")
-		case job.StatusDone:
-			return doneStep("Извлечение аудио")
-		case job.StatusPending:
-			return pendingStep("Извлечение аудио")
-		}
+		return describeJobBackedStep("Загрузка файла", currentJob, nowUTC)
+	}
+
+	return pipelineStepState{
+		label:           "Загрузка файла",
+		statusLabel:     "Готово",
+		tone:            "success",
+		kind:            "done",
+		timingText:      "Файл сохранён",
+		finishedAtLabel: FormatClockUTC(mediaItem.CreatedAtUTC),
+	}
+}
+
+func describeExtractAudioStep(mediaItem media.Media, currentJob *job.Job, nowUTC time.Time) pipelineStepState {
+	if currentJob != nil {
+		return describeJobBackedStep("Извлечение аудио", currentJob, nowUTC)
 	}
 
 	switch mediaItem.Status {
 	case media.StatusProcessing:
-		return runningStep("Извлечение аудио")
+		return pipelineStepState{label: "Извлечение аудио", statusLabel: "В работе", tone: "running", kind: "running", timingText: "Идёт подготовка аудио"}
 	case media.StatusAudioExtracted, media.StatusTranscribing, media.StatusTranscribed:
-		return doneStep("Извлечение аудио")
+		return pipelineStepState{label: "Извлечение аудио", statusLabel: "Готово", tone: "success", kind: "done", timingText: "Готово"}
 	default:
-		return pendingStep("Извлечение аудио")
+		return pipelineStepState{label: "Извлечение аудио", statusLabel: "Не начато", tone: "neutral", kind: "blocked", timingText: "Не запускалось"}
 	}
 }
 
-func describeTranscribeStep(mediaItem media.Media, currentJob *job.Job) pipelineStepState {
+func describeTranscribeStep(mediaItem media.Media, currentJob *job.Job, nowUTC time.Time) pipelineStepState {
 	if currentJob != nil {
-		switch currentJob.Status {
-		case job.StatusFailed:
-			return failedStep("Распознавание текста", currentJob)
-		case job.StatusRunning:
-			return runningStep("Распознавание текста")
-		case job.StatusDone:
-			return doneStep("Распознавание текста")
-		case job.StatusPending:
-			return pendingStep("Распознавание текста")
-		}
+		return describeJobBackedStep("Распознавание текста", currentJob, nowUTC)
 	}
 
 	switch mediaItem.Status {
 	case media.StatusTranscribing:
-		return runningStep("Распознавание текста")
+		return pipelineStepState{label: "Распознавание текста", statusLabel: "В работе", tone: "running", kind: "running", timingText: "Идёт распознавание"}
 	case media.StatusTranscribed:
-		return doneStep("Распознавание текста")
+		return pipelineStepState{label: "Распознавание текста", statusLabel: "Готово", tone: "success", kind: "done", timingText: "Готово"}
 	case media.StatusAudioExtracted:
-		return pendingStep("Распознавание текста")
+		return pipelineStepState{label: "Распознавание текста", statusLabel: "Ждёт", tone: "ready", kind: "pending", timingText: "Ждёт запуска"}
 	default:
-		return blockedStep("Распознавание текста")
+		return pipelineStepState{label: "Распознавание текста", statusLabel: "Не начато", tone: "neutral", kind: "blocked", timingText: "Не запускалось"}
 	}
 }
 
-func describeQueuedStep(label string, currentJob *job.Job, unlocked bool) pipelineStepState {
+func describeQueuedStep(label string, currentJob *job.Job, unlocked bool, nowUTC time.Time) pipelineStepState {
 	if currentJob != nil {
-		switch currentJob.Status {
-		case job.StatusFailed:
-			return failedStep(label, currentJob)
-		case job.StatusRunning:
-			return runningStep(label)
-		case job.StatusDone:
-			return doneStep(label)
-		case job.StatusPending:
-			return pendingStep(label)
-		}
+		return describeJobBackedStep(label, currentJob, nowUTC)
 	}
-
 	if unlocked {
-		return pendingStep(label)
+		return pipelineStepState{label: label, statusLabel: "Ждёт", tone: "ready", kind: "pending", timingText: "Ждёт запуска"}
 	}
-
-	return blockedStep(label)
+	return pipelineStepState{label: label, statusLabel: "Не начато", tone: "neutral", kind: "blocked", timingText: "Не запускалось"}
 }
 
-func describeScreenshotStep(mediaItem media.Media, currentJob *job.Job, unlocked bool) pipelineStepState {
+func describeScreenshotStep(mediaItem media.Media, currentJob *job.Job, unlocked bool, nowUTC time.Time) pipelineStepState {
 	label := "Снимки по триггерам"
 	if mediaItem.IsAudioOnly() && unlocked && currentJob == nil {
-		return skippedStep(label)
+		return pipelineStepState{label: label, statusLabel: "Не требуется", tone: "neutral", kind: "done", timingText: "Для аудио не требуется"}
 	}
 	if currentJob != nil {
-		switch currentJob.Status {
-		case job.StatusFailed:
-			return failedStep(label, currentJob)
-		case job.StatusRunning:
-			return runningStep(label)
-		case job.StatusDone:
-			if mediaItem.IsAudioOnly() {
-				return skippedStep(label)
-			}
-			return doneStep(label)
-		case job.StatusPending:
-			return pendingStep(label)
+		step := describeJobBackedStep(label, currentJob, nowUTC)
+		if currentJob.Status == job.StatusDone && mediaItem.IsAudioOnly() {
+			step.statusLabel = "Не требуется"
+			step.tone = "neutral"
+			step.timingText = "Для аудио не требуется"
 		}
+		return step
 	}
-
 	if unlocked {
 		if mediaItem.IsAudioOnly() {
-			return skippedStep(label)
+			return pipelineStepState{label: label, statusLabel: "Не требуется", tone: "neutral", kind: "done", timingText: "Для аудио не требуется"}
 		}
-		return pendingStep(label)
+		return pipelineStepState{label: label, statusLabel: "Ждёт", tone: "ready", kind: "pending", timingText: "Ждёт запуска"}
 	}
-
-	return blockedStep(label)
+	return pipelineStepState{label: label, statusLabel: "Не начато", tone: "neutral", kind: "blocked", timingText: "Не запускалось"}
 }
 
-func doneStep(label string) pipelineStepState {
-	return pipelineStepState{
-		label:       label,
-		statusLabel: "Готово",
-		tone:        "success",
-		kind:        "done",
+func describeJobBackedStep(label string, currentJob *job.Job, nowUTC time.Time) pipelineStepState {
+	step := pipelineStepState{
+		label:           label,
+		job:             currentJob,
+		startedAtLabel:  formatOptionalClock(currentJob.StartedAtUTC),
+		finishedAtLabel: formatOptionalClock(currentJob.FinishedAtUTC),
+		durationLabel:   formatJobDuration(currentJob, nowUTC),
 	}
+
+	switch currentJob.Status {
+	case job.StatusDone:
+		step.statusLabel = "Готово"
+		step.tone = "success"
+		step.kind = "done"
+		if step.durationLabel != "" {
+			step.timingText = "Готово за " + step.durationLabel
+		} else {
+			step.timingText = "Готово"
+		}
+	case job.StatusRunning:
+		step.statusLabel = "В работе"
+		step.tone = "running"
+		step.kind = "running"
+		if currentJob.ProgressPercent != nil {
+			step.progressVisible = true
+			step.progressPercent = clampPercent(*currentJob.ProgressPercent)
+			if currentJob.ProgressIsEstimated {
+				step.progressLabel = fmt.Sprintf("Оценка %d%%", step.progressPercent)
+			} else {
+				step.progressLabel = fmt.Sprintf("%d%%", step.progressPercent)
+			}
+		}
+		if step.durationLabel != "" {
+			step.timingText = "В работе " + step.durationLabel
+		} else {
+			step.timingText = "В работе"
+		}
+	case job.StatusFailed:
+		step.statusLabel = "Ошибка"
+		step.tone = "error"
+		step.kind = "failed"
+		if step.durationLabel != "" {
+			step.timingText = "Ошибка через " + step.durationLabel
+		} else {
+			step.timingText = "Завершилось ошибкой"
+		}
+	case job.StatusPending:
+		step.statusLabel = "Ждёт"
+		step.tone = "ready"
+		step.kind = "pending"
+		step.timingText = "Ждёт запуска"
+	default:
+		step.statusLabel = "Не начато"
+		step.tone = "neutral"
+		step.kind = "blocked"
+		step.timingText = "Не запускалось"
+	}
+
+	return step
 }
 
-func runningStep(label string) pipelineStepState {
-	return pipelineStepState{
-		label:       label,
-		statusLabel: "В работе",
-		tone:        "running",
-		kind:        "running",
+func formatOptionalClock(value *time.Time) string {
+	if value == nil {
+		return ""
 	}
+
+	return FormatClockUTC(*value)
 }
 
-func pendingStep(label string) pipelineStepState {
-	return pipelineStepState{
-		label:       label,
-		statusLabel: "Ждёт",
-		tone:        "ready",
-		kind:        "pending",
+func formatJobDuration(currentJob *job.Job, nowUTC time.Time) string {
+	if currentJob == nil {
+		return ""
 	}
+	if currentJob.DurationMS != nil {
+		return FormatDurationRU(time.Duration(*currentJob.DurationMS) * time.Millisecond)
+	}
+	if currentJob.StartedAtUTC != nil && currentJob.Status == job.StatusRunning {
+		return FormatDurationRU(nowUTC.Sub(currentJob.StartedAtUTC.UTC()))
+	}
+
+	return ""
 }
 
-func blockedStep(label string) pipelineStepState {
-	return pipelineStepState{
-		label:       label,
-		statusLabel: "Не начато",
-		tone:        "neutral",
-		kind:        "blocked",
-	}
-}
-
-func skippedStep(label string) pipelineStepState {
-	return pipelineStepState{
-		label:       label,
-		statusLabel: "Не требуется",
-		tone:        "neutral",
-		kind:        "done",
-	}
-}
-
-func failedStep(label string, currentJob *job.Job) pipelineStepState {
-	return pipelineStepState{
-		label:       label,
-		statusLabel: "Ошибка",
-		tone:        "error",
-		kind:        "failed",
-		job:         currentJob,
+func clampPercent(value float64) int {
+	switch {
+	case value < 0:
+		return 0
+	case value > 100:
+		return 100
+	default:
+		return int(value + 0.5)
 	}
 }
 
@@ -364,4 +401,11 @@ func userFacingJobError(currentJob *job.Job) string {
 	}
 
 	return message
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

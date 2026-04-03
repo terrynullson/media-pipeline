@@ -62,6 +62,16 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 	}
 	defer cleanupTranscriptionResultPath(resultPath)
 	args = append(args, "--output-path", resultPath)
+	progressPath, err := createTranscriptionResultPath()
+	if err != nil {
+		return ports.TranscribeOutput{}, &ports.TranscriptionError{
+			Cause: fmt.Errorf("prepare transcription progress file: %w", err),
+		}
+	}
+	defer cleanupTranscriptionResultPath(progressPath)
+	if in.Progress != nil {
+		args = append(args, "--progress-path", progressPath)
+	}
 
 	cmd := exec.CommandContext(ctx, t.pythonBinary, args...)
 
@@ -82,7 +92,20 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 		slog.Bool("vad_enabled", settings.VADEnabled),
 	)
 
+	stopProgress := make(chan struct{})
+	progressDone := make(chan struct{})
+	if in.Progress != nil {
+		go func() {
+			defer close(progressDone)
+			pollTranscriptionProgress(ctx, progressPath, in.Progress, stopProgress)
+		}()
+	} else {
+		close(progressDone)
+	}
+
 	if err := cmd.Run(); err != nil {
+		close(stopProgress)
+		<-progressDone
 		diagnostics := stderr.String()
 		if stdout.Len() > 0 {
 			diagnostics = combineDiagnostics(diagnostics, "stdout: "+stdout.String())
@@ -123,6 +146,9 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 		}
 	}
 
+	close(stopProgress)
+	<-progressDone
+
 	parsed, err := readTranscriptionResult(resultPath)
 	if err != nil {
 		diagnostics := combineDiagnostics(stderr.String(), "stdout: "+stdout.String())
@@ -146,6 +172,13 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 	)
 
 	return parsed, nil
+}
+
+type transcriptionProgressFile struct {
+	ProcessedSec float64 `json:"processed_sec"`
+	TotalSec     float64 `json:"total_sec"`
+	Percent      float64 `json:"percent"`
+	IsEstimate   bool    `json:"is_estimate"`
 }
 
 func createTranscriptionResultPath() (string, error) {
@@ -338,4 +371,67 @@ func truncateText(value string, limit int) string {
 	}
 
 	return value[:limit]
+}
+
+func pollTranscriptionProgress(
+	ctx context.Context,
+	progressPath string,
+	onProgress func(ports.TranscriptionProgress),
+	stop <-chan struct{},
+) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	lastPercent := -1.0
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stop:
+			reportProgressFile(progressPath, onProgress, &lastPercent)
+			return
+		case <-ticker.C:
+			reportProgressFile(progressPath, onProgress, &lastPercent)
+		}
+	}
+}
+
+func reportProgressFile(progressPath string, onProgress func(ports.TranscriptionProgress), lastPercent *float64) {
+	progress, ok := readTranscriptionProgress(progressPath)
+	if !ok {
+		return
+	}
+	if lastPercent != nil && progress.Percent == *lastPercent {
+		return
+	}
+	if lastPercent != nil {
+		*lastPercent = progress.Percent
+	}
+
+	onProgress(ports.TranscriptionProgress{
+		ProcessedSec: progress.ProcessedSec,
+		TotalSec:     progress.TotalSec,
+		Percent:      progress.Percent,
+		IsEstimate:   progress.IsEstimate,
+	})
+}
+
+func readTranscriptionProgress(progressPath string) (transcriptionProgressFile, bool) {
+	payload, err := os.ReadFile(progressPath)
+	if err != nil {
+		return transcriptionProgressFile{}, false
+	}
+
+	var progress transcriptionProgressFile
+	if err := json.Unmarshal(payload, &progress); err != nil {
+		return transcriptionProgressFile{}, false
+	}
+	if progress.Percent < 0 {
+		progress.Percent = 0
+	}
+	if progress.Percent > 100 {
+		progress.Percent = 100
+	}
+
+	return progress, true
 }

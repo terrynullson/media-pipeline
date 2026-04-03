@@ -17,11 +17,19 @@ type TranscriptionSegment struct {
 type TranscribeInput struct {
 	AudioPath string
 	Settings  transcription.Settings
+	Progress  func(TranscriptionProgress)
 }
 
 type TranscribeOutput struct {
 	FullText string
 	Segments []TranscriptionSegment
+}
+
+type TranscriptionProgress struct {
+	ProcessedSec float64
+	TotalSec     float64
+	Percent      float64
+	IsEstimate   bool
 }
 
 type Transcriber interface {

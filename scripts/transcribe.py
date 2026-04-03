@@ -10,6 +10,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Transcribe extracted audio to JSON.")
     parser.add_argument("--audio-path", help="Absolute path to extracted audio file.")
     parser.add_argument("--output-path", default="", help="Absolute path to the JSON result file.")
+    parser.add_argument("--progress-path", default="", help="Optional absolute path to the progress JSON file.")
     parser.add_argument("--backend", default="faster-whisper", help="Transcription backend name.")
     parser.add_argument("--model-name", default="tiny", help="Model name, for example tiny, base, or small.")
     parser.add_argument("--device", default="cpu", help="Inference device: cpu or cuda.")
@@ -100,6 +101,31 @@ def self_check(args):
     }
 
 
+def write_progress(progress_path, processed_sec, total_sec):
+    if not progress_path:
+        return
+
+    total_sec = float(total_sec or 0.0)
+    processed_sec = float(processed_sec or 0.0)
+    percent = 0.0
+    if total_sec > 0:
+        percent = max(0.0, min(100.0, (processed_sec / total_sec) * 100.0))
+
+    payload = {
+        "processed_sec": processed_sec,
+        "total_sec": total_sec,
+        "percent": percent,
+        "is_estimate": total_sec > 0,
+    }
+    output_dir = os.path.dirname(progress_path) or "."
+    os.makedirs(output_dir, exist_ok=True)
+    tmp_path = progress_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as progress_file:
+        json.dump(payload, progress_file, ensure_ascii=True)
+        progress_file.flush()
+    os.replace(tmp_path, progress_path)
+
+
 def transcribe_with_backend(audio_path, language, args):
     whisper_model = load_backend()
     config = load_backend_config(args)
@@ -116,6 +142,7 @@ def transcribe_with_backend(audio_path, language, args):
         vad_filter=config["vad_enabled"],
     )
 
+    total_duration = float(getattr(info, "duration", 0.0) or 0.0)
     result_segments = []
     full_text_parts = []
     for segment in segments:
@@ -133,10 +160,14 @@ def transcribe_with_backend(audio_path, language, args):
 
         full_text_parts.append(text)
         result_segments.append(item)
+        write_progress(args.progress_path, float(segment.end), total_duration)
 
     full_text = " ".join(full_text_parts).strip()
     if not full_text:
         raise RuntimeError("transcription backend returned empty text")
+
+    if total_duration > 0:
+        write_progress(args.progress_path, total_duration, total_duration)
 
     return {
         "full_text": full_text,

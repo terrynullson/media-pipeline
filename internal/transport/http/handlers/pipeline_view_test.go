@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
@@ -10,14 +12,28 @@ import (
 func TestBuildMediaPipelineView_FailedTranscribeShowsStageAndReason(t *testing.T) {
 	t.Parallel()
 
+	startedAt := time.Now().UTC().Add(-10 * time.Second)
+	finishedAt := time.Now().UTC().Add(-2 * time.Second)
+	durationMS := int64(8000)
+
 	view := buildMediaPipelineView(
 		media.Media{
 			ID:     10,
 			Status: media.StatusFailed,
 		},
 		[]job.Job{
+			{ID: 100, MediaID: 10, Type: job.TypeUpload, Status: job.StatusDone},
 			{ID: 1, MediaID: 10, Type: job.TypeExtractAudio, Status: job.StatusDone},
-			{ID: 2, MediaID: 10, Type: job.TypeTranscribe, Status: job.StatusFailed, ErrorMessage: "Не удалось распознать текст: модель small вернула ошибку Подробности смотрите в логах worker."},
+			{
+				ID:            2,
+				MediaID:       10,
+				Type:          job.TypeTranscribe,
+				Status:        job.StatusFailed,
+				ErrorMessage:  "Не удалось распознать текст: модель small вернула ошибку Подробности смотрите в логах worker.",
+				StartedAtUTC:  &startedAt,
+				FinishedAtUTC: &finishedAt,
+				DurationMS:    &durationMS,
+			},
 		},
 	)
 
@@ -33,6 +49,9 @@ func TestBuildMediaPipelineView_FailedTranscribeShowsStageAndReason(t *testing.T
 	if view.StageValue != 3 {
 		t.Fatalf("StageValue = %d, want 3", view.StageValue)
 	}
+	if got := view.Steps[2].TimingText; !strings.Contains(got, "Ошибка через") {
+		t.Fatalf("TimingText = %q, want failed duration label", got)
+	}
 }
 
 func TestBuildMediaPipelineView_AudioOnlySkipsScreenshots(t *testing.T) {
@@ -46,6 +65,7 @@ func TestBuildMediaPipelineView_AudioOnlySkipsScreenshots(t *testing.T) {
 			Extension: ".wav",
 		},
 		[]job.Job{
+			{ID: 100, MediaID: 11, Type: job.TypeUpload, Status: job.StatusDone},
 			{ID: 1, MediaID: 11, Type: job.TypeExtractAudio, Status: job.StatusDone},
 			{ID: 2, MediaID: 11, Type: job.TypeTranscribe, Status: job.StatusDone},
 			{ID: 3, MediaID: 11, Type: job.TypeAnalyzeTriggers, Status: job.StatusDone},
@@ -61,6 +81,44 @@ func TestBuildMediaPipelineView_AudioOnlySkipsScreenshots(t *testing.T) {
 	}
 	if lastStep.StatusLabel != "Не требуется" {
 		t.Fatalf("last step status = %q, want Не требуется", lastStep.StatusLabel)
+	}
+}
+
+func TestBuildMediaPipelineView_UsesEstimatedProgressForRunningTranscription(t *testing.T) {
+	t.Parallel()
+
+	startedAt := time.Now().UTC().Add(-2 * time.Minute)
+	progress := 61.8
+
+	view := buildMediaPipelineView(
+		media.Media{
+			ID:     12,
+			Status: media.StatusTranscribing,
+		},
+		[]job.Job{
+			{ID: 100, MediaID: 12, Type: job.TypeUpload, Status: job.StatusDone},
+			{ID: 1, MediaID: 12, Type: job.TypeExtractAudio, Status: job.StatusDone},
+			{
+				ID:                  2,
+				MediaID:             12,
+				Type:                job.TypeTranscribe,
+				Status:              job.StatusRunning,
+				StartedAtUTC:        &startedAt,
+				ProgressPercent:     &progress,
+				ProgressIsEstimated: true,
+			},
+		},
+	)
+
+	step := view.Steps[2]
+	if !step.ProgressVisible {
+		t.Fatal("ProgressVisible = false, want true")
+	}
+	if step.ProgressPercent != 62 {
+		t.Fatalf("ProgressPercent = %d, want 62", step.ProgressPercent)
+	}
+	if step.ProgressLabel != "Оценка 62%" {
+		t.Fatalf("ProgressLabel = %q, want estimated label", step.ProgressLabel)
 	}
 }
 

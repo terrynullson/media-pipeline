@@ -21,8 +21,9 @@ func (r *JobRepository) Create(ctx context.Context, j job.Job) (int64, error) {
 	result, err := r.db.ExecContext(
 		ctx,
 		`INSERT INTO jobs (
-			media_id, type, payload, status, attempts, error_message, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			media_id, type, payload, status, attempts, error_message, created_at, updated_at,
+			started_at, finished_at, duration_ms, progress_percent, progress_label, progress_is_estimate, progress_updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		j.MediaID,
 		j.Type,
 		j.Payload,
@@ -31,6 +32,13 @@ func (r *JobRepository) Create(ctx context.Context, j job.Job) (int64, error) {
 		j.ErrorMessage,
 		j.CreatedAtUTC.Format(time.RFC3339),
 		j.UpdatedAtUTC.Format(time.RFC3339),
+		nullableTimeString(j.StartedAtUTC),
+		nullableTimeString(j.FinishedAtUTC),
+		nullableInt64(j.DurationMS),
+		nullableFloat64(j.ProgressPercent),
+		j.ProgressLabel,
+		boolToIntJob(j.ProgressIsEstimated),
+		nullableTimeString(j.ProgressUpdatedAtUTC),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert job: %w", err)
@@ -74,7 +82,8 @@ func (r *JobRepository) ClaimNextPending(ctx context.Context, jobType job.Type, 
 	row := r.db.QueryRowContext(
 		ctx,
 		`UPDATE jobs
-		 SET status = ?, error_message = '', updated_at = ?
+		 SET status = ?, error_message = '', updated_at = ?, started_at = ?, finished_at = NULL, duration_ms = NULL,
+		     progress_percent = NULL, progress_label = '', progress_is_estimate = 0, progress_updated_at = NULL
 		 WHERE id = (
 		 	SELECT id
 		 	FROM jobs
@@ -82,27 +91,16 @@ func (r *JobRepository) ClaimNextPending(ctx context.Context, jobType job.Type, 
 		 	ORDER BY datetime(created_at) ASC, id ASC
 		 	LIMIT 1
 		 )
-		 RETURNING id, media_id, type, payload, status, attempts, error_message, created_at, updated_at`,
+		 RETURNING id, media_id, type, payload, status, attempts, error_message, created_at, updated_at,
+		           started_at, finished_at, duration_ms, progress_percent, progress_label, progress_is_estimate, progress_updated_at`,
 		job.StatusRunning,
+		nowUTC.Format(time.RFC3339),
 		nowUTC.Format(time.RFC3339),
 		job.StatusPending,
 		jobType,
 	)
 
-	var claimed job.Job
-	var createdAt string
-	var updatedAt string
-	err := row.Scan(
-		&claimed.ID,
-		&claimed.MediaID,
-		&claimed.Type,
-		&claimed.Payload,
-		&claimed.Status,
-		&claimed.Attempts,
-		&claimed.ErrorMessage,
-		&createdAt,
-		&updatedAt,
-	)
+	claimed, ok, err := scanJobRow(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return job.Job{}, false, nil
@@ -110,27 +108,19 @@ func (r *JobRepository) ClaimNextPending(ctx context.Context, jobType job.Type, 
 		return job.Job{}, false, fmt.Errorf("claim next pending job: %w", err)
 	}
 
-	parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
-	if err != nil {
-		return job.Job{}, false, fmt.Errorf("parse claimed job created_at: %w", err)
-	}
-	parsedUpdatedAt, err := time.Parse(time.RFC3339, updatedAt)
-	if err != nil {
-		return job.Job{}, false, fmt.Errorf("parse claimed job updated_at: %w", err)
-	}
-	claimed.CreatedAtUTC = parsedCreatedAt
-	claimed.UpdatedAtUTC = parsedUpdatedAt
-
-	return claimed, true, nil
+	return claimed, ok, nil
 }
 
 func (r *JobRepository) MarkDone(ctx context.Context, id int64, nowUTC time.Time) error {
 	result, err := r.db.ExecContext(
 		ctx,
 		`UPDATE jobs
-		 SET status = ?, error_message = '', updated_at = ?
+		 SET status = ?, error_message = '', updated_at = ?, finished_at = ?,
+		     duration_ms = CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER)
 		 WHERE id = ?`,
 		job.StatusDone,
+		nowUTC.Format(time.RFC3339),
+		nowUTC.Format(time.RFC3339),
 		nowUTC.Format(time.RFC3339),
 		id,
 	)
@@ -145,10 +135,13 @@ func (r *JobRepository) MarkFailed(ctx context.Context, id int64, errorMessage s
 	result, err := r.db.ExecContext(
 		ctx,
 		`UPDATE jobs
-		 SET status = ?, attempts = attempts + 1, error_message = ?, updated_at = ?
+		 SET status = ?, attempts = attempts + 1, error_message = ?, updated_at = ?, finished_at = ?,
+		     duration_ms = CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER)
 		 WHERE id = ?`,
 		job.StatusFailed,
 		errorMessage,
+		nowUTC.Format(time.RFC3339),
+		nowUTC.Format(time.RFC3339),
 		nowUTC.Format(time.RFC3339),
 		id,
 	)
@@ -159,10 +152,38 @@ func (r *JobRepository) MarkFailed(ctx context.Context, id int64, errorMessage s
 	return ensureRowsAffected(result, id, "mark job failed")
 }
 
+func (r *JobRepository) UpdateProgress(
+	ctx context.Context,
+	id int64,
+	progressPercent *float64,
+	progressLabel string,
+	isEstimate bool,
+	nowUTC time.Time,
+) error {
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE jobs
+		 SET progress_percent = ?, progress_label = ?, progress_is_estimate = ?, progress_updated_at = ?, updated_at = ?
+		 WHERE id = ?`,
+		nullableFloat64(progressPercent),
+		progressLabel,
+		boolToIntJob(isEstimate),
+		nowUTC.Format(time.RFC3339),
+		nowUTC.Format(time.RFC3339),
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("update job progress: %w", err)
+	}
+
+	return ensureRowsAffected(result, id, "update job progress")
+}
+
 func (r *JobRepository) ListByStatus(ctx context.Context, jobType job.Type, status job.Status) ([]job.Job, error) {
 	rows, err := r.db.QueryContext(
 		ctx,
-		`SELECT id, media_id, type, payload, status, attempts, error_message, created_at, updated_at
+		`SELECT id, media_id, type, payload, status, attempts, error_message, created_at, updated_at,
+		        started_at, finished_at, duration_ms, progress_percent, progress_label, progress_is_estimate, progress_updated_at
 		 FROM jobs
 		 WHERE type = ? AND status = ?
 		 ORDER BY datetime(created_at) ASC, id ASC`,
@@ -176,30 +197,9 @@ func (r *JobRepository) ListByStatus(ctx context.Context, jobType job.Type, stat
 
 	items := make([]job.Job, 0)
 	for rows.Next() {
-		var item job.Job
-		var createdAt string
-		var updatedAt string
-		if err := rows.Scan(
-			&item.ID,
-			&item.MediaID,
-			&item.Type,
-			&item.Payload,
-			&item.Status,
-			&item.Attempts,
-			&item.ErrorMessage,
-			&createdAt,
-			&updatedAt,
-		); err != nil {
+		item, err := scanJobRows(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan job row: %w", err)
-		}
-
-		item.CreatedAtUTC, err = time.Parse(time.RFC3339, createdAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse job created_at: %w", err)
-		}
-		item.UpdatedAtUTC, err = time.Parse(time.RFC3339, updatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse job updated_at: %w", err)
 		}
 		items = append(items, item)
 	}
@@ -214,7 +214,8 @@ func (r *JobRepository) ListByStatus(ctx context.Context, jobType job.Type, stat
 func (r *JobRepository) ListByMediaID(ctx context.Context, mediaID int64) ([]job.Job, error) {
 	rows, err := r.db.QueryContext(
 		ctx,
-		`SELECT id, media_id, type, payload, status, attempts, error_message, created_at, updated_at
+		`SELECT id, media_id, type, payload, status, attempts, error_message, created_at, updated_at,
+		        started_at, finished_at, duration_ms, progress_percent, progress_label, progress_is_estimate, progress_updated_at
 		 FROM jobs
 		 WHERE media_id = ?
 		 ORDER BY datetime(created_at) DESC, id DESC`,
@@ -227,30 +228,9 @@ func (r *JobRepository) ListByMediaID(ctx context.Context, mediaID int64) ([]job
 
 	items := make([]job.Job, 0)
 	for rows.Next() {
-		var item job.Job
-		var createdAt string
-		var updatedAt string
-		if err := rows.Scan(
-			&item.ID,
-			&item.MediaID,
-			&item.Type,
-			&item.Payload,
-			&item.Status,
-			&item.Attempts,
-			&item.ErrorMessage,
-			&createdAt,
-			&updatedAt,
-		); err != nil {
+		item, err := scanJobRows(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan job row by media id: %w", err)
-		}
-
-		item.CreatedAtUTC, err = time.Parse(time.RFC3339, createdAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse job created_at by media id: %w", err)
-		}
-		item.UpdatedAtUTC, err = time.Parse(time.RFC3339, updatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse job updated_at by media id: %w", err)
 		}
 		items = append(items, item)
 	}
@@ -266,7 +246,8 @@ func (r *JobRepository) Requeue(ctx context.Context, id int64, errorMessage stri
 	result, err := r.db.ExecContext(
 		ctx,
 		`UPDATE jobs
-		 SET status = ?, error_message = ?, updated_at = ?
+		 SET status = ?, error_message = ?, updated_at = ?, started_at = NULL, finished_at = NULL, duration_ms = NULL,
+		     progress_percent = NULL, progress_label = '', progress_is_estimate = 0, progress_updated_at = NULL
 		 WHERE id = ?`,
 		job.StatusPending,
 		errorMessage,
@@ -283,7 +264,8 @@ func (r *JobRepository) Requeue(ctx context.Context, id int64, errorMessage stri
 func (r *JobRepository) FindLatestByMediaAndType(ctx context.Context, mediaID int64, jobType job.Type) (job.Job, bool, error) {
 	row := r.db.QueryRowContext(
 		ctx,
-		`SELECT id, media_id, type, payload, status, attempts, error_message, created_at, updated_at
+		`SELECT id, media_id, type, payload, status, attempts, error_message, created_at, updated_at,
+		        started_at, finished_at, duration_ms, progress_percent, progress_label, progress_is_estimate, progress_updated_at
 		 FROM jobs
 		 WHERE media_id = ? AND type = ?
 		 ORDER BY datetime(created_at) DESC, id DESC
@@ -292,9 +274,28 @@ func (r *JobRepository) FindLatestByMediaAndType(ctx context.Context, mediaID in
 		jobType,
 	)
 
+	item, ok, err := scanJobRow(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return job.Job{}, false, nil
+		}
+		return job.Job{}, false, fmt.Errorf("scan latest job by media id %d and type %s: %w", mediaID, jobType, err)
+	}
+
+	return item, ok, nil
+}
+
+func scanJobRow(row *sql.Row) (job.Job, bool, error) {
 	var item job.Job
 	var createdAt string
 	var updatedAt string
+	var startedAt sql.NullString
+	var finishedAt sql.NullString
+	var durationMS sql.NullInt64
+	var progressPercent sql.NullFloat64
+	var progressLabel string
+	var progressIsEstimate int
+	var progressUpdatedAt sql.NullString
 	if err := row.Scan(
 		&item.ID,
 		&item.MediaID,
@@ -305,25 +306,147 @@ func (r *JobRepository) FindLatestByMediaAndType(ctx context.Context, mediaID in
 		&item.ErrorMessage,
 		&createdAt,
 		&updatedAt,
+		&startedAt,
+		&finishedAt,
+		&durationMS,
+		&progressPercent,
+		&progressLabel,
+		&progressIsEstimate,
+		&progressUpdatedAt,
 	); err != nil {
-		if err == sql.ErrNoRows {
-			return job.Job{}, false, nil
-		}
-		return job.Job{}, false, fmt.Errorf("scan latest job by media id %d and type %s: %w", mediaID, jobType, err)
+		return job.Job{}, false, err
 	}
 
 	parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
 	if err != nil {
-		return job.Job{}, false, fmt.Errorf("parse latest job created_at: %w", err)
+		return job.Job{}, false, fmt.Errorf("parse job created_at: %w", err)
 	}
 	parsedUpdatedAt, err := time.Parse(time.RFC3339, updatedAt)
 	if err != nil {
-		return job.Job{}, false, fmt.Errorf("parse latest job updated_at: %w", err)
+		return job.Job{}, false, fmt.Errorf("parse job updated_at: %w", err)
 	}
 	item.CreatedAtUTC = parsedCreatedAt
 	item.UpdatedAtUTC = parsedUpdatedAt
+	applyOptionalJobFields(&item, startedAt, finishedAt, durationMS, progressPercent, progressLabel, progressIsEstimate, progressUpdatedAt)
 
 	return item, true, nil
+}
+
+func scanJobRows(rows *sql.Rows) (job.Job, error) {
+	var item job.Job
+	var createdAt string
+	var updatedAt string
+	var startedAt sql.NullString
+	var finishedAt sql.NullString
+	var durationMS sql.NullInt64
+	var progressPercent sql.NullFloat64
+	var progressLabel string
+	var progressIsEstimate int
+	var progressUpdatedAt sql.NullString
+	if err := rows.Scan(
+		&item.ID,
+		&item.MediaID,
+		&item.Type,
+		&item.Payload,
+		&item.Status,
+		&item.Attempts,
+		&item.ErrorMessage,
+		&createdAt,
+		&updatedAt,
+		&startedAt,
+		&finishedAt,
+		&durationMS,
+		&progressPercent,
+		&progressLabel,
+		&progressIsEstimate,
+		&progressUpdatedAt,
+	); err != nil {
+		return job.Job{}, err
+	}
+
+	parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return job.Job{}, fmt.Errorf("parse job created_at: %w", err)
+	}
+	parsedUpdatedAt, err := time.Parse(time.RFC3339, updatedAt)
+	if err != nil {
+		return job.Job{}, fmt.Errorf("parse job updated_at: %w", err)
+	}
+	item.CreatedAtUTC = parsedCreatedAt
+	item.UpdatedAtUTC = parsedUpdatedAt
+	applyOptionalJobFields(&item, startedAt, finishedAt, durationMS, progressPercent, progressLabel, progressIsEstimate, progressUpdatedAt)
+
+	return item, nil
+}
+
+func applyOptionalJobFields(
+	item *job.Job,
+	startedAt sql.NullString,
+	finishedAt sql.NullString,
+	durationMS sql.NullInt64,
+	progressPercent sql.NullFloat64,
+	progressLabel string,
+	progressIsEstimate int,
+	progressUpdatedAt sql.NullString,
+) {
+	item.ProgressLabel = progressLabel
+	item.ProgressIsEstimated = progressIsEstimate == 1
+
+	if startedAt.Valid {
+		if parsed, err := time.Parse(time.RFC3339, startedAt.String); err == nil {
+			item.StartedAtUTC = &parsed
+		}
+	}
+	if finishedAt.Valid {
+		if parsed, err := time.Parse(time.RFC3339, finishedAt.String); err == nil {
+			item.FinishedAtUTC = &parsed
+		}
+	}
+	if durationMS.Valid {
+		value := durationMS.Int64
+		item.DurationMS = &value
+	}
+	if progressPercent.Valid {
+		value := progressPercent.Float64
+		item.ProgressPercent = &value
+	}
+	if progressUpdatedAt.Valid {
+		if parsed, err := time.Parse(time.RFC3339, progressUpdatedAt.String); err == nil {
+			item.ProgressUpdatedAtUTC = &parsed
+		}
+	}
+}
+
+func nullableTimeString(value *time.Time) any {
+	if value == nil || value.IsZero() {
+		return nil
+	}
+
+	return value.UTC().Format(time.RFC3339)
+}
+
+func nullableInt64(value *int64) any {
+	if value == nil {
+		return nil
+	}
+
+	return *value
+}
+
+func nullableFloat64(value *float64) any {
+	if value == nil {
+		return nil
+	}
+
+	return *value
+}
+
+func boolToIntJob(value bool) int {
+	if value {
+		return 1
+	}
+
+	return 0
 }
 
 func ensureRowsAffected(result sql.Result, id int64, action string) error {

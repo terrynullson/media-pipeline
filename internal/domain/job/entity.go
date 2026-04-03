@@ -16,6 +16,7 @@ type Type string
 type Status string
 
 const (
+	TypeUpload             Type = "upload"
 	TypeExtractAudio       Type = "extract_audio"
 	TypeTranscribe         Type = "transcribe"
 	TypeAnalyzeTriggers    Type = "analyze_triggers"
@@ -29,15 +30,22 @@ const (
 )
 
 type Job struct {
-	ID           int64
-	MediaID      int64
-	Type         Type
-	Payload      string
-	Status       Status
-	Attempts     int
-	ErrorMessage string
-	CreatedAtUTC time.Time
-	UpdatedAtUTC time.Time
+	ID                   int64
+	MediaID              int64
+	Type                 Type
+	Payload              string
+	Status               Status
+	Attempts             int
+	ErrorMessage         string
+	CreatedAtUTC         time.Time
+	UpdatedAtUTC         time.Time
+	StartedAtUTC         *time.Time
+	FinishedAtUTC        *time.Time
+	DurationMS           *int64
+	ProgressPercent      *float64
+	ProgressLabel        string
+	ProgressIsEstimated  bool
+	ProgressUpdatedAtUTC *time.Time
 }
 
 type TranscribePayload struct {

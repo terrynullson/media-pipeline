@@ -78,9 +78,21 @@
                     <dt>Прогресс</dt>
                     <dd>Шаг {{.PipelineStageValue}} из {{.PipelineStageTotal}}</dd>
                 </div>
-                <div class="pipeline-step-list pipeline-step-list-sidebar">
+                <div class="step-detail-list step-detail-list-sidebar">
                     {{range .PipelineSteps}}
-                    <span class="step-pill step-pill-{{.Tone}}{{if .IsCurrent}} is-current{{end}}{{if .IsFailed}} is-failed{{end}}">{{.Label}}: {{.StatusLabel}}</span>
+                    <div class="step-detail step-detail-{{.Tone}}{{if .IsCurrent}} is-current{{end}}{{if .IsFailed}} is-failed{{end}}">
+                        <div class="step-detail-head">
+                            <strong>{{.Label}}</strong>
+                            <span>{{.StatusLabel}}</span>
+                        </div>
+                        <p class="step-detail-meta">{{.TimingText}}</p>
+                        {{if .ProgressVisible}}
+                        <div class="step-progress-mini" aria-hidden="true">
+                            <span class="step-progress-mini-fill" style="width: {{.ProgressPercent}}%;"></span>
+                        </div>
+                        <p class="step-detail-progress">{{.ProgressLabel}}</p>
+                        {{end}}
+                    </div>
                     {{end}}
                 </div>
                 {{if .PipelineFailedStep}}
@@ -163,6 +175,25 @@
                 </div>
             </div>
             {{end}}
+
+            {{if .RuntimeSnapshot}}
+            <div class="settings-panel">
+                <div class="section-header">
+                    <div>
+                        <h2>Техническая среда</h2>
+                        <p class="hint">Минимальный снимок окружения на момент загрузки. Данные сохраняются для будущих audit/auth сценариев.</p>
+                    </div>
+                </div>
+                <dl class="settings-grid">
+                    {{range .RuntimeSnapshot}}
+                    <div class="settings-item">
+                        <dt>{{.Label}}</dt>
+                        <dd>{{.Value}}</dd>
+                    </div>
+                    {{end}}
+                </dl>
+            </div>
+            {{end}}
         </aside>
 
         <section class="transcript-main">
@@ -184,6 +215,18 @@
                         <p>{{.SummaryNotice}}</p>
                     </div>
                     {{end}}
+                {{end}}
+
+                {{if .HasSummaryStep}}
+                <div class="summary-step-box">
+                    <div class="step-detail step-detail-{{.SummaryStep.Tone}}">
+                        <div class="step-detail-head">
+                            <strong>{{.SummaryStep.Label}}</strong>
+                            <span>{{.SummaryStep.StatusLabel}}</span>
+                        </div>
+                        <p class="step-detail-meta">{{.SummaryStep.TimingText}}</p>
+                    </div>
+                </div>
                 {{end}}
 
                 {{if .HasSummary}}

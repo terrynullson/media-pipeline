@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -43,6 +44,7 @@ type TranscriptPageViewData struct {
 	SettingsWarnings    []string
 	SettingsUnavailable bool
 	RuntimePolicy       TranscriptRuntimePolicyView
+	RuntimeSnapshot     []TranscriptSettingItem
 	FullTextParagraphs  []string
 	Segments            []TranscriptSegmentView
 	TriggerMatches      []TriggerEventView
@@ -59,6 +61,8 @@ type TranscriptPageViewData struct {
 	SummaryStatusTone   string
 	SummaryNotice       string
 	SummaryNoticeTone   string
+	SummaryStep         PipelineStepView
+	HasSummaryStep      bool
 	ShowSummaryAction   bool
 	SummaryActionLabel  string
 	SummaryActionURL    string
@@ -166,6 +170,7 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		SettingsWarnings:    buildTranscriptSettingsWarnings(result.Settings),
 		SettingsUnavailable: result.SettingsUnavailable,
 		RuntimePolicy:       buildTranscriptRuntimePolicyView(result),
+		RuntimeSnapshot:     buildRuntimeSnapshotItems(result.Media.RuntimeSnapshotJSON),
 	}
 	if result.HasTranscript {
 		data.FullTextParagraphs = buildTranscriptParagraphs(result.Transcript.Segments, result.Transcript.FullText)
@@ -181,6 +186,10 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 	data.TriggerMatches = buildTriggerEventViews(result.TriggerEvents, result.TriggerScreenshots, result.Media, result.ScreenshotJob)
 	data.TriggerStatusLabel, data.TriggerStatusTone, data.TriggerNotice, data.TriggerNoticeTone = describeTriggerAnalysis(result.AnalyzeJob, len(data.TriggerMatches))
 	data.SummaryStatusLabel, data.SummaryStatusTone, data.SummaryNotice, data.SummaryNoticeTone = describeSummaryState(result.SummaryJob, result.HasSummary)
+	if result.SummaryJob != nil {
+		data.SummaryStep = buildSummaryStepView(result.SummaryJob)
+		data.HasSummaryStep = true
+	}
 	data.ShowSummaryAction, data.SummaryActionLabel = summaryActionState(result.SummaryJob, result.HasTranscript, result.HasSummary)
 	data.SummaryActionURL = fmt.Sprintf("/media/%d/summary", result.Media.ID)
 
@@ -659,4 +668,70 @@ func capitalizeFirst(value string) string {
 	}
 
 	return first + string(runes[1:])
+}
+
+func buildSummaryStepView(currentJob *job.Job) PipelineStepView {
+	step := describeJobBackedStep("Саммари", currentJob, time.Now().UTC())
+	return PipelineStepView{
+		Label:           step.label,
+		StatusLabel:     step.statusLabel,
+		Tone:            step.tone,
+		TimingText:      step.timingText,
+		StartedAtLabel:  step.startedAtLabel,
+		FinishedAtLabel: step.finishedAtLabel,
+		DurationLabel:   step.durationLabel,
+		ProgressLabel:   step.progressLabel,
+		ProgressPercent: step.progressPercent,
+		ProgressVisible: step.progressVisible,
+	}
+}
+
+func buildRuntimeSnapshotItems(raw string) []TranscriptSettingItem {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+
+	snapshot, err := media.DecodeRuntimeSnapshot(raw)
+	if err != nil {
+		return nil
+	}
+
+	items := make([]TranscriptSettingItem, 0, 8)
+	appendItem := func(label string, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		items = append(items, TranscriptSettingItem{Label: label, Value: value})
+	}
+
+	if !snapshot.CapturedAtUTC.IsZero() {
+		appendItem("Собрано", FormatDateTimeUTC(snapshot.CapturedAtUTC))
+	}
+	appendItem("IP", snapshot.RequestIP)
+	appendItem("User-Agent", snapshot.UserAgent)
+	appendItem("Язык браузера", firstNonEmptyValue(snapshot.ClientLanguage, snapshot.AcceptLanguage))
+	appendItem("Платформа", firstNonEmptyValue(snapshot.ClientPlatform, snapshot.ClientHintPlatform))
+	if snapshot.HardwareConcurrency != nil {
+		appendItem("Потоки браузера", strconv.Itoa(*snapshot.HardwareConcurrency))
+	}
+	if snapshot.DeviceMemoryGB != nil {
+		appendItem("Память устройства", fmt.Sprintf("%.1f ГБ", *snapshot.DeviceMemoryGB))
+	}
+	if snapshot.TimezoneOffsetMinutes != nil {
+		appendItem("Смещение часового пояса", fmt.Sprintf("%d мин", *snapshot.TimezoneOffsetMinutes))
+	}
+
+	return items
+}
+
+func firstNonEmptyValue(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+
+	return ""
 }

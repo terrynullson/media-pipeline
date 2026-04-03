@@ -50,6 +50,9 @@ func TestJobRepository_ClaimNextPendingAndMarkDone(t *testing.T) {
 	if claimedJob.Payload != `{"example":true}` {
 		t.Fatalf("claimed payload = %q, want persisted payload", claimedJob.Payload)
 	}
+	if claimedJob.StartedAtUTC == nil {
+		t.Fatal("StartedAtUTC = nil, want persisted start time")
+	}
 
 	if err := jobRepo.MarkDone(ctx, claimedJob.ID, nowUTC.Add(2*time.Minute)); err != nil {
 		t.Fatalf("MarkDone() error = %v", err)
@@ -70,6 +73,20 @@ func TestJobRepository_ClaimNextPendingAndMarkDone(t *testing.T) {
 	}
 	if errorMessage != "" {
 		t.Fatalf("error_message = %q, want empty", errorMessage)
+	}
+
+	stored, ok, err := jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeExtractAudio)
+	if err != nil {
+		t.Fatalf("FindLatestByMediaAndType() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("FindLatestByMediaAndType() ok = false, want true")
+	}
+	if stored.FinishedAtUTC == nil {
+		t.Fatal("FinishedAtUTC = nil, want persisted finish time")
+	}
+	if stored.DurationMS == nil || *stored.DurationMS <= 0 {
+		t.Fatalf("DurationMS = %#v, want positive duration", stored.DurationMS)
 	}
 }
 
@@ -248,6 +265,54 @@ func TestJobRepository_FindLatestByMediaAndTypeReturnsNewest(t *testing.T) {
 	}
 	if item.Payload != `{"settings":{"model_name":"small"}}` {
 		t.Fatalf("Payload = %q, want newest payload", item.Payload)
+	}
+}
+
+func TestJobRepository_UpdateProgressPersistsEstimate(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
+
+	mediaRepo := NewMediaRepository(sqlDB)
+	jobRepo := NewJobRepository(sqlDB)
+
+	mediaID := createTestMedia(t, ctx, mediaRepo)
+	nowUTC := time.Date(2026, 4, 3, 17, 0, 0, 0, time.UTC)
+
+	jobID, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeTranscribe,
+		Status:       job.StatusRunning,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+		StartedAtUTC: &nowUTC,
+	})
+	if err != nil {
+		t.Fatalf("Create(job) error = %v", err)
+	}
+
+	progress := 47.5
+	if err := jobRepo.UpdateProgress(ctx, jobID, &progress, "Оценка по обработанным сегментам", true, nowUTC.Add(time.Minute)); err != nil {
+		t.Fatalf("UpdateProgress() error = %v", err)
+	}
+
+	item, ok, err := jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeTranscribe)
+	if err != nil {
+		t.Fatalf("FindLatestByMediaAndType() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("FindLatestByMediaAndType() ok = false, want true")
+	}
+	if item.ProgressPercent == nil || *item.ProgressPercent != progress {
+		t.Fatalf("ProgressPercent = %#v, want %v", item.ProgressPercent, progress)
+	}
+	if item.ProgressLabel != "Оценка по обработанным сегментам" {
+		t.Fatalf("ProgressLabel = %q, want persisted label", item.ProgressLabel)
+	}
+	if !item.ProgressIsEstimated {
+		t.Fatal("ProgressIsEstimated = false, want true")
 	}
 }
 

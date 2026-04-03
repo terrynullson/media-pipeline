@@ -25,6 +25,7 @@ type JobRepository interface {
 	ClaimNextPending(ctx context.Context, jobType job.Type, nowUTC time.Time) (job.Job, bool, error)
 	MarkDone(ctx context.Context, id int64, nowUTC time.Time) error
 	MarkFailed(ctx context.Context, id int64, errorMessage string, nowUTC time.Time) error
+	UpdateProgress(ctx context.Context, id int64, progressPercent *float64, progressLabel string, isEstimate bool, nowUTC time.Time) error
 	ListByStatus(ctx context.Context, jobType job.Type, status job.Status) ([]job.Job, error)
 	Requeue(ctx context.Context, id int64, errorMessage string, nowUTC time.Time) error
 }
@@ -366,6 +367,23 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 	result, err := p.transcriber.Transcribe(transcribeCtx, ports.TranscribeInput{
 		AudioPath: audioPath,
 		Settings:  settings,
+		Progress: func(progress ports.TranscriptionProgress) {
+			progressValue := progress.Percent
+			progressLabel := "Оценка по обработанным сегментам"
+			progressCtx, cancelProgress := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancelProgress()
+
+			if updateErr := p.jobs.UpdateProgress(
+				progressCtx,
+				claimedJob.ID,
+				&progressValue,
+				progressLabel,
+				progress.IsEstimate,
+				time.Now().UTC(),
+			); updateErr != nil {
+				jobLog.logger.Warn("persist transcription progress failed", slog.Any("error", updateErr))
+			}
+		},
 	})
 	if err != nil {
 		diagnostics := transcriptionDiagnostics(err)

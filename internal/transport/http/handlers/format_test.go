@@ -63,3 +63,28 @@ func TestFormatDateTimeUTC(t *testing.T) {
 		t.Fatalf("FormatDateTimeUTC() = %q, want %q", got, "2026-04-03 09:34:56")
 	}
 }
+
+func TestFormatDurationRU(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name  string
+		input time.Duration
+		want  string
+	}{
+		{name: "sub-second", input: 450 * time.Millisecond, want: "0.5 сек"},
+		{name: "seconds", input: 5600 * time.Millisecond, want: "5.6 сек"},
+		{name: "minutes", input: 2*time.Minute + 14*time.Second, want: "2 мин 14 сек"},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := FormatDurationRU(tc.input); got != tc.want {
+				t.Fatalf("FormatDurationRU(%s) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
