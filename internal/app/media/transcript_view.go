@@ -3,7 +3,9 @@ package mediaapp
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"media-pipeline/internal/domain/job"
 	domainmedia "media-pipeline/internal/domain/media"
@@ -38,6 +40,10 @@ type SummaryReader interface {
 	GetByMediaID(ctx context.Context, mediaID int64) (domainsummary.Summary, bool, error)
 }
 
+type TranscriptAudioDurationReader interface {
+	ReadDuration(audioPath string) (time.Duration, error)
+}
+
 type TranscriptViewUseCase struct {
 	mediaRepo      TranscriptMediaReader
 	transcriptRepo TranscriptReader
@@ -45,6 +51,9 @@ type TranscriptViewUseCase struct {
 	screenshots    TriggerScreenshotReader
 	summaries      SummaryReader
 	jobRepo        TranscriptJobReader
+	audioDurations TranscriptAudioDurationReader
+	audioDir       string
+	baseTimeout    time.Duration
 }
 
 type TranscriptViewResult struct {
@@ -63,6 +72,8 @@ type TranscriptViewResult struct {
 	LatestFailedJob     *job.Job
 	Settings            *transcription.Settings
 	SettingsUnavailable bool
+	RuntimePolicy       *transcription.RuntimePolicy
+	RuntimePolicyReady  bool
 }
 
 func NewTranscriptViewUseCase(
@@ -72,6 +83,9 @@ func NewTranscriptViewUseCase(
 	triggerScreenshotRepo TriggerScreenshotReader,
 	summaryRepo SummaryReader,
 	jobRepo TranscriptJobReader,
+	audioDurationReader TranscriptAudioDurationReader,
+	audioDir string,
+	baseTimeout time.Duration,
 ) *TranscriptViewUseCase {
 	return &TranscriptViewUseCase{
 		mediaRepo:      mediaRepo,
@@ -80,6 +94,9 @@ func NewTranscriptViewUseCase(
 		screenshots:    triggerScreenshotRepo,
 		summaries:      summaryRepo,
 		jobRepo:        jobRepo,
+		audioDurations: audioDurationReader,
+		audioDir:       audioDir,
+		baseTimeout:    baseTimeout,
 	}
 }
 
@@ -165,8 +182,55 @@ func (u *TranscriptViewUseCase) Load(ctx context.Context, mediaID int64) (Transc
 		return result, nil
 	}
 	result.Settings = &settings
+	result.RuntimePolicy, result.RuntimePolicyReady = u.buildRuntimePolicy(mediaItem, settings)
 
 	return result, nil
+}
+
+func (u *TranscriptViewUseCase) buildRuntimePolicy(
+	mediaItem domainmedia.Media,
+	settings transcription.Settings,
+) (*transcription.RuntimePolicy, bool) {
+	if u.audioDurations == nil || strings.TrimSpace(u.audioDir) == "" {
+		return nil, false
+	}
+	if strings.TrimSpace(mediaItem.ExtractedAudioPath) == "" {
+		return nil, false
+	}
+
+	audioPath, err := safeJoinBasePath(u.audioDir, mediaItem.ExtractedAudioPath)
+	if err != nil {
+		return nil, false
+	}
+	audioDuration, err := u.audioDurations.ReadDuration(audioPath)
+	if err != nil {
+		return nil, false
+	}
+
+	policy := transcription.EvaluateRuntimePolicy(settings, audioDuration, u.baseTimeout)
+	return &policy, true
+}
+
+func safeJoinBasePath(baseDir string, relativePath string) (string, error) {
+	cleanRelativePath := filepath.Clean(filepath.FromSlash(relativePath))
+	if cleanRelativePath == "." || cleanRelativePath == string(filepath.Separator) {
+		return "", fmt.Errorf("invalid relative path %q", relativePath)
+	}
+	fullPath := filepath.Join(baseDir, cleanRelativePath)
+
+	baseAbs, err := filepath.Abs(baseDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve base dir: %w", err)
+	}
+	fullAbs, err := filepath.Abs(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve full path: %w", err)
+	}
+	if fullAbs != baseAbs && !strings.HasPrefix(fullAbs, baseAbs+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes base dir", relativePath)
+	}
+
+	return fullAbs, nil
 }
 
 func latestJobsByType(items []job.Job) map[job.Type]job.Job {

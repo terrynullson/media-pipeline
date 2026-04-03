@@ -738,15 +738,16 @@ func TestUploadHandler_TranscriptPageShowsPipelineFailureDetails(t *testing.T) {
 
 	nowUTC := time.Date(2026, 4, 3, 18, 45, 0, 0, time.UTC)
 	mediaID, err := mediaRepo.Create(ctx, media.Media{
-		OriginalName: "broken-small.wav",
-		StoredName:   "broken-small.wav",
-		Extension:    ".wav",
-		MIMEType:     "audio/wav",
-		SizeBytes:    1024,
-		StoragePath:  "2026-04-03/broken-small.wav",
-		Status:       media.StatusFailed,
-		CreatedAtUTC: nowUTC,
-		UpdatedAtUTC: nowUTC,
+		OriginalName:       "broken-small.wav",
+		StoredName:         "broken-small.wav",
+		Extension:          ".wav",
+		MIMEType:           "audio/wav",
+		SizeBytes:          1024,
+		StoragePath:        "2026-04-03/broken-small.wav",
+		ExtractedAudioPath: "2026-04-03/broken-small.wav",
+		Status:             media.StatusFailed,
+		CreatedAtUTC:       nowUTC,
+		UpdatedAtUTC:       nowUTC,
 	})
 	if err != nil {
 		t.Fatalf("Create(media) error = %v", err)
@@ -761,8 +762,19 @@ func TestUploadHandler_TranscriptPageShowsPipelineFailureDetails(t *testing.T) {
 		t.Fatalf("Create(extract job) error = %v", err)
 	}
 	if _, err := jobRepo.Create(ctx, job.Job{
-		MediaID:      mediaID,
-		Type:         job.TypeTranscribe,
+		MediaID: mediaID,
+		Type:    job.TypeTranscribe,
+		Payload: mustEncodeTranscribePayload(t, job.TranscribePayload{
+			Settings: domaintranscription.Settings{
+				Backend:     domaintranscription.BackendFasterWhisper,
+				ModelName:   "small",
+				Device:      "cpu",
+				ComputeType: "int8",
+				Language:    "ru",
+				BeamSize:    5,
+				VADEnabled:  true,
+			},
+		}),
 		Status:       job.StatusFailed,
 		ErrorMessage: "Не удалось распознать текст: faster-whisper завершился с ошибкой small model. Подробности смотрите в логах worker.",
 		CreatedAtUTC: nowUTC.Add(time.Minute),
@@ -784,6 +796,13 @@ func TestUploadHandler_TranscriptPageShowsPipelineFailureDetails(t *testing.T) {
 		"Ошибка на шаге: Распознавание текста",
 		"Причина: Не удалось распознать текст: faster-whisper завершился с ошибкой small model.",
 		"Подробности смотрите в логах worker.",
+		"Оценка времени запуска",
+		"Для этого файла лимит распознавания автоматически увеличен до 9 ч 15 мин.",
+		"Длительность аудио",
+		"1 ч",
+		"Класс файла",
+		"Длинный файл",
+		"Расчётный лимит",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("transcript page body missing %q", want)
@@ -1008,6 +1027,18 @@ type testWebApp struct {
 	screenshotsDir string
 }
 
+type stubHandlerAudioDurationReader struct {
+	duration time.Duration
+	err      error
+}
+
+func (s stubHandlerAudioDurationReader) ReadDuration(string) (time.Duration, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	return s.duration, nil
+}
+
 func newTestApp(t *testing.T) testWebApp {
 	t.Helper()
 
@@ -1065,7 +1096,18 @@ func newTestApp(t *testing.T) testWebApp {
 		10*1024*1024,
 		logger,
 	)
-	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, triggerEventRepo, triggerScreenshotRepo, summaryRepo, jobRepo)
+	audioDurationReader := stubHandlerAudioDurationReader{duration: 60 * time.Minute}
+	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(
+		mediaRepo,
+		transcriptRepo,
+		triggerEventRepo,
+		triggerScreenshotRepo,
+		summaryRepo,
+		jobRepo,
+		audioDurationReader,
+		audioDir,
+		5*time.Minute,
+	)
 	requestSummaryUC := mediaapp.NewRequestSummaryUseCase(mediaRepo, transcriptRepo, jobRepo)
 	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, uploadStorage, audioStorage, screenshotStorage, logger)
 	handler, err := handlers.NewUploadHandler(
@@ -1134,4 +1176,15 @@ func pngPixelBytes() []byte {
 		0x18, 0xdd, 0x8d, 0xb3,
 		0x00, 0x00, 0x00, 0x00, 'I', 'E', 'N', 'D', 0xae, 0x42, 0x60, 0x82,
 	}
+}
+
+func mustEncodeTranscribePayload(t *testing.T, payload job.TranscribePayload) string {
+	t.Helper()
+
+	raw, err := job.EncodeTranscribePayload(payload)
+	if err != nil {
+		t.Fatalf("EncodeTranscribePayload() error = %v", err)
+	}
+
+	return raw
 }

@@ -42,6 +42,7 @@ type TranscriptPageViewData struct {
 	Settings            []TranscriptSettingItem
 	SettingsWarnings    []string
 	SettingsUnavailable bool
+	RuntimePolicy       TranscriptRuntimePolicyView
 	FullTextParagraphs  []string
 	Segments            []TranscriptSegmentView
 	TriggerMatches      []TriggerEventView
@@ -66,6 +67,17 @@ type TranscriptPageViewData struct {
 type TranscriptSettingItem struct {
 	Label string
 	Value string
+}
+
+type TranscriptRuntimePolicyView struct {
+	Visible          bool
+	Title            string
+	Tone             string
+	Summary          string
+	DurationLabel    string
+	DurationClass    string
+	EffectiveTimeout string
+	Warnings         []string
 }
 
 type TranscriptSegmentView struct {
@@ -153,6 +165,7 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		Settings:            buildTranscriptSettings(result.Settings),
 		SettingsWarnings:    buildTranscriptSettingsWarnings(result.Settings),
 		SettingsUnavailable: result.SettingsUnavailable,
+		RuntimePolicy:       buildTranscriptRuntimePolicyView(result),
 	}
 	if result.HasTranscript {
 		data.FullTextParagraphs = buildTranscriptParagraphs(result.Transcript.Segments, result.Transcript.FullText)
@@ -302,6 +315,55 @@ func buildTranscriptSettingsWarnings(settings *transcription.Settings) []string 
 		return nil
 	}
 	return transcription.BuildRuntimeSettingsWarnings(*settings)
+}
+
+func buildTranscriptRuntimePolicyView(result mediaapp.TranscriptViewResult) TranscriptRuntimePolicyView {
+	if result.Settings == nil {
+		return TranscriptRuntimePolicyView{}
+	}
+
+	if !result.RuntimePolicyReady || result.RuntimePolicy == nil {
+		switch {
+		case strings.TrimSpace(result.Media.ExtractedAudioPath) == "":
+			return TranscriptRuntimePolicyView{
+				Visible: true,
+				Title:   "Оценка времени запуска",
+				Tone:    "warning",
+				Summary: "Оценка времени появится после извлечения аудио.",
+			}
+		default:
+			return TranscriptRuntimePolicyView{
+				Visible: true,
+				Title:   "Оценка времени запуска",
+				Tone:    "warning",
+				Summary: "Не удалось заранее оценить время распознавания для этого файла.",
+			}
+		}
+	}
+
+	policy := result.RuntimePolicy
+	view := TranscriptRuntimePolicyView{
+		Visible:          true,
+		Title:            "Оценка времени запуска",
+		Tone:             "warning",
+		DurationLabel:    transcription.FormatRuntimeDurationRU(policy.MediaDuration),
+		DurationClass:    capitalizeFirst(policy.DurationClassLabelRU()),
+		EffectiveTimeout: transcription.FormatRuntimeDurationRU(policy.EffectiveTimeout),
+		Warnings:         append([]string(nil), policy.Warnings...),
+	}
+	switch {
+	case policy.Blocked:
+		view.Tone = "error"
+		view.Summary = "Эта конфигурация для данного файла слишком тяжёлая. Worker не запускает её автоматически."
+	case policy.HasAdaptiveTimeout():
+		view.Tone = "warning"
+		view.Summary = fmt.Sprintf("Для этого файла лимит распознавания автоматически увеличен до %s.", view.EffectiveTimeout)
+	default:
+		view.Tone = "success"
+		view.Summary = fmt.Sprintf("Для этого файла достаточно стандартного лимита %s.", transcription.FormatRuntimeDurationRU(policy.BaseTimeout))
+	}
+
+	return view
 }
 
 func buildTranscriptSegments(items []transcript.Segment) []TranscriptSegmentView {
@@ -582,4 +644,19 @@ func boolLabel(value bool) string {
 		return "включено"
 	}
 	return "выключено"
+}
+
+func capitalizeFirst(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	runes := []rune(value)
+	first := strings.ToUpper(string(runes[0]))
+	if len(runes) == 1 {
+		return first
+	}
+
+	return first + string(runes[1:])
 }

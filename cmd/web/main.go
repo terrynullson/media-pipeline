@@ -14,6 +14,7 @@ import (
 	"media-pipeline/internal/infra/config"
 	"media-pipeline/internal/infra/db"
 	"media-pipeline/internal/infra/db/repositories"
+	inframedia "media-pipeline/internal/infra/media"
 	infraRuntime "media-pipeline/internal/infra/runtime"
 	"media-pipeline/internal/infra/storage"
 	"media-pipeline/internal/observability"
@@ -60,9 +61,20 @@ func main() {
 	fileStorage := storage.NewLocalStorage(cfg.UploadDir)
 	audioStorage := storage.NewLocalStorage(cfg.AudioDir)
 	screenshotStorage := storage.NewLocalStorage(cfg.ScreenshotsDir)
+	audioDurationReader := inframedia.NewWAVDurationReader()
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
 	triggerRuleService := triggerapp.NewService(triggerRuleRepo)
-	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(mediaRepo, transcriptRepo, triggerEventRepo, triggerScreenshotRepo, summaryRepo, jobRepo)
+	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(
+		mediaRepo,
+		transcriptRepo,
+		triggerEventRepo,
+		triggerScreenshotRepo,
+		summaryRepo,
+		jobRepo,
+		audioDurationReader,
+		cfg.AudioDir,
+		cfg.TranscribeTimeout(),
+	)
 	requestSummaryUC := mediaapp.NewRequestSummaryUseCase(mediaRepo, transcriptRepo, jobRepo)
 	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, fileStorage, audioStorage, screenshotStorage, logger)
 

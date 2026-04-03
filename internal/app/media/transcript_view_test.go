@@ -55,6 +55,9 @@ func TestTranscriptViewUseCase_LoadIncludesTranscriptAndSettings(t *testing.T) {
 		stubTriggerScreenshotReader{},
 		stubSummaryReader{},
 		stubTranscriptJobReader{item: job.Job{MediaID: 42, Type: job.TypeTranscribe, Payload: payload}, ok: true},
+		stubTranscriptAudioDurationReader{},
+		t.TempDir(),
+		5*time.Minute,
 	)
 
 	result, err := uc.Load(context.Background(), 42)
@@ -85,6 +88,9 @@ func TestTranscriptViewUseCase_LoadKeepsWorkingWhenPayloadInvalid(t *testing.T) 
 		stubTriggerScreenshotReader{},
 		stubSummaryReader{},
 		stubTranscriptJobReader{item: job.Job{MediaID: 11, Type: job.TypeTranscribe, Payload: `{"broken":true}`}, ok: true},
+		stubTranscriptAudioDurationReader{},
+		t.TempDir(),
+		5*time.Minute,
 	)
 
 	result, err := uc.Load(context.Background(), 11)
@@ -99,6 +105,47 @@ func TestTranscriptViewUseCase_LoadKeepsWorkingWhenPayloadInvalid(t *testing.T) 
 	}
 	if !result.SettingsUnavailable {
 		t.Fatal("SettingsUnavailable = false, want true")
+	}
+}
+
+func TestTranscriptViewUseCase_LoadBuildsRuntimePolicyFromAudioDuration(t *testing.T) {
+	t.Parallel()
+
+	audioDir := t.TempDir()
+
+	uc := NewTranscriptViewUseCase(
+		stubTranscriptMediaReader{item: domainmedia.Media{
+			ID:                 77,
+			Status:             domainmedia.StatusFailed,
+			ExtractedAudioPath: "2026-04-03/demo.wav",
+		}},
+		stubTranscriptReader{},
+		stubTriggerEventReader{},
+		stubTriggerScreenshotReader{},
+		stubSummaryReader{},
+		stubTranscriptJobReader{item: job.Job{MediaID: 77, Type: job.TypeTranscribe, Payload: mustEncodeTranscriptPayload(t, transcription.Settings{
+			Backend:     transcription.BackendFasterWhisper,
+			ModelName:   "small",
+			Device:      "cpu",
+			ComputeType: "int8",
+			Language:    "ru",
+			BeamSize:    5,
+			VADEnabled:  true,
+		})}, ok: true},
+		stubTranscriptAudioDurationReader{duration: 60 * time.Minute},
+		audioDir,
+		5*time.Minute,
+	)
+
+	result, err := uc.Load(context.Background(), 77)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !result.RuntimePolicyReady || result.RuntimePolicy == nil {
+		t.Fatal("RuntimePolicy = nil, want computed policy")
+	}
+	if result.RuntimePolicy.EffectiveTimeout != 9*time.Hour+15*time.Minute {
+		t.Fatalf("EffectiveTimeout = %s, want 9h15m", result.RuntimePolicy.EffectiveTimeout)
 	}
 }
 
@@ -191,6 +238,29 @@ func (s stubSummaryReader) GetByMediaID(context.Context, int64) (domainsummary.S
 	return s.item, s.ok, nil
 }
 
+type stubTranscriptAudioDurationReader struct {
+	duration time.Duration
+	err      error
+}
+
+func (s stubTranscriptAudioDurationReader) ReadDuration(string) (time.Duration, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	return s.duration, nil
+}
+
+func mustEncodeTranscriptPayload(t *testing.T, settings transcription.Settings) string {
+	t.Helper()
+
+	raw, err := job.EncodeTranscribePayload(job.TranscribePayload{Settings: settings})
+	if err != nil {
+		t.Fatalf("EncodeTranscribePayload() error = %v", err)
+	}
+
+	return raw
+}
+
 func TestTranscriptViewUseCase_LoadPropagatesMediaError(t *testing.T) {
 	t.Parallel()
 
@@ -201,6 +271,9 @@ func TestTranscriptViewUseCase_LoadPropagatesMediaError(t *testing.T) {
 		stubTriggerScreenshotReader{},
 		stubSummaryReader{},
 		stubTranscriptJobReader{},
+		stubTranscriptAudioDurationReader{},
+		t.TempDir(),
+		5*time.Minute,
 	)
 
 	if _, err := uc.Load(context.Background(), 1); err == nil {

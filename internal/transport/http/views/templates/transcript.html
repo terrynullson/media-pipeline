@@ -126,6 +126,43 @@
                 </div>
                 {{end}}
             </div>
+
+            {{if .RuntimePolicy.Visible}}
+            <div class="settings-panel">
+                <div class="section-header">
+                    <div>
+                        <h2>{{.RuntimePolicy.Title}}</h2>
+                        <p class="hint">Оценка строится по длительности аудио, модели, устройству и типу вычислений до запуска распознавания.</p>
+                    </div>
+                </div>
+                <div class="notice notice-{{.RuntimePolicy.Tone}} transcript-inline-notice">
+                    <strong>{{.RuntimePolicy.Summary}}</strong>
+                    {{if .RuntimePolicy.DurationLabel}}
+                    <dl class="settings-grid">
+                        <div class="settings-item">
+                            <dt>Длительность аудио</dt>
+                            <dd>{{.RuntimePolicy.DurationLabel}}</dd>
+                        </div>
+                        <div class="settings-item">
+                            <dt>Класс файла</dt>
+                            <dd>{{.RuntimePolicy.DurationClass}}</dd>
+                        </div>
+                        <div class="settings-item">
+                            <dt>Расчётный лимит</dt>
+                            <dd>{{.RuntimePolicy.EffectiveTimeout}}</dd>
+                        </div>
+                    </dl>
+                    {{end}}
+                    {{if .RuntimePolicy.Warnings}}
+                    <ul class="notice-list">
+                        {{range .RuntimePolicy.Warnings}}
+                        <li>{{.}}</li>
+                        {{end}}
+                    </ul>
+                    {{end}}
+                </div>
+            </div>
+            {{end}}
         </aside>
 
         <section class="transcript-main">
