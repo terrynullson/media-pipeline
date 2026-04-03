@@ -3,6 +3,7 @@ package trigger
 import (
 	"strings"
 	"time"
+	"unicode"
 
 	"media-pipeline/internal/domain/transcript"
 )
@@ -85,13 +86,32 @@ func findContainsMatch(segmentText string, pattern string) (string, bool) {
 	}
 
 	for start := 0; start <= len(segmentRunes)-len(patternRunes); start++ {
-		candidate := string(segmentRunes[start : start+len(patternRunes)])
+		end := start + len(patternRunes)
+		candidate := string(segmentRunes[start:end])
 		if strings.EqualFold(candidate, pattern) {
+			if !hasPhraseBoundaries(segmentRunes, start, end) {
+				continue
+			}
 			return candidate, true
 		}
 	}
 
 	return "", false
+}
+
+func hasPhraseBoundaries(segmentRunes []rune, start int, end int) bool {
+	if start > 0 && isWordRune(segmentRunes[start-1]) {
+		return false
+	}
+	if end < len(segmentRunes) && isWordRune(segmentRunes[end]) {
+		return false
+	}
+
+	return true
+}
+
+func isWordRune(value rune) bool {
+	return unicode.IsLetter(value) || unicode.IsDigit(value)
 }
 
 func buildContextText(segments []transcript.Segment, currentIndex int) string {

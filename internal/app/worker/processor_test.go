@@ -229,6 +229,9 @@ func TestProcessor_ProcessNextTranscribePersistsTranscript(t *testing.T) {
 	if len(mediaRepo.markTranscribedCalls) != 1 || mediaRepo.markTranscribedCalls[0].transcriptText != "privet mir" {
 		t.Fatalf("mark transcribed calls = %#v, want transcript text", mediaRepo.markTranscribedCalls)
 	}
+	if len(jobRepo.createdJobs) != 1 || jobRepo.createdJobs[0].Type != job.TypeAnalyzeTriggers {
+		t.Fatalf("created jobs = %#v, want one analyze_triggers job", jobRepo.createdJobs)
+	}
 	if len(jobRepo.markDoneIDs) != 1 || jobRepo.markDoneIDs[0] != 31 {
 		t.Fatalf("mark done ids = %#v, want [31]", jobRepo.markDoneIDs)
 	}

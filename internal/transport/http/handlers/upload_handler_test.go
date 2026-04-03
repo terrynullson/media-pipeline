@@ -422,6 +422,67 @@ func TestUploadHandler_CreateToggleDeleteTriggerRule(t *testing.T) {
 	}
 }
 
+func TestUploadHandler_TranscriptPageShowsTriggerEmptyState(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	ctx := context.Background()
+	mediaRepo := repositories.NewMediaRepository(app.db)
+	jobRepo := repositories.NewJobRepository(app.db)
+	transcriptRepo := repositories.NewTranscriptRepository(app.db)
+
+	nowUTC := time.Date(2026, 4, 3, 19, 0, 0, 0, time.UTC)
+	mediaID, err := mediaRepo.Create(ctx, media.Media{
+		OriginalName: "no-triggers.wav",
+		StoredName:   "no-triggers.wav",
+		Extension:    ".wav",
+		MIMEType:     "audio/wav",
+		SizeBytes:    1024,
+		StoragePath:  "2026-04-03/no-triggers.wav",
+		Status:       media.StatusTranscribed,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	})
+	if err != nil {
+		t.Fatalf("Create(media) error = %v", err)
+	}
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeAnalyzeTriggers,
+		Status:       job.StatusDone,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		t.Fatalf("Create(analyze job) error = %v", err)
+	}
+	if err := transcriptRepo.Save(ctx, transcript.Transcript{
+		MediaID:      mediaID,
+		Language:     "en",
+		FullText:     "just a normal conversation",
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+		Segments: []transcript.Segment{
+			{StartSec: 0, EndSec: 2, Text: "just a normal conversation"},
+		},
+	}); err != nil {
+		t.Fatalf("Save(transcript) error = %v", err)
+	}
+	if err := mediaRepo.MarkTranscribed(ctx, mediaID, "just a normal conversation", nowUTC); err != nil {
+		t.Fatalf("MarkTranscribed() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(mediaID, 10)+"/transcript", nil)
+	rec := httptest.NewRecorder()
+	app.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("transcript page status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !strings.Contains(rec.Body.String(), "No trigger matches were found for this transcript.") {
+		t.Fatalf("transcript page body missing trigger empty state: %s", rec.Body.String())
+	}
+}
+
 func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 	t.Parallel()
 

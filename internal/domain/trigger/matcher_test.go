@@ -80,3 +80,22 @@ func TestDetectEvents_BuildsNearbyContext(t *testing.T) {
 		t.Fatalf("context = %q, want nearby segment context", events[0].ContextText)
 	}
 }
+
+func TestDetectEvents_ContainsDoesNotMatchInsideLargerWord(t *testing.T) {
+	t.Parallel()
+
+	events := DetectEvents(MatchInput{
+		MediaID: 21,
+		Segments: []transcript.Segment{
+			{StartSec: 0, EndSec: 2, Text: "We discussed refundable credits."},
+		},
+		Rules: []Rule{
+			{ID: 9, Name: "Refund", Category: "billing", Pattern: "fund", MatchMode: MatchModeContains, Enabled: true},
+		},
+		CreatedAtUTC: time.Date(2026, 4, 3, 12, 0, 0, 0, time.UTC),
+	})
+
+	if len(events) != 0 {
+		t.Fatalf("events = %d, want 0 for inner-word substring match", len(events))
+	}
+}
