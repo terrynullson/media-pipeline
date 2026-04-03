@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -40,6 +41,13 @@ type MediaListItem struct {
 	Extension    string
 	SizeHuman    string
 	Status       media.Status
+	StatusLabel  string
+	StatusTone   string
+	StageLabel   string
+	StageValue   int
+	StageTotal   int
+	StagePercent int
+	IsActive     bool
 	CreatedAtUTC string
 }
 
@@ -121,12 +129,12 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			logger.Warn("upload request rejected: request body too large", slog.Any("error", err))
-			h.renderIndex(w, r, h.uploadLimitMessage("File is too large."), "", "", "", nil)
+			h.renderUploadFailure(w, r, h.uploadLimitMessage("File is too large."))
 			return
 		}
 
 		logger.Warn("upload request rejected: invalid multipart form", slog.Any("error", err))
-		h.renderIndex(w, r, "Could not read the upload form. Please choose the file again.", "", "", "", nil)
+		h.renderUploadFailure(w, r, "Could not read the upload form. Please choose the file again.")
 		return
 	}
 	defer func() {
@@ -138,17 +146,17 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	file, fileHeader, err := r.FormFile("media")
 	if err != nil {
 		logger.Warn("upload request rejected: media field missing", slog.Any("error", err))
-		h.renderIndex(w, r, "Please choose a file in the media field.", "", "", "", nil)
+		h.renderUploadFailure(w, r, "Please choose a file in the media field.")
 		return
 	}
 	defer file.Close()
 
 	if strings.TrimSpace(fileHeader.Filename) == "" {
-		h.renderIndex(w, r, "File name is required.", "", "", "", nil)
+		h.renderUploadFailure(w, r, "File name is required.")
 		return
 	}
 	if fileHeader.Size == 0 {
-		h.renderIndex(w, r, "Empty upload is not allowed.", "", "", "", nil)
+		h.renderUploadFailure(w, r, "Empty upload is not allowed.")
 		return
 	}
 
@@ -157,7 +165,7 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		slog.Int64("declared_size_bytes", fileHeader.Size),
 	)
 
-	err = h.uploadUC.Upload(r.Context(), command.UploadMediaInput{
+	result, err := h.uploadUC.Upload(r.Context(), command.UploadMediaInput{
 		OriginalName: fileHeader.Filename,
 		MIMEType:     normalizeMIMEType(fileHeader.Header.Get("Content-Type")),
 		SizeBytes:    fileHeader.Size,
@@ -165,12 +173,45 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logger.Warn("upload failed", slog.Any("error", err), slog.String("filename", fileHeader.Filename))
-		h.renderIndex(w, r, h.userFacingUploadError(err), "", "", "", nil)
+		h.renderUploadFailure(w, r, h.userFacingUploadError(err))
 		return
 	}
 
 	logger.Info("upload succeeded", slog.String("filename", fileHeader.Filename))
+	if wantsJSON(r) {
+		h.writeJSON(w, http.StatusCreated, map[string]any{
+			"status":  "uploaded",
+			"mediaId": result.MediaID,
+			"message": "Upload completed. Media record and pending job were created.",
+		})
+		return
+	}
 	http.Redirect(w, r, "/?status=uploaded", http.StatusSeeOther)
+}
+
+func (h *UploadHandler) MediaStatuses(w http.ResponseWriter, r *http.Request) {
+	items, err := h.buildMediaListItems(r.Context())
+	if err != nil {
+		observability.LoggerFromContext(r.Context(), h.logger).Error("load media statuses failed", slog.Any("error", err))
+		http.Error(w, "failed to load media statuses", http.StatusInternalServerError)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"items": items,
+	})
+}
+
+func (h *UploadHandler) renderUploadFailure(w http.ResponseWriter, r *http.Request, message string) {
+	if wantsJSON(r) {
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{
+			"status":  "error",
+			"message": message,
+		})
+		return
+	}
+
+	h.renderIndex(w, r, message, "", "", "", nil)
 }
 
 func (h *UploadHandler) SaveTranscriptionSettings(w http.ResponseWriter, r *http.Request) {
@@ -216,7 +257,7 @@ func (h *UploadHandler) renderIndex(
 	settingsSuccess string,
 	settingsForm *TranscriptionSettingsForm,
 ) {
-	items, err := h.uploadUC.ListRecent(r.Context(), h.listItemsMaxSize)
+	viewItems, err := h.buildMediaListItems(r.Context())
 	if err != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("load media list failed", slog.Any("error", err))
 		http.Error(w, "failed to load media list", http.StatusInternalServerError)
@@ -228,19 +269,6 @@ func (h *UploadHandler) renderIndex(
 		http.Error(w, "failed to load transcription settings", http.StatusInternalServerError)
 		return
 	}
-
-	viewItems := make([]MediaListItem, 0, len(items))
-	for _, item := range items {
-		viewItems = append(viewItems, MediaListItem{
-			ID:           item.ID,
-			OriginalName: item.OriginalName,
-			Extension:    item.Extension,
-			SizeHuman:    HumanSize(item.SizeBytes),
-			Status:       item.Status,
-			CreatedAtUTC: item.CreatedAtUTC.UTC().Format("2006-01-02 15:04:05"),
-		})
-	}
-
 	currentForm := buildSettingsForm(currentProfile)
 	if settingsForm != nil {
 		currentForm = *settingsForm
@@ -271,6 +299,75 @@ func (h *UploadHandler) renderIndex(
 		observability.LoggerFromContext(r.Context(), h.logger).Error("render index template failed", slog.Any("error", execErr))
 		http.Error(w, "failed to render page", http.StatusInternalServerError)
 	}
+}
+
+func (h *UploadHandler) buildMediaListItems(ctx context.Context) ([]MediaListItem, error) {
+	items, err := h.uploadUC.ListRecent(ctx, h.listItemsMaxSize)
+	if err != nil {
+		return nil, err
+	}
+
+	viewItems := make([]MediaListItem, 0, len(items))
+	for _, item := range items {
+		statusLabel, statusTone, stageLabel, stageValue, active := describeMediaStatus(item.Status)
+		viewItems = append(viewItems, MediaListItem{
+			ID:           item.ID,
+			OriginalName: item.OriginalName,
+			Extension:    item.Extension,
+			SizeHuman:    HumanSize(item.SizeBytes),
+			Status:       item.Status,
+			StatusLabel:  statusLabel,
+			StatusTone:   statusTone,
+			StageLabel:   stageLabel,
+			StageValue:   stageValue,
+			StageTotal:   5,
+			StagePercent: stagePercent(stageValue, 5),
+			IsActive:     active,
+			CreatedAtUTC: item.CreatedAtUTC.UTC().Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	return viewItems, nil
+}
+
+func stagePercent(value int, total int) int {
+	if value <= 0 || total <= 0 {
+		return 0
+	}
+
+	return (value * 100) / total
+}
+
+func describeMediaStatus(status media.Status) (statusLabel string, statusTone string, stageLabel string, stageValue int, active bool) {
+	switch status {
+	case media.StatusUploaded:
+		return "Uploaded", "uploaded", "Waiting for audio extraction", 1, false
+	case media.StatusProcessing:
+		return "Extracting audio", "running", "Extracting audio", 2, true
+	case media.StatusAudioExtracted:
+		return "Audio ready", "ready", "Audio extracted, waiting for transcription", 3, false
+	case media.StatusTranscribing:
+		return "Transcribing", "running", "Transcribing audio", 4, true
+	case media.StatusTranscribed:
+		return "Transcribed", "success", "Transcription completed", 5, false
+	case media.StatusFailed:
+		return "Failed", "error", "Processing failed", 0, false
+	default:
+		return string(status), "neutral", "Unknown status", 0, false
+	}
+}
+
+func wantsJSON(r *http.Request) bool {
+	accept := strings.ToLower(strings.TrimSpace(r.Header.Get("Accept")))
+	requestedWith := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Requested-With")))
+
+	return strings.Contains(accept, "application/json") || requestedWith == "xmlhttprequest"
+}
+
+func (h *UploadHandler) writeJSON(w http.ResponseWriter, statusCode int, payload any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func (h *UploadHandler) uploadLimitMessage(prefix string) string {

@@ -31,6 +31,10 @@ type UploadMediaInput struct {
 	Content      io.Reader
 }
 
+type UploadMediaResult struct {
+	MediaID int64
+}
+
 type UploadMediaUseCase struct {
 	mediaRepo      MediaRepository
 	jobRepo        JobRepository
@@ -55,7 +59,7 @@ func NewUploadMediaUseCase(
 	}
 }
 
-func (u *UploadMediaUseCase) Upload(ctx context.Context, in UploadMediaInput) error {
+func (u *UploadMediaUseCase) Upload(ctx context.Context, in UploadMediaInput) (UploadMediaResult, error) {
 	logger := observability.LoggerFromContext(ctx, u.logger).With(
 		slog.String("original_name", in.OriginalName),
 		slog.Int64("declared_size_bytes", in.SizeBytes),
@@ -65,17 +69,17 @@ func (u *UploadMediaUseCase) Upload(ctx context.Context, in UploadMediaInput) er
 	ext, bufferedContent, detectedMIMEType, err := validateUploadInput(in, u.maxUploadBytes)
 	if err != nil {
 		logger.Warn("upload validation failed", slog.Any("error", err))
-		return err
+		return UploadMediaResult{}, err
 	}
 
 	storedFile, err := u.storage.Save(ctx, in.OriginalName, bufferedContent)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			logger.Warn("upload canceled while saving file", slog.Any("error", err))
-			return fmt.Errorf("upload canceled: %w", err)
+			return UploadMediaResult{}, fmt.Errorf("upload canceled: %w", err)
 		}
 		logger.Error("save uploaded file failed", slog.Any("error", err))
-		return fmt.Errorf("save uploaded file: %w", err)
+		return UploadMediaResult{}, fmt.Errorf("save uploaded file: %w", err)
 	}
 
 	nowUTC := time.Now().UTC()
@@ -96,7 +100,7 @@ func (u *UploadMediaUseCase) Upload(ctx context.Context, in UploadMediaInput) er
 			slog.String("storage_path", storedFile.RelativePath),
 		)
 		u.cleanupStoredFile(ctx, storedFile.RelativePath, "media create failure")
-		return fmt.Errorf("create media record: %w", err)
+		return UploadMediaResult{}, fmt.Errorf("create media record: %w", err)
 	}
 
 	_, err = u.jobRepo.Create(ctx, job.Job{
@@ -116,7 +120,7 @@ func (u *UploadMediaUseCase) Upload(ctx context.Context, in UploadMediaInput) er
 		)
 		u.cleanupMediaRecord(ctx, mediaID)
 		u.cleanupStoredFile(ctx, storedFile.RelativePath, "job create failure")
-		return fmt.Errorf("create job record: %w", err)
+		return UploadMediaResult{}, fmt.Errorf("create job record: %w", err)
 	}
 
 	logger.Info("upload completed",
@@ -126,7 +130,7 @@ func (u *UploadMediaUseCase) Upload(ctx context.Context, in UploadMediaInput) er
 		slog.Int64("size_bytes", storedFile.SizeBytes),
 		slog.String("mime_type", firstNonEmpty(detectedMIMEType, in.MIMEType)),
 	)
-	return nil
+	return UploadMediaResult{MediaID: mediaID}, nil
 }
 
 func (u *UploadMediaUseCase) ListRecent(ctx context.Context, limit int) ([]media.Media, error) {

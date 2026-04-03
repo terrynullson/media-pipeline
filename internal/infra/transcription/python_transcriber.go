@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"media-pipeline/internal/domain/ports"
@@ -50,6 +52,14 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 	if strings.TrimSpace(settings.Language) != "" {
 		args = append(args, "--language", settings.Language)
 	}
+	resultPath, err := createTranscriptionResultPath()
+	if err != nil {
+		return ports.TranscribeOutput{}, &ports.TranscriptionError{
+			Cause: fmt.Errorf("prepare transcription result file: %w", err),
+		}
+	}
+	defer cleanupTranscriptionResultPath(resultPath)
+	args = append(args, "--output-path", resultPath)
 
 	cmd := exec.CommandContext(ctx, t.pythonBinary, args...)
 
@@ -107,11 +117,12 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 		}
 	}
 
-	parsed, err := ParseTranscriptionOutput(stdout.Bytes())
+	parsed, err := readTranscriptionResult(resultPath)
 	if err != nil {
 		diagnostics := combineDiagnostics(stderr.String(), "stdout: "+stdout.String())
 		t.logger.Error("python transcription script returned invalid json",
 			slog.String("script_path", t.scriptPath),
+			slog.String("result_path", resultPath),
 			slog.String("stderr", diagnostics),
 		)
 		return ports.TranscribeOutput{}, &ports.TranscriptionError{
@@ -127,6 +138,48 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 	)
 
 	return parsed, nil
+}
+
+func createTranscriptionResultPath() (string, error) {
+	file, err := os.CreateTemp("", "media-pipeline-transcription-*.json")
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close temp result file: %w", err)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("remove temp result placeholder: %w", err)
+	}
+
+	return path, nil
+}
+
+func cleanupTranscriptionResultPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+
+	_ = os.Remove(path)
+	_ = os.Remove(path + ".tmp")
+}
+
+func readTranscriptionResult(path string) (ports.TranscribeOutput, error) {
+	if strings.TrimSpace(path) == "" {
+		return ports.TranscribeOutput{}, fmt.Errorf("decode transcription json: result path is empty")
+	}
+
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ports.TranscribeOutput{}, fmt.Errorf("decode transcription json: result file not found")
+		}
+		return ports.TranscribeOutput{}, fmt.Errorf("read transcription result file %s: %w", filepath.Base(path), err)
+	}
+
+	return ParseTranscriptionOutput(payload)
 }
 
 type scriptOutput struct {

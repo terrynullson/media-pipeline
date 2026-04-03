@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -181,6 +182,161 @@ func TestUploadHandler_InvalidUpload(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Uploaded content does not look like audio or video.") {
 		t.Fatalf("response body = %q, want content type validation message", rec.Body.String())
 	}
+}
+
+func TestUploadHandler_UploadHappyPathJSON(t *testing.T) {
+	t.Parallel()
+
+	router := newTestRouter(t)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("media", "sample.wav")
+	if err != nil {
+		t.Fatalf("CreateFormFile() error = %v", err)
+	}
+	if _, err := part.Write(testWAVBytes()); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() multipart error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d, want %d, body = %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	var payload struct {
+		Status  string `json:"status"`
+		MediaID int64  `json:"mediaId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if payload.Status != "uploaded" {
+		t.Fatalf("status = %q, want uploaded", payload.Status)
+	}
+	if payload.MediaID == 0 {
+		t.Fatalf("mediaId = %d, want non-zero", payload.MediaID)
+	}
+}
+
+func TestUploadHandler_MediaStatuses(t *testing.T) {
+	t.Parallel()
+
+	router := newTestRouter(t)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("media", "sample.wav")
+	if err != nil {
+		t.Fatalf("CreateFormFile() error = %v", err)
+	}
+	if _, err := part.Write(testWAVBytes()); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() multipart error = %v", err)
+	}
+
+	uploadReq := httptest.NewRequest(http.MethodPost, "/upload", &body)
+	uploadReq.Header.Set("Content-Type", writer.FormDataContentType())
+	uploadRec := httptest.NewRecorder()
+	router.ServeHTTP(uploadRec, uploadReq)
+
+	req := httptest.NewRequest(http.MethodGet, "/media/statuses", nil)
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status endpoint code = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var payload struct {
+		Items []struct {
+			ID          int64  `json:"ID"`
+			Status      string `json:"Status"`
+			StatusLabel string `json:"StatusLabel"`
+			StageLabel  string `json:"StageLabel"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if len(payload.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(payload.Items))
+	}
+	if payload.Items[0].Status != "uploaded" {
+		t.Fatalf("status = %q, want uploaded", payload.Items[0].Status)
+	}
+	if payload.Items[0].StatusLabel != "Uploaded" {
+		t.Fatalf("status label = %q, want Uploaded", payload.Items[0].StatusLabel)
+	}
+	if payload.Items[0].StageLabel != "Waiting for audio extraction" {
+		t.Fatalf("stage label = %q, want Waiting for audio extraction", payload.Items[0].StageLabel)
+	}
+}
+
+func newTestRouter(t *testing.T) http.Handler {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "app.db")
+	uploadDir := filepath.Join(tempDir, "uploads")
+
+	sqlDB, err := db.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
+
+	migrationsPath, err := infraRuntime.ResolvePath("internal/infra/db/migrations")
+	if err != nil {
+		t.Fatalf("ResolvePath(migrations) error = %v", err)
+	}
+	if err := db.RunMigrations(sqlDB, migrationsPath); err != nil {
+		t.Fatalf("RunMigrations() error = %v", err)
+	}
+
+	templatePath, err := infraRuntime.ResolvePath("internal/transport/http/views/templates/index.html")
+	if err != nil {
+		t.Fatalf("ResolvePath(template) error = %v", err)
+	}
+	staticPath, err := infraRuntime.ResolvePath("web/static")
+	if err != nil {
+		t.Fatalf("ResolvePath(static) error = %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	profileService := transcriptionapp.NewService(
+		repositories.NewTranscriptionProfileRepository(sqlDB),
+		domaintranscription.DefaultProfile("ru"),
+	)
+	uploadUC := command.NewUploadMediaUseCase(
+		repositories.NewMediaRepository(sqlDB),
+		repositories.NewJobRepository(sqlDB),
+		storage.NewLocalStorage(uploadDir),
+		10*1024*1024,
+		logger,
+	)
+	handler, err := handlers.NewUploadHandler(uploadUC, profileService, templatePath, 10*1024*1024, logger)
+	if err != nil {
+		t.Fatalf("NewUploadHandler() error = %v", err)
+	}
+
+	return httptransport.NewRouter(logger, handler, staticPath)
 }
 
 func testWAVBytes() []byte {

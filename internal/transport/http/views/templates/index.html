@@ -10,9 +10,9 @@
 <main class="page">
     <section class="hero">
         <div class="hero-copy">
-            <p class="eyebrow">Stage 3</p>
+            <p class="eyebrow">Stage 3.2</p>
             <h1>Media Pipeline</h1>
-            <p class="subtitle">Server-rendered control panel for local media intake. Upload a source file, persist it safely, and let the worker continue audio extraction and transcription in the background.</p>
+            <p class="subtitle">Upload once, then watch the real pipeline state move from upload to audio extraction and transcription. The page stays server-rendered and uses light polling for current statuses.</p>
         </div>
         <div class="hero-meta">
             <div class="meta-card">
@@ -26,23 +26,25 @@
         </div>
     </section>
 
-    <section class="card">
+    <section class="card card-highlight">
         <div class="section-header section-header-wide">
             <div>
                 <h2>Upload media</h2>
-                <p class="hint">The web app only accepts the file and creates a pending <code>extract_audio</code> job. Heavy processing still runs later in the worker.</p>
+                <p class="hint">The web app stores the file and creates a pending <code>extract_audio</code> job. Heavy processing still runs only in the worker.</p>
             </div>
             <div class="inline-badge">Limit: {{.MaxUploadMB}} MB</div>
         </div>
 
-        {{if .UploadError}}
-        <div class="notice notice-error">{{.UploadError}}</div>
-        {{end}}
-        {{if .UploadSuccess}}
-        <div class="notice notice-success">{{.UploadSuccess}}</div>
-        {{end}}
+        <div id="upload-notices">
+            {{if .UploadError}}
+            <div class="notice notice-error">{{.UploadError}}</div>
+            {{end}}
+            {{if .UploadSuccess}}
+            <div class="notice notice-success">{{.UploadSuccess}}</div>
+            {{end}}
+        </div>
 
-        <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form">
+        <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form" id="upload-form">
             <input
                 type="file"
                 name="media"
@@ -58,30 +60,82 @@
                 role="button"
                 tabindex="0"
                 aria-controls="media-file-input"
-                aria-describedby="media-file-help media-file-status"
+                aria-describedby="media-file-help media-file-status upload-progress-text"
             >
                 <div class="upload-dropzone-copy">
                     <span class="upload-kicker">Dropzone</span>
-                    <strong>Choose a media file</strong>
-                    <p id="media-file-help">Click this area or the button below. Audio and video formats listed above are accepted up to {{.MaxUploadMB}} MB.</p>
+                    <strong>Drop a media file here or click to choose</strong>
+                    <p id="media-file-help">Drag and drop is supported. Keyboard users can focus this area and press Enter or Space to open the picker.</p>
                 </div>
                 <div class="upload-dropzone-action">
                     <span class="file-picker-button" id="media-file-button">Choose file</span>
-                    <span class="file-picker-meta">Ready for local upload</span>
+                    <span class="file-picker-meta" id="dropzone-meta">Ready for local upload</span>
                 </div>
             </div>
 
             <div class="file-selection" id="media-file-status" aria-live="polite">
                 <span class="file-selection-label">Selected file</span>
                 <strong class="file-picker-name" id="media-file-name">No file selected</strong>
-                <span class="file-selection-hint">Maximum file size: {{.MaxUploadMB}} MB</span>
+                <span class="file-selection-hint" id="media-file-size">Maximum file size: {{.MaxUploadHuman}}</span>
+            </div>
+
+            <div class="upload-progress" id="upload-progress" hidden>
+                <div class="progress-header">
+                    <span class="progress-label">Upload progress</span>
+                    <strong id="upload-progress-text">Waiting to start</strong>
+                </div>
+                <div class="progress-track" aria-hidden="true">
+                    <span class="progress-fill" id="upload-progress-fill"></span>
+                </div>
             </div>
 
             <div class="upload-actions">
-                <button type="submit">Upload media</button>
-                <p class="hint">The upload starts immediately after submit. If the file is too large or has an unsupported type, the page shows a clear server-side error.</p>
+                <button type="submit" id="upload-submit">Upload media</button>
+                <p class="hint">Upload progress is shown only while the browser is sending the file. Later stages switch to real pipeline statuses, not fake percentages.</p>
             </div>
         </form>
+    </section>
+
+    <section class="card">
+        <div class="section-header section-header-wide">
+            <div>
+                <h2>Pipeline progress</h2>
+                <p class="hint">Statuses come from the backend. Extract audio and transcription use stage labels with indeterminate activity while work is running.</p>
+            </div>
+            <div class="inline-badge inline-badge-muted">Polling every few seconds</div>
+        </div>
+        <div class="pipeline-grid" id="pipeline-grid">
+            {{if .Items}}
+                {{range .Items}}
+                <article class="pipeline-item pipeline-tone-{{.StatusTone}}" data-media-id="{{.ID}}">
+                    <div class="pipeline-item-header">
+                        <div>
+                            <strong class="pipeline-item-title">{{.OriginalName}}</strong>
+                            <p class="pipeline-item-meta">{{.SizeHuman}} · {{.CreatedAtUTC}} UTC</p>
+                        </div>
+                        <span class="status-chip status-chip-{{.StatusTone}}">{{.StatusLabel}}</span>
+                    </div>
+                    <p class="pipeline-stage-text">{{.StageLabel}}</p>
+                    <div class="stage-meter{{if .IsActive}} stage-meter-active{{end}}{{if eq .StatusTone "error"}} stage-meter-error{{end}}" aria-hidden="true">
+                        <span class="stage-meter-fill" style="width: {{.StagePercent}}%;"></span>
+                    </div>
+                    <div class="pipeline-stage-foot">
+                        {{if gt .StageValue 0}}
+                        <span>Stage {{.StageValue}} / {{.StageTotal}}</span>
+                        {{else}}
+                        <span>Needs attention</span>
+                        {{end}}
+                        <span>{{.Extension}}</span>
+                    </div>
+                </article>
+                {{end}}
+            {{else}}
+            <div class="empty-state" id="pipeline-empty">
+                <p>No uploads yet.</p>
+                <p class="hint">After the first upload, this panel will show uploaded, extracting audio, audio ready, transcribing, transcribed, or failed.</p>
+            </div>
+            {{end}}
+        </div>
     </section>
 
     <section class="card">
@@ -164,11 +218,10 @@
                 <h2>Recent uploads</h2>
                 <p class="hint">Newest items first. Timestamps are shown in UTC.</p>
             </div>
-            <div class="inline-badge inline-badge-muted">{{len .Items}} item{{if ne (len .Items) 1}}s{{end}}</div>
+            <div class="inline-badge inline-badge-muted" id="recent-count">{{len .Items}} item{{if ne (len .Items) 1}}s{{end}}</div>
         </div>
 
-        {{if .Items}}
-        <div class="table-wrap">
+        <div class="table-wrap" id="recent-table-wrap" {{if eq (len .Items) 0}}hidden{{end}}>
             <table>
                 <thead>
                 <tr>
@@ -177,53 +230,223 @@
                     <th>Type</th>
                     <th>Size</th>
                     <th>Status</th>
+                    <th>Pipeline stage</th>
                     <th>Uploaded at (UTC)</th>
                 </tr>
                 </thead>
-                <tbody>
+                <tbody id="recent-table-body">
                 {{range .Items}}
-                <tr>
+                <tr data-media-id="{{.ID}}">
                     <td>{{.ID}}</td>
                     <td class="filename">{{.OriginalName}}</td>
                     <td><span class="pill">{{.Extension}}</span></td>
                     <td>{{.SizeHuman}}</td>
-                    <td>{{.Status}}</td>
+                    <td><span class="status-chip status-chip-{{.StatusTone}}">{{.StatusLabel}}</span></td>
+                    <td>{{.StageLabel}}</td>
                     <td>{{.CreatedAtUTC}}</td>
                 </tr>
                 {{end}}
                 </tbody>
             </table>
         </div>
-        {{else}}
-        <div class="empty-state">
+        <div class="empty-state" id="recent-empty" {{if gt (len .Items) 0}}hidden{{end}}>
             <p>No uploads yet.</p>
             <p class="hint">Choose one audio or video file above to create the first media row and a pending worker job.</p>
         </div>
-        {{end}}
     </section>
 </main>
 <script>
 (() => {
+    const form = document.getElementById("upload-form");
     const fileInput = document.getElementById("media-file-input");
     const fileName = document.getElementById("media-file-name");
+    const fileSize = document.getElementById("media-file-size");
     const trigger = document.getElementById("media-file-trigger");
     const button = document.getElementById("media-file-button");
+    const dropzoneMeta = document.getElementById("dropzone-meta");
+    const notices = document.getElementById("upload-notices");
+    const uploadProgress = document.getElementById("upload-progress");
+    const uploadProgressFill = document.getElementById("upload-progress-fill");
+    const uploadProgressText = document.getElementById("upload-progress-text");
+    const uploadSubmit = document.getElementById("upload-submit");
+    const pipelineGrid = document.getElementById("pipeline-grid");
+    const recentCount = document.getElementById("recent-count");
+    const recentTableWrap = document.getElementById("recent-table-wrap");
+    const recentTableBody = document.getElementById("recent-table-body");
+    const recentEmpty = document.getElementById("recent-empty");
 
-    if (!fileInput || !fileName || !trigger || !button) {
+    if (!form || !fileInput || !fileName || !fileSize || !trigger || !button || !dropzoneMeta || !notices || !uploadProgress || !uploadProgressFill || !uploadProgressText || !uploadSubmit || !pipelineGrid || !recentCount || !recentTableWrap || !recentTableBody || !recentEmpty) {
         return;
     }
 
-    const renderSelectedFile = () => {
-        const selected = fileInput.files && fileInput.files.length > 0
-            ? fileInput.files[0].name
-            : "No file selected";
-        fileName.textContent = selected;
-        trigger.classList.toggle("has-file", selected !== "No file selected");
-    };
+    const stageTotal = 5;
+    let pollTimer = null;
 
-    const openPicker = () => {
+    function formatBytes(size) {
+        if (!Number.isFinite(size) || size < 1024) {
+            return `${size || 0} B`;
+        }
+
+        const units = ["KB", "MB", "GB", "TB"];
+        let value = size;
+        for (const unit of units) {
+            value = value / 1024;
+            if (value < 1024) {
+                return `${value.toFixed(1)} ${unit}`;
+            }
+        }
+
+        return `${(value / 1024).toFixed(1)} PB`;
+    }
+
+    function escapeHtml(value) {
+        return String(value || "")
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll("\"", "&quot;")
+            .replaceAll("'", "&#39;");
+    }
+
+    function renderNotice(kind, message) {
+        notices.innerHTML = `<div class="notice ${kind === "error" ? "notice-error" : "notice-success"}">${escapeHtml(message)}</div>`;
+    }
+
+    function setUploadProgress(percent, text) {
+        uploadProgress.hidden = false;
+        uploadProgressFill.style.width = `${Math.max(0, Math.min(percent, 100))}%`;
+        uploadProgressText.textContent = text;
+    }
+
+    function clearUploadProgress() {
+        uploadProgress.hidden = true;
+        uploadProgressFill.style.width = "0%";
+        uploadProgressText.textContent = "Waiting to start";
+    }
+
+    function renderSelectedFile(file) {
+        if (!file) {
+            fileName.textContent = "No file selected";
+            fileSize.textContent = "Maximum file size: {{.MaxUploadHuman}}";
+            trigger.classList.remove("has-file");
+            return;
+        }
+
+        fileName.textContent = file.name;
+        fileSize.textContent = `${formatBytes(file.size)} selected`;
+        trigger.classList.add("has-file");
+    }
+
+    function openPicker() {
         fileInput.click();
-    };
+    }
+
+    function applyDroppedFiles(files) {
+        if (!files || files.length === 0) {
+            return;
+        }
+        fileInput.files = files;
+        renderSelectedFile(files[0]);
+    }
+
+    function deriveStageWidth(item) {
+        if (!item || !item.StageValue || !item.StageTotal) {
+            return 0;
+        }
+        return Math.round((item.StageValue / item.StageTotal) * 100);
+    }
+
+    function renderPipelineItems(items) {
+        if (!items || items.length === 0) {
+            pipelineGrid.innerHTML = `
+                <div class="empty-state" id="pipeline-empty">
+                    <p>No uploads yet.</p>
+                    <p class="hint">After the first upload, this panel will show uploaded, extracting audio, audio ready, transcribing, transcribed, or failed.</p>
+                </div>
+            `;
+            return;
+        }
+
+        pipelineGrid.innerHTML = items.map((item) => `
+            <article class="pipeline-item pipeline-tone-${escapeHtml(item.StatusTone)}" data-media-id="${item.ID}">
+                <div class="pipeline-item-header">
+                    <div>
+                        <strong class="pipeline-item-title">${escapeHtml(item.OriginalName)}</strong>
+                        <p class="pipeline-item-meta">${escapeHtml(item.SizeHuman)} · ${escapeHtml(item.CreatedAtUTC)} UTC</p>
+                    </div>
+                    <span class="status-chip status-chip-${escapeHtml(item.StatusTone)}">${escapeHtml(item.StatusLabel)}</span>
+                </div>
+                <p class="pipeline-stage-text">${escapeHtml(item.StageLabel)}</p>
+                <div class="stage-meter${item.IsActive ? " stage-meter-active" : ""}${item.StatusTone === "error" ? " stage-meter-error" : ""}" aria-hidden="true">
+                    <span class="stage-meter-fill" style="width: ${deriveStageWidth(item)}%;"></span>
+                </div>
+                <div class="pipeline-stage-foot">
+                    <span>${item.StageValue > 0 ? `Stage ${item.StageValue} / ${item.StageTotal}` : "Needs attention"}</span>
+                    <span>${escapeHtml(item.Extension)}</span>
+                </div>
+            </article>
+        `).join("");
+    }
+
+    function renderRecentTable(items) {
+        recentCount.textContent = `${items.length} item${items.length === 1 ? "" : "s"}`;
+        if (!items || items.length === 0) {
+            recentTableWrap.hidden = true;
+            recentEmpty.hidden = false;
+            recentTableBody.innerHTML = "";
+            return;
+        }
+
+        recentTableWrap.hidden = false;
+        recentEmpty.hidden = true;
+        recentTableBody.innerHTML = items.map((item) => `
+            <tr data-media-id="${item.ID}">
+                <td>${item.ID}</td>
+                <td class="filename">${escapeHtml(item.OriginalName)}</td>
+                <td><span class="pill">${escapeHtml(item.Extension)}</span></td>
+                <td>${escapeHtml(item.SizeHuman)}</td>
+                <td><span class="status-chip status-chip-${escapeHtml(item.StatusTone)}">${escapeHtml(item.StatusLabel)}</span></td>
+                <td>${escapeHtml(item.StageLabel)}</td>
+                <td>${escapeHtml(item.CreatedAtUTC)}</td>
+            </tr>
+        `).join("");
+    }
+
+    async function refreshStatuses() {
+        const response = await fetch("/media/statuses", {
+            headers: {
+                "Accept": "application/json"
+            },
+            cache: "no-store"
+        });
+        if (!response.ok) {
+            throw new Error(`status polling failed with ${response.status}`);
+        }
+
+        const payload = await response.json();
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        renderPipelineItems(items);
+        renderRecentTable(items);
+
+        const hasActive = items.some((item) => item && item.IsActive);
+        if (pollTimer) {
+            window.clearTimeout(pollTimer);
+        }
+        pollTimer = window.setTimeout(() => {
+            refreshStatuses().catch(() => {
+                pollTimer = window.setTimeout(() => refreshStatuses().catch(() => {}), 10000);
+            });
+        }, hasActive ? 3000 : 8000);
+    }
+
+    function startPollingSoon() {
+        if (pollTimer) {
+            window.clearTimeout(pollTimer);
+        }
+        pollTimer = window.setTimeout(() => {
+            refreshStatuses().catch(() => {});
+        }, 800);
+    }
 
     trigger.addEventListener("click", openPicker);
     button.addEventListener("click", (event) => {
@@ -237,8 +460,96 @@
             openPicker();
         }
     });
-    fileInput.addEventListener("change", renderSelectedFile);
-    renderSelectedFile();
+    fileInput.addEventListener("change", () => {
+        renderSelectedFile(fileInput.files && fileInput.files[0] ? fileInput.files[0] : null);
+    });
+
+    ["dragenter", "dragover"].forEach((eventName) => {
+        trigger.addEventListener(eventName, (event) => {
+            event.preventDefault();
+            trigger.classList.add("is-dragover");
+            dropzoneMeta.textContent = "Release to attach file";
+        });
+    });
+    ["dragleave", "dragend", "drop"].forEach((eventName) => {
+        trigger.addEventListener(eventName, (event) => {
+            event.preventDefault();
+            if (eventName === "drop" && event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+                applyDroppedFiles(event.dataTransfer.files);
+            }
+            trigger.classList.remove("is-dragover");
+            dropzoneMeta.textContent = fileInput.files && fileInput.files.length > 0 ? "File ready to upload" : "Ready for local upload";
+        });
+    });
+
+    form.addEventListener("submit", (event) => {
+        if (!window.XMLHttpRequest || !window.FormData) {
+            return;
+        }
+
+        if (!fileInput.files || fileInput.files.length === 0) {
+            return;
+        }
+
+        event.preventDefault();
+        const xhr = new XMLHttpRequest();
+        const payload = new FormData(form);
+        const selectedFile = fileInput.files[0];
+
+        uploadSubmit.disabled = true;
+        renderNotice("success", "Upload started.");
+        setUploadProgress(0, "Starting upload...");
+
+        xhr.open("POST", form.action, true);
+        xhr.setRequestHeader("Accept", "application/json");
+        xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+        xhr.upload.addEventListener("progress", (progressEvent) => {
+            if (!progressEvent.lengthComputable) {
+                setUploadProgress(100, "Uploading...");
+                return;
+            }
+
+            const percent = Math.round((progressEvent.loaded / progressEvent.total) * 100);
+            setUploadProgress(percent, `Uploading ${selectedFile.name} (${percent}%)`);
+        });
+        xhr.addEventListener("load", () => {
+            uploadSubmit.disabled = false;
+            if (xhr.status >= 200 && xhr.status < 300) {
+                setUploadProgress(100, "Upload completed");
+                renderNotice("success", "Upload completed. Worker stages will appear below.");
+                form.reset();
+                renderSelectedFile(null);
+                startPollingSoon();
+                window.setTimeout(clearUploadProgress, 1200);
+                return;
+            }
+
+            let message = "Upload failed.";
+            try {
+                const parsed = JSON.parse(xhr.responseText);
+                if (parsed && parsed.message) {
+                    message = parsed.message;
+                }
+            } catch (_) {
+            }
+            renderNotice("error", message);
+            clearUploadProgress();
+        });
+        xhr.addEventListener("error", () => {
+            uploadSubmit.disabled = false;
+            renderNotice("error", "Upload failed because the server could not be reached.");
+            clearUploadProgress();
+        });
+        xhr.addEventListener("abort", () => {
+            uploadSubmit.disabled = false;
+            renderNotice("error", "Upload was canceled.");
+            clearUploadProgress();
+        });
+        xhr.send(payload);
+    });
+
+    renderSelectedFile(fileInput.files && fileInput.files[0] ? fileInput.files[0] : null);
+    startPollingSoon();
 })();
 
 (() => {

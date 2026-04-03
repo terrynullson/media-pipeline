@@ -9,6 +9,7 @@ import traceback
 def parse_args():
     parser = argparse.ArgumentParser(description="Transcribe extracted audio to JSON.")
     parser.add_argument("--audio-path", help="Absolute path to extracted audio file.")
+    parser.add_argument("--output-path", default="", help="Absolute path to the JSON result file.")
     parser.add_argument("--backend", default="faster-whisper", help="Transcription backend name.")
     parser.add_argument("--model-name", default="tiny", help="Model name, for example tiny, base, or small.")
     parser.add_argument("--device", default="cpu", help="Inference device: cpu or cuda.")
@@ -159,6 +160,10 @@ def main():
         print("--audio-path is required unless --self-check is used", file=sys.stderr)
         return 1
 
+    if not args.output_path:
+        print("--output-path is required unless --self-check is used", file=sys.stderr)
+        return 1
+
     if not os.path.isfile(args.audio_path):
         print(f"audio file not found: {args.audio_path}", file=sys.stderr)
         return 1
@@ -170,14 +175,23 @@ def main():
         traceback.print_exc(file=sys.stderr)
         return 1
 
-    json.dump(
-        {
-            "full_text": result["full_text"],
-            "segments": result["segments"],
-        },
-        sys.stdout,
-        ensure_ascii=True,
-    )
+    output_dir = os.path.dirname(args.output_path) or "."
+    os.makedirs(output_dir, exist_ok=True)
+    tmp_output_path = args.output_path + ".tmp"
+
+    with open(tmp_output_path, "w", encoding="utf-8") as output_file:
+        json.dump(
+            {
+                "full_text": result["full_text"],
+                "segments": result["segments"],
+            },
+            output_file,
+            ensure_ascii=True,
+        )
+        output_file.flush()
+
+    os.replace(tmp_output_path, args.output_path)
+    print("ok", file=sys.stdout)
     return 0
 
 
