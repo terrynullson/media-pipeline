@@ -189,10 +189,12 @@ func TestUploadHandler_MediaStatuses(t *testing.T) {
 
 	var payload struct {
 		Items []struct {
-			ID          int64  `json:"ID"`
-			Status      string `json:"Status"`
-			StatusLabel string `json:"StatusLabel"`
-			StageLabel  string `json:"StageLabel"`
+			ID           int64  `json:"ID"`
+			Status       string `json:"Status"`
+			StatusLabel  string `json:"StatusLabel"`
+			StageLabel   string `json:"StageLabel"`
+			FailedStage  string `json:"FailedStage"`
+			ErrorSummary string `json:"ErrorSummary"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
@@ -207,8 +209,11 @@ func TestUploadHandler_MediaStatuses(t *testing.T) {
 	if payload.Items[0].StatusLabel != "Загружен" {
 		t.Fatalf("status label = %q, want Загружен", payload.Items[0].StatusLabel)
 	}
-	if payload.Items[0].StageLabel != "Ожидает извлечения аудио" {
-		t.Fatalf("stage label = %q, want Ожидает извлечения аудио", payload.Items[0].StageLabel)
+	if payload.Items[0].StageLabel != "Дальше: извлечение аудио" {
+		t.Fatalf("stage label = %q, want Дальше: извлечение аудио", payload.Items[0].StageLabel)
+	}
+	if payload.Items[0].FailedStage != "" || payload.Items[0].ErrorSummary != "" {
+		t.Fatalf("unexpected failure details: %#v", payload.Items[0])
 	}
 }
 
@@ -623,6 +628,133 @@ func TestUploadHandler_IndexShowsRussianStepFlow(t *testing.T) {
 	}
 }
 
+func TestUploadHandler_IndexShowsSettingsBehindGearAndFailedStage(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	ctx := context.Background()
+	mediaRepo := repositories.NewMediaRepository(app.db)
+	jobRepo := repositories.NewJobRepository(app.db)
+
+	nowUTC := time.Date(2026, 4, 3, 18, 30, 0, 0, time.UTC)
+	mediaID, err := mediaRepo.Create(ctx, media.Media{
+		OriginalName: "failed-small.mp4",
+		StoredName:   "failed-small.mp4",
+		Extension:    ".mp4",
+		MIMEType:     "video/mp4",
+		SizeBytes:    2048,
+		StoragePath:  "2026-04-03/failed-small.mp4",
+		Status:       media.StatusFailed,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	})
+	if err != nil {
+		t.Fatalf("Create(media) error = %v", err)
+	}
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeExtractAudio,
+		Status:       job.StatusDone,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		t.Fatalf("Create(extract job) error = %v", err)
+	}
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeTranscribe,
+		Status:       job.StatusFailed,
+		ErrorMessage: "Не удалось распознать текст: модель small вернула ошибку. Подробности смотрите в логах worker.",
+		CreatedAtUTC: nowUTC.Add(time.Minute),
+		UpdatedAtUTC: nowUTC.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Create(transcribe job) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	app.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"settings-drawer-summary",
+		"Настройки распознавания",
+		"Ошибка на шаге: Распознавание текста",
+		"Причина: Не удалось распознать текст: модель small вернула ошибку.",
+		"Подробности смотрите в логах worker.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("index body missing %q", want)
+		}
+	}
+}
+
+func TestUploadHandler_TranscriptPageShowsPipelineFailureDetails(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	ctx := context.Background()
+	mediaRepo := repositories.NewMediaRepository(app.db)
+	jobRepo := repositories.NewJobRepository(app.db)
+
+	nowUTC := time.Date(2026, 4, 3, 18, 45, 0, 0, time.UTC)
+	mediaID, err := mediaRepo.Create(ctx, media.Media{
+		OriginalName: "broken-small.wav",
+		StoredName:   "broken-small.wav",
+		Extension:    ".wav",
+		MIMEType:     "audio/wav",
+		SizeBytes:    1024,
+		StoragePath:  "2026-04-03/broken-small.wav",
+		Status:       media.StatusFailed,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	})
+	if err != nil {
+		t.Fatalf("Create(media) error = %v", err)
+	}
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeExtractAudio,
+		Status:       job.StatusDone,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		t.Fatalf("Create(extract job) error = %v", err)
+	}
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeTranscribe,
+		Status:       job.StatusFailed,
+		ErrorMessage: "Не удалось распознать текст: faster-whisper завершился с ошибкой small model. Подробности смотрите в логах worker.",
+		CreatedAtUTC: nowUTC.Add(time.Minute),
+		UpdatedAtUTC: nowUTC.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Create(transcribe job) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(mediaID, 10)+"/transcript", nil)
+	rec := httptest.NewRecorder()
+	app.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("transcript page status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Состояние пайплайна",
+		"Ошибка на шаге: Распознавание текста",
+		"Причина: Не удалось распознать текст: faster-whisper завершился с ошибкой small model.",
+		"Подробности смотрите в логах worker.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("transcript page body missing %q", want)
+		}
+	}
+}
+
 func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 	t.Parallel()
 
@@ -907,6 +1039,7 @@ func newTestApp(t *testing.T) testWebApp {
 		transcriptViewUC,
 		requestSummaryUC,
 		deleteMediaUC,
+		jobRepo,
 		templatesDir,
 		10*1024*1024,
 		logger,

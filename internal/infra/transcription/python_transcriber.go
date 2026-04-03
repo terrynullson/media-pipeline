@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"media-pipeline/internal/domain/ports"
 	"media-pipeline/internal/domain/transcription"
@@ -38,6 +39,7 @@ func NewPythonTranscriber(pythonBinary string, scriptPath string, logger *slog.L
 }
 
 func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeInput) (ports.TranscribeOutput, error) {
+	startedAt := time.Now()
 	settings := transcription.NormalizeSettings(in.Settings)
 	args := []string{
 		t.scriptPath,
@@ -85,11 +87,13 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 		if stdout.Len() > 0 {
 			diagnostics = combineDiagnostics(diagnostics, "stdout: "+stdout.String())
 		}
+		diagnosticExcerpt := summarizeDiagnostics(diagnostics)
 
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			t.logger.Error("python transcription script timed out",
 				slog.String("script_path", t.scriptPath),
-				slog.String("stderr", diagnostics),
+				slog.String("diagnostics_excerpt", diagnosticExcerpt),
+				slog.Duration("duration", time.Since(startedAt)),
 			)
 			return ports.TranscribeOutput{}, &ports.TranscriptionError{
 				Cause:       fmt.Errorf("python transcription timed out: %w", ctx.Err()),
@@ -99,7 +103,8 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 		if errors.Is(ctx.Err(), context.Canceled) {
 			t.logger.Error("python transcription script canceled",
 				slog.String("script_path", t.scriptPath),
-				slog.String("stderr", diagnostics),
+				slog.String("diagnostics_excerpt", diagnosticExcerpt),
+				slog.Duration("duration", time.Since(startedAt)),
 			)
 			return ports.TranscribeOutput{}, &ports.TranscriptionError{
 				Cause:       fmt.Errorf("python transcription canceled: %w", ctx.Err()),
@@ -109,7 +114,8 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 		t.logger.Error("python transcription script failed",
 			slog.String("script_path", t.scriptPath),
 			slog.Any("error", err),
-			slog.String("stderr", diagnostics),
+			slog.String("diagnostics_excerpt", diagnosticExcerpt),
+			slog.Duration("duration", time.Since(startedAt)),
 		)
 		return ports.TranscribeOutput{}, &ports.TranscriptionError{
 			Cause:       fmt.Errorf("run python transcription: %w", err),
@@ -123,7 +129,8 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 		t.logger.Error("python transcription script returned invalid json",
 			slog.String("script_path", t.scriptPath),
 			slog.String("result_path", resultPath),
-			slog.String("stderr", diagnostics),
+			slog.String("diagnostics_excerpt", summarizeDiagnostics(diagnostics)),
+			slog.Duration("duration", time.Since(startedAt)),
 		)
 		return ports.TranscribeOutput{}, &ports.TranscriptionError{
 			Cause:       err,
@@ -134,7 +141,8 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 	t.logger.Info("python transcription script completed",
 		slog.String("script_path", t.scriptPath),
 		slog.Int("segments", len(parsed.Segments)),
-		slog.String("stderr", stderr.String()),
+		slog.String("stderr_excerpt", summarizeDiagnostics(stderr.String())),
+		slog.Duration("duration", time.Since(startedAt)),
 	)
 
 	return parsed, nil
@@ -307,4 +315,27 @@ func combineDiagnostics(parts ...string) string {
 	}
 
 	return strings.Join(values, "\n")
+}
+
+func summarizeDiagnostics(raw string) string {
+	normalized := strings.ReplaceAll(raw, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	lines := strings.Split(normalized, "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		line := strings.Join(strings.Fields(strings.TrimSpace(lines[index])), " ")
+		if line == "" {
+			continue
+		}
+		return truncateText(line, 400)
+	}
+
+	return ""
+}
+
+func truncateText(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+
+	return value[:limit]
 }

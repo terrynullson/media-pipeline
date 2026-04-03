@@ -142,6 +142,66 @@ th {
     border-radius: 26px;
 }
 
+.settings-entry-card {
+    margin-bottom: 1rem;
+}
+
+.settings-drawer {
+    border: 1px solid var(--border);
+    border-radius: 26px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01)),
+        var(--panel);
+    box-shadow: var(--shadow);
+}
+
+.settings-drawer[open] {
+    border-color: rgba(240, 94, 168, 0.22);
+}
+
+.settings-drawer-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 1rem 1.2rem;
+    cursor: pointer;
+    list-style: none;
+}
+
+.settings-drawer-summary::-webkit-details-marker {
+    display: none;
+}
+
+.settings-trigger-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.8rem;
+    height: 2.8rem;
+    border-radius: 999px;
+    border: 1px solid rgba(240, 94, 168, 0.22);
+    background: rgba(240, 94, 168, 0.08);
+    color: #ffd3e6;
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+
+.settings-trigger-hint {
+    display: block;
+    margin-top: 0.18rem;
+    color: var(--muted);
+    font-size: 0.94rem;
+    line-height: 1.5;
+}
+
+.settings-drawer-panel {
+    margin: 0;
+    border-top: 1px solid var(--border);
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    box-shadow: none;
+}
+
 .steps-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -558,6 +618,93 @@ button:disabled {
 
 .pipeline-item-actions {
     margin-top: 1rem;
+}
+
+.pipeline-step-list {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+    margin-top: 0.85rem;
+}
+
+.pipeline-step-list-sidebar {
+    margin-top: 1rem;
+}
+
+.step-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2rem;
+    padding: 0.28rem 0.72rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--muted);
+}
+
+.step-pill-success {
+    color: #dcffe9;
+    border-color: rgba(86, 214, 143, 0.24);
+    background: rgba(86, 214, 143, 0.1);
+}
+
+.step-pill-running {
+    color: #ffe7bf;
+    border-color: rgba(255, 186, 73, 0.24);
+    background: rgba(255, 186, 73, 0.1);
+}
+
+.step-pill-ready {
+    color: #d9f3ff;
+    border-color: rgba(118, 201, 255, 0.24);
+    background: rgba(118, 201, 255, 0.1);
+}
+
+.step-pill-error {
+    color: #ffd4d4;
+    border-color: rgba(255, 122, 122, 0.28);
+    background: rgba(255, 122, 122, 0.1);
+}
+
+.step-pill-neutral {
+    color: var(--muted);
+}
+
+.step-pill.is-current,
+.step-pill.is-failed {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.pipeline-problem {
+    margin-top: 0.9rem;
+    padding: 0.9rem 1rem;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 122, 122, 0.24);
+    background: rgba(255, 122, 122, 0.08);
+}
+
+.pipeline-problem strong,
+.pipeline-problem p {
+    display: block;
+    margin: 0;
+}
+
+.pipeline-problem p {
+    margin-top: 0.45rem;
+    line-height: 1.6;
+}
+
+.pipeline-problem-sidebar {
+    margin-top: 1rem;
+}
+
+.table-problem {
+    margin-top: 0.35rem;
+    color: #ffd4d4;
+    font-size: 0.88rem;
+    line-height: 1.45;
 }
 
 .pipeline-item-actions form,

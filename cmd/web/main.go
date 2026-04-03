@@ -72,6 +72,7 @@ func main() {
 		transcriptViewUC,
 		requestSummaryUC,
 		deleteMediaUC,
+		jobRepo,
 		templatesDir,
 		cfg.MaxUploadSizeBytes(),
 		logger,

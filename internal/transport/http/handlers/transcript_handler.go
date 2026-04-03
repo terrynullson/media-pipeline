@@ -29,6 +29,14 @@ type TranscriptPageViewData struct {
 	CreatedAtUTC        string
 	StatusLabel         string
 	StatusTone          string
+	PipelineStageLabel  string
+	PipelineStageValue  int
+	PipelineStageTotal  int
+	PipelineCurrentStep string
+	PipelineFailedStep  string
+	PipelineError       string
+	PipelineErrorHint   string
+	PipelineSteps       []PipelineStepView
 	DeleteURL           string
 	HasTranscript       bool
 	Settings            []TranscriptSettingItem
@@ -105,7 +113,23 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	statusLabel, statusTone, _, _, _ := describeMediaStatus(result.Media.Status)
+	jobs := make([]job.Job, 0, 5)
+	if result.ExtractAudioJob != nil {
+		jobs = append(jobs, *result.ExtractAudioJob)
+	}
+	if result.TranscribeJob != nil {
+		jobs = append(jobs, *result.TranscribeJob)
+	}
+	if result.AnalyzeJob != nil {
+		jobs = append(jobs, *result.AnalyzeJob)
+	}
+	if result.ScreenshotJob != nil {
+		jobs = append(jobs, *result.ScreenshotJob)
+	}
+	if result.SummaryJob != nil {
+		jobs = append(jobs, *result.SummaryJob)
+	}
+	pipelineView := buildMediaPipelineView(result.Media, jobs)
 	data := TranscriptPageViewData{
 		PageNotice:          transcriptFlashMessage(r.URL.Query().Get("summary_status")),
 		PageNoticeTone:      transcriptFlashTone(r.URL.Query().Get("summary_status")),
@@ -113,8 +137,16 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		MediaName:           result.Media.OriginalName,
 		SizeHuman:           HumanSize(result.Media.SizeBytes),
 		CreatedAtUTC:        FormatDateTimeUTC(result.Media.CreatedAtUTC),
-		StatusLabel:         statusLabel,
-		StatusTone:          statusTone,
+		StatusLabel:         pipelineView.StatusLabel,
+		StatusTone:          pipelineView.StatusTone,
+		PipelineStageLabel:  pipelineView.StageLabel,
+		PipelineStageValue:  pipelineView.StageValue,
+		PipelineStageTotal:  pipelineView.StageTotal,
+		PipelineCurrentStep: pipelineView.CurrentStage,
+		PipelineFailedStep:  pipelineView.FailedStage,
+		PipelineError:       pipelineView.ErrorSummary,
+		PipelineErrorHint:   pipelineView.ErrorLocation,
+		PipelineSteps:       pipelineView.Steps,
 		DeleteURL:           fmt.Sprintf("/media/%d/delete", result.Media.ID),
 		HasTranscript:       result.HasTranscript,
 		Settings:            buildTranscriptSettings(result.Settings),
@@ -333,8 +365,8 @@ func describeScreenshotPlaceholder(mediaItem media.Media, currentJob *job.Job) s
 	case job.StatusRunning:
 		return "Скриншот сейчас создаётся."
 	case job.StatusFailed:
-		if strings.TrimSpace(currentJob.ErrorMessage) != "" {
-			return currentJob.ErrorMessage
+		if message := userFacingJobError(currentJob); message != "" {
+			return message
 		}
 		return "Не удалось создать скриншот."
 	case job.StatusDone:
@@ -359,8 +391,8 @@ func describeTriggerAnalysis(currentJob *job.Job, triggerCount int) (label strin
 		return "В работе", "running", "Анализ триггеров выполняется прямо сейчас.", "neutral"
 	case job.StatusFailed:
 		message := "Анализ триггеров завершился ошибкой."
-		if strings.TrimSpace(currentJob.ErrorMessage) != "" {
-			message = currentJob.ErrorMessage
+		if current := userFacingJobError(currentJob); current != "" {
+			message = current
 		}
 		return "Ошибка", "error", message, "error"
 	case job.StatusDone:
@@ -388,8 +420,8 @@ func describeSummaryState(currentJob *job.Job, hasSummary bool) (label string, t
 		return "В работе", "running", "Worker сейчас собирает саммари.", "neutral"
 	case job.StatusFailed:
 		message := "Не удалось создать саммари."
-		if strings.TrimSpace(currentJob.ErrorMessage) != "" {
-			message = currentJob.ErrorMessage
+		if current := userFacingJobError(currentJob); current != "" {
+			message = current
 		}
 		return "Ошибка", "error", message, "error"
 	case job.StatusDone:

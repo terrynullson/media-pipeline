@@ -26,6 +26,91 @@
         </div>
     </section>
 
+    <section class="settings-entry-card">
+        <details class="settings-drawer" {{if .SettingsPanelOpen}}open{{end}}>
+            <summary class="settings-drawer-summary">
+                <span class="settings-trigger-icon" aria-hidden="true">&#9881;</span>
+                <span>
+                    <strong>Настройки распознавания</strong>
+                    <span class="settings-trigger-hint">Бэкенд, модель, устройство и остальные параметры теперь спрятаны здесь.</span>
+                </span>
+            </summary>
+            <div class="card settings-drawer-panel">
+                <div class="section-header">
+                    <div>
+                        <h2>Настройки распознавания</h2>
+                        <p class="hint">Эти настройки хранятся в SQLite. Каждая новая задача <code>transcribe</code> сохраняет свой снимок параметров.</p>
+                    </div>
+                </div>
+
+                {{if .SettingsError}}
+                <div class="notice notice-error">{{.SettingsError}}</div>
+                {{end}}
+                {{if .SettingsSuccess}}
+                <div class="notice notice-success">{{.SettingsSuccess}}</div>
+                {{end}}
+
+                <form action="/settings/transcription" method="post" class="settings-form">
+                    <label>
+                        <span>Бэкенд</span>
+                        <select name="backend">
+                            {{range .BackendOptions}}
+                            <option value="{{.}}" {{if eq $.SettingsForm.Backend .}}selected{{end}}>{{.}}</option>
+                            {{end}}
+                        </select>
+                    </label>
+
+                    <label>
+                        <span>Модель</span>
+                        <select name="model_name">
+                            {{range .ModelOptions}}
+                            <option value="{{.}}" {{if eq $.SettingsForm.ModelName .}}selected{{end}}>{{.}}</option>
+                            {{end}}
+                        </select>
+                    </label>
+
+                    <label>
+                        <span>Устройство</span>
+                        <select name="device" id="device-select">
+                            {{range .DeviceOptions}}
+                            <option value="{{.}}" {{if eq $.SettingsForm.Device .}}selected{{end}}>{{.}}</option>
+                            {{end}}
+                        </select>
+                    </label>
+
+                    <label>
+                        <span>Тип вычислений</span>
+                        <select name="compute_type" id="compute-type-select" data-selected="{{.SettingsForm.ComputeType}}">
+                            {{range .CurrentComputeTypes}}
+                            <option value="{{.}}" {{if eq $.SettingsForm.ComputeType .}}selected{{end}}>{{.}}</option>
+                            {{end}}
+                        </select>
+                    </label>
+
+                    <label>
+                        <span>Язык</span>
+                        <input type="text" name="language" value="{{.SettingsForm.Language}}" placeholder="ru или пусто для автоопределения">
+                    </label>
+
+                    <label>
+                        <span>Beam size</span>
+                        <input type="number" name="beam_size" min="1" max="10" value="{{.SettingsForm.BeamSize}}">
+                    </label>
+
+                    <label class="checkbox-field">
+                        <input type="checkbox" name="vad_enabled" {{if .SettingsForm.VADEnabled}}checked{{end}}>
+                        <span>Включить VAD-фильтр</span>
+                    </label>
+
+                    <div class="settings-actions">
+                        <button type="submit">Сохранить настройки</button>
+                        <p class="hint">Оставляйте технические значения вроде <code>cpu</code>, <code>cuda</code> и <code>faster-whisper</code> только там, где они действительно помогают в отладке.</p>
+                    </div>
+                </form>
+            </div>
+        </details>
+    </section>
+
     <section class="card">
         <div class="section-header">
             <div>
@@ -156,13 +241,21 @@
                         <span class="stage-meter-fill" style="width: {{.StagePercent}}%;"></span>
                     </div>
                     <div class="pipeline-stage-foot">
-                        {{if gt .StageValue 0}}
                         <span>Шаг {{.StageValue}} / {{.StageTotal}}</span>
-                        {{else}}
-                        <span>Нужно внимание</span>
-                        {{end}}
                         <span>{{.Extension}}</span>
                     </div>
+                    <div class="pipeline-step-list">
+                        {{range .Steps}}
+                        <span class="step-pill step-pill-{{.Tone}}{{if .IsCurrent}} is-current{{end}}{{if .IsFailed}} is-failed{{end}}">{{.Label}}: {{.StatusLabel}}</span>
+                        {{end}}
+                    </div>
+                    {{if .FailedStage}}
+                    <div class="pipeline-problem">
+                        <strong>Ошибка на шаге: {{.FailedStage}}</strong>
+                        <p>Причина: {{.ErrorSummary}}</p>
+                        <p class="hint">{{.ErrorLocation}}</p>
+                    </div>
+                    {{end}}
                     <div class="pipeline-item-actions">
                         {{if .CanOpenTranscript}}
                         <a class="button-link" href="{{.TranscriptURL}}">Открыть расшифровку</a>
@@ -180,80 +273,6 @@
             </div>
             {{end}}
         </div>
-    </section>
-
-    <section class="card">
-        <div class="section-header">
-            <div>
-                <h2>Настройки распознавания</h2>
-                <p class="hint">Эти настройки хранятся в SQLite. Каждая новая задача <code>transcribe</code> сохраняет свой снимок параметров.</p>
-            </div>
-        </div>
-
-        {{if .SettingsError}}
-        <div class="notice notice-error">{{.SettingsError}}</div>
-        {{end}}
-        {{if .SettingsSuccess}}
-        <div class="notice notice-success">{{.SettingsSuccess}}</div>
-        {{end}}
-
-        <form action="/settings/transcription" method="post" class="settings-form">
-            <label>
-                <span>Бэкенд</span>
-                <select name="backend">
-                    {{range .BackendOptions}}
-                    <option value="{{.}}" {{if eq $.SettingsForm.Backend .}}selected{{end}}>{{.}}</option>
-                    {{end}}
-                </select>
-            </label>
-
-            <label>
-                <span>Модель</span>
-                <select name="model_name">
-                    {{range .ModelOptions}}
-                    <option value="{{.}}" {{if eq $.SettingsForm.ModelName .}}selected{{end}}>{{.}}</option>
-                    {{end}}
-                </select>
-            </label>
-
-            <label>
-                <span>Устройство</span>
-                <select name="device" id="device-select">
-                    {{range .DeviceOptions}}
-                    <option value="{{.}}" {{if eq $.SettingsForm.Device .}}selected{{end}}>{{.}}</option>
-                    {{end}}
-                </select>
-            </label>
-
-            <label>
-                <span>Тип вычислений</span>
-                <select name="compute_type" id="compute-type-select" data-selected="{{.SettingsForm.ComputeType}}">
-                    {{range .CurrentComputeTypes}}
-                    <option value="{{.}}" {{if eq $.SettingsForm.ComputeType .}}selected{{end}}>{{.}}</option>
-                    {{end}}
-                </select>
-            </label>
-
-            <label>
-                <span>Язык</span>
-                <input type="text" name="language" value="{{.SettingsForm.Language}}" placeholder="ru или пусто для автоопределения">
-            </label>
-
-            <label>
-                <span>Beam size</span>
-                <input type="number" name="beam_size" min="1" max="10" value="{{.SettingsForm.BeamSize}}">
-            </label>
-
-            <label class="checkbox-field">
-                <input type="checkbox" name="vad_enabled" {{if .SettingsForm.VADEnabled}}checked{{end}}>
-                <span>Включить VAD-фильтр</span>
-            </label>
-
-            <div class="settings-actions">
-                <button type="submit">Сохранить настройки</button>
-                <p class="hint">Для CPU доступны <code>int8</code> и <code>float32</code>. Для CUDA доступны <code>float16</code> и <code>int8_float16</code>.</p>
-            </div>
-        </form>
     </section>
 
     <section class="card">
@@ -365,7 +384,12 @@
                     <td><span class="pill">{{.Extension}}</span></td>
                     <td>{{.SizeHuman}}</td>
                     <td><span class="status-chip status-chip-{{.StatusTone}}">{{.StatusLabel}}</span></td>
-                    <td>{{.StageLabel}}</td>
+                    <td>
+                        <div>{{.StageLabel}}</div>
+                        {{if .ErrorSummary}}
+                        <div class="table-problem">Ошибка: {{.ErrorSummary}}</div>
+                        {{end}}
+                    </td>
                     <td>{{.CreatedAtUTC}}</td>
                     <td>
                         <div class="row-actions">
@@ -475,7 +499,7 @@
         }
 
         fileName.textContent = file.name;
-        fileSize.textContent = `${formatBytes(file.size)} selected`;
+        fileSize.textContent = `Размер: ${formatBytes(file.size)}`;
         trigger.classList.add("has-file");
     }
 
@@ -505,6 +529,33 @@
         return Math.round((item.StageValue / item.StageTotal) * 100);
     }
 
+    function renderStepPills(item) {
+        const steps = Array.isArray(item && item.Steps) ? item.Steps : [];
+        if (steps.length === 0) {
+            return "";
+        }
+
+        return `<div class="pipeline-step-list">${steps.map((step) => `
+            <span class="step-pill step-pill-${escapeHtml(step.Tone)}${step.IsCurrent ? " is-current" : ""}${step.IsFailed ? " is-failed" : ""}">
+                ${escapeHtml(step.Label)}: ${escapeHtml(step.StatusLabel)}
+            </span>
+        `).join("")}</div>`;
+    }
+
+    function renderProblemBlock(item) {
+        if (!item || !item.FailedStage) {
+            return "";
+        }
+
+        return `
+            <div class="pipeline-problem">
+                <strong>Ошибка на шаге: ${escapeHtml(item.FailedStage)}</strong>
+                <p>Причина: ${escapeHtml(item.ErrorSummary || "Причина не указана.")}</p>
+                <p class="hint">${escapeHtml(item.ErrorLocation || "Подробности смотрите в логах worker.")}</p>
+            </div>
+        `;
+    }
+
     function renderPipelineItems(items) {
         if (!items || items.length === 0) {
             pipelineGrid.innerHTML = `
@@ -530,9 +581,11 @@
                     <span class="stage-meter-fill" style="width: ${deriveStageWidth(item)}%;"></span>
                 </div>
                 <div class="pipeline-stage-foot">
-                    <span>${item.StageValue > 0 ? `Шаг ${item.StageValue} / ${item.StageTotal}` : "Нужно внимание"}</span>
+                    <span>Шаг ${item.StageValue} / ${item.StageTotal}</span>
                     <span>${escapeHtml(item.Extension)}</span>
                 </div>
+                ${renderStepPills(item)}
+                ${renderProblemBlock(item)}
                 <div class="pipeline-item-actions">
                     ${item.CanOpenTranscript ? `<a class="button-link" href="${escapeHtml(item.TranscriptURL)}">Открыть расшифровку</a>` : ""}
                     <form action="${escapeHtml(item.DeleteURL)}" method="post" class="delete-media-form" data-media-id="${item.ID}" data-media-name="${escapeHtml(item.OriginalName)}">
@@ -561,7 +614,10 @@
                 <td><span class="pill">${escapeHtml(item.Extension)}</span></td>
                 <td>${escapeHtml(item.SizeHuman)}</td>
                 <td><span class="status-chip status-chip-${escapeHtml(item.StatusTone)}">${escapeHtml(item.StatusLabel)}</span></td>
-                <td>${escapeHtml(item.StageLabel)}</td>
+                <td>
+                    <div>${escapeHtml(item.StageLabel)}</div>
+                    ${item.ErrorSummary ? `<div class="table-problem">Ошибка: ${escapeHtml(item.ErrorSummary)}</div>` : ""}
+                </td>
                 <td>${escapeHtml(item.CreatedAtUTC)}</td>
                 <td>
                     <div class="row-actions">

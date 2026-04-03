@@ -251,6 +251,59 @@ func TestJobRepository_FindLatestByMediaAndTypeReturnsNewest(t *testing.T) {
 	}
 }
 
+func TestJobRepository_ListByMediaIDReturnsNewestFirst(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
+
+	mediaRepo := NewMediaRepository(sqlDB)
+	jobRepo := NewJobRepository(sqlDB)
+
+	mediaID := createTestMedia(t, ctx, mediaRepo)
+	nowUTC := time.Date(2026, 4, 3, 16, 0, 0, 0, time.UTC)
+
+	firstID, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeExtractAudio,
+		Status:       job.StatusDone,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	})
+	if err != nil {
+		t.Fatalf("Create(first job) error = %v", err)
+	}
+	secondID, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeTranscribe,
+		Status:       job.StatusFailed,
+		ErrorMessage: "transcribe failed",
+		CreatedAtUTC: nowUTC.Add(time.Minute),
+		UpdatedAtUTC: nowUTC.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("Create(second job) error = %v", err)
+	}
+
+	items, err := jobRepo.ListByMediaID(ctx, mediaID)
+	if err != nil {
+		t.Fatalf("ListByMediaID() error = %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("ListByMediaID() len = %d, want 2", len(items))
+	}
+	if items[0].ID != secondID {
+		t.Fatalf("items[0].ID = %d, want %d", items[0].ID, secondID)
+	}
+	if items[1].ID != firstID {
+		t.Fatalf("items[1].ID = %d, want %d", items[1].ID, firstID)
+	}
+	if items[0].ErrorMessage != "transcribe failed" {
+		t.Fatalf("items[0].ErrorMessage = %q, want persisted error", items[0].ErrorMessage)
+	}
+}
+
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 

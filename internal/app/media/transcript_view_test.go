@@ -128,9 +128,10 @@ func (s stubTranscriptReader) GetByMediaID(context.Context, int64) (transcript.T
 }
 
 type stubTranscriptJobReader struct {
-	item job.Job
-	ok   bool
-	err  error
+	item  job.Job
+	items []job.Job
+	ok    bool
+	err   error
 }
 
 func (s stubTranscriptJobReader) FindLatestByMediaAndType(context.Context, int64, job.Type) (job.Job, bool, error) {
@@ -138,6 +139,19 @@ func (s stubTranscriptJobReader) FindLatestByMediaAndType(context.Context, int64
 		return job.Job{}, false, s.err
 	}
 	return s.item, s.ok, nil
+}
+
+func (s stubTranscriptJobReader) ListByMediaID(context.Context, int64) ([]job.Job, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if len(s.items) > 0 {
+		return append([]job.Job(nil), s.items...), nil
+	}
+	if s.ok {
+		return []job.Job{s.item}, nil
+	}
+	return nil, nil
 }
 
 type stubTriggerEventReader struct {

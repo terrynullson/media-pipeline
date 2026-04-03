@@ -23,6 +23,7 @@ type TranscriptReader interface {
 
 type TranscriptJobReader interface {
 	FindLatestByMediaAndType(ctx context.Context, mediaID int64, jobType job.Type) (job.Job, bool, error)
+	ListByMediaID(ctx context.Context, mediaID int64) ([]job.Job, error)
 }
 
 type TriggerEventReader interface {
@@ -52,11 +53,14 @@ type TranscriptViewResult struct {
 	HasTranscript       bool
 	TriggerEvents       []domaintrigger.Event
 	TriggerScreenshots  map[int64]domaintrigger.Screenshot
+	ExtractAudioJob     *job.Job
+	TranscribeJob       *job.Job
 	AnalyzeJob          *job.Job
 	ScreenshotJob       *job.Job
 	Summary             domainsummary.Summary
 	HasSummary          bool
 	SummaryJob          *job.Job
+	LatestFailedJob     *job.Job
 	Settings            *transcription.Settings
 	SettingsUnavailable bool
 }
@@ -113,20 +117,27 @@ func (u *TranscriptViewUseCase) Load(ctx context.Context, mediaID int64) (Transc
 		result.TriggerScreenshots[item.TriggerEventID] = item
 	}
 
-	analyzeJob, ok, err := u.jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeAnalyzeTriggers)
+	jobs, err := u.jobRepo.ListByMediaID(ctx, mediaID)
 	if err != nil {
-		return TranscriptViewResult{}, fmt.Errorf("load analyze job for media %d: %w", mediaID, err)
+		return TranscriptViewResult{}, fmt.Errorf("load jobs for media %d: %w", mediaID, err)
 	}
-	if ok {
-		result.AnalyzeJob = &analyzeJob
-	}
+	jobsByType := latestJobsByType(jobs)
+	result.LatestFailedJob = latestFailedJob(jobs)
 
-	screenshotJob, ok, err := u.jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeExtractScreenshots)
-	if err != nil {
-		return TranscriptViewResult{}, fmt.Errorf("load screenshot job for media %d: %w", mediaID, err)
+	if currentJob, ok := jobsByType[job.TypeExtractAudio]; ok {
+		result.ExtractAudioJob = &currentJob
 	}
-	if ok {
-		result.ScreenshotJob = &screenshotJob
+	if currentJob, ok := jobsByType[job.TypeTranscribe]; ok {
+		result.TranscribeJob = &currentJob
+	}
+	if currentJob, ok := jobsByType[job.TypeAnalyzeTriggers]; ok {
+		result.AnalyzeJob = &currentJob
+	}
+	if currentJob, ok := jobsByType[job.TypeExtractScreenshots]; ok {
+		result.ScreenshotJob = &currentJob
+	}
+	if currentJob, ok := jobsByType[job.TypeGenerateSummary]; ok {
+		result.SummaryJob = &currentJob
 	}
 
 	summaryItem, ok, err := u.summaries.GetByMediaID(ctx, mediaID)
@@ -138,23 +149,11 @@ func (u *TranscriptViewUseCase) Load(ctx context.Context, mediaID int64) (Transc
 		result.HasSummary = true
 	}
 
-	summaryJob, ok, err := u.jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeGenerateSummary)
-	if err != nil {
-		return TranscriptViewResult{}, fmt.Errorf("load summary job for media %d: %w", mediaID, err)
-	}
-	if ok {
-		result.SummaryJob = &summaryJob
-	}
-
-	currentJob, ok, err := u.jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeTranscribe)
-	if err != nil {
-		return TranscriptViewResult{}, fmt.Errorf("load transcription job for media %d: %w", mediaID, err)
-	}
-	if !ok || strings.TrimSpace(currentJob.Payload) == "" {
+	if result.TranscribeJob == nil || strings.TrimSpace(result.TranscribeJob.Payload) == "" {
 		return result, nil
 	}
 
-	payload, err := job.DecodeTranscribePayload(currentJob.Payload)
+	payload, err := job.DecodeTranscribePayload(result.TranscribeJob.Payload)
 	if err != nil {
 		result.SettingsUnavailable = true
 		return result, nil
@@ -168,4 +167,29 @@ func (u *TranscriptViewUseCase) Load(ctx context.Context, mediaID int64) (Transc
 	result.Settings = &settings
 
 	return result, nil
+}
+
+func latestJobsByType(items []job.Job) map[job.Type]job.Job {
+	result := make(map[job.Type]job.Job, len(items))
+	for _, item := range items {
+		if _, ok := result[item.Type]; ok {
+			continue
+		}
+		result[item.Type] = item
+	}
+
+	return result
+}
+
+func latestFailedJob(items []job.Job) *job.Job {
+	for _, item := range items {
+		if item.Status != job.StatusFailed {
+			continue
+		}
+
+		current := item
+		return &current
+	}
+
+	return nil
 }

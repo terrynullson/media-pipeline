@@ -17,6 +17,7 @@ import (
 
 	"media-pipeline/internal/app/command"
 	mediaapp "media-pipeline/internal/app/media"
+	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/transcription"
 	domaintrigger "media-pipeline/internal/domain/trigger"
@@ -30,6 +31,7 @@ type UploadHandler struct {
 	transcriptViewUC TranscriptViewService
 	summaryRequestUC SummaryRequestService
 	deleteMediaUC    MediaDeletionService
+	jobReader        MediaJobReader
 	tmpl             *template.Template
 	maxUploadSizeB   int64
 	maxRequestBodyB  int64
@@ -63,6 +65,10 @@ type MediaDeletionService interface {
 	Delete(ctx context.Context, mediaID int64) (mediaapp.DeleteMediaResult, error)
 }
 
+type MediaJobReader interface {
+	ListByMediaID(ctx context.Context, mediaID int64) ([]job.Job, error)
+}
+
 type MediaListItem struct {
 	ID                int64
 	OriginalName      string
@@ -76,6 +82,11 @@ type MediaListItem struct {
 	StageTotal        int
 	StagePercent      int
 	IsActive          bool
+	CurrentStage      string
+	FailedStage       string
+	ErrorSummary      string
+	ErrorLocation     string
+	Steps             []PipelineStepView
 	CreatedAtUTC      string
 	CanOpenTranscript bool
 	HasTranscript     bool
@@ -90,6 +101,7 @@ type IndexViewData struct {
 	UploadSuccess       string
 	SettingsError       string
 	SettingsSuccess     string
+	SettingsPanelOpen   bool
 	TriggerRuleError    string
 	TriggerRuleSuccess  string
 	MaxUploadMB         string
@@ -144,6 +156,7 @@ func NewUploadHandler(
 	transcriptViewUC TranscriptViewService,
 	summaryRequestUC SummaryRequestService,
 	deleteMediaUC MediaDeletionService,
+	jobReader MediaJobReader,
 	templatesDir string,
 	maxUploadSizeB int64,
 	logger *slog.Logger,
@@ -164,6 +177,7 @@ func NewUploadHandler(
 		transcriptViewUC: transcriptViewUC,
 		summaryRequestUC: summaryRequestUC,
 		deleteMediaUC:    deleteMediaUC,
+		jobReader:        jobReader,
 		tmpl:             tmpl,
 		maxUploadSizeB:   maxUploadSizeB,
 		maxRequestBodyB:  maxUploadSizeB + (1 << 20),
@@ -441,6 +455,7 @@ func (h *UploadHandler) renderIndex(
 		UploadSuccess:       uploadSuccess,
 		SettingsError:       settingsError,
 		SettingsSuccess:     settingsSuccess,
+		SettingsPanelOpen:   settingsError != "" || settingsSuccess != "",
 		TriggerRuleError:    triggerRuleError,
 		TriggerRuleSuccess:  triggerRuleSuccess,
 		MaxUploadMB:         strconv.FormatInt(h.maxUploadSizeB/(1024*1024), 10),
@@ -470,20 +485,29 @@ func (h *UploadHandler) buildMediaListItems(ctx context.Context) ([]MediaListIte
 
 	viewItems := make([]MediaListItem, 0, len(items))
 	for _, item := range items {
-		statusLabel, statusTone, stageLabel, stageValue, active := describeMediaStatus(item.Status)
+		jobs, err := h.jobReader.ListByMediaID(ctx, item.ID)
+		if err != nil {
+			return nil, fmt.Errorf("load jobs for media %d: %w", item.ID, err)
+		}
+		pipelineView := buildMediaPipelineView(item, jobs)
 		viewItems = append(viewItems, MediaListItem{
 			ID:                item.ID,
 			OriginalName:      item.OriginalName,
 			Extension:         item.Extension,
 			SizeHuman:         HumanSize(item.SizeBytes),
 			Status:            item.Status,
-			StatusLabel:       statusLabel,
-			StatusTone:        statusTone,
-			StageLabel:        stageLabel,
-			StageValue:        stageValue,
-			StageTotal:        5,
-			StagePercent:      stagePercent(stageValue, 5),
-			IsActive:          active,
+			StatusLabel:       pipelineView.StatusLabel,
+			StatusTone:        pipelineView.StatusTone,
+			StageLabel:        pipelineView.StageLabel,
+			StageValue:        pipelineView.StageValue,
+			StageTotal:        pipelineView.StageTotal,
+			StagePercent:      stagePercent(pipelineView.StageValue, pipelineView.StageTotal),
+			IsActive:          pipelineView.IsActive,
+			CurrentStage:      pipelineView.CurrentStage,
+			FailedStage:       pipelineView.FailedStage,
+			ErrorSummary:      pipelineView.ErrorSummary,
+			ErrorLocation:     pipelineView.ErrorLocation,
+			Steps:             pipelineView.Steps,
 			CreatedAtUTC:      item.CreatedAtUTC.UTC().Format("2006-01-02 15:04:05"),
 			HasTranscript:     strings.TrimSpace(item.TranscriptText) != "",
 			CanOpenTranscript: canOpenTranscript(item),
@@ -514,25 +538,6 @@ func stagePercent(value int, total int) int {
 	}
 
 	return (value * 100) / total
-}
-
-func describeMediaStatus(status media.Status) (statusLabel string, statusTone string, stageLabel string, stageValue int, active bool) {
-	switch status {
-	case media.StatusUploaded:
-		return "Загружен", "uploaded", "Ожидает извлечения аудио", 1, false
-	case media.StatusProcessing:
-		return "Извлекаем аудио", "running", "Идёт извлечение аудио", 2, true
-	case media.StatusAudioExtracted:
-		return "Аудио готово", "ready", "Аудио извлечено, ждём распознавание", 3, false
-	case media.StatusTranscribing:
-		return "Распознаём текст", "running", "Идёт распознавание аудио", 4, true
-	case media.StatusTranscribed:
-		return "Готово", "success", "Распознавание завершено", 5, false
-	case media.StatusFailed:
-		return "Ошибка", "error", "Обработка завершилась ошибкой", 0, false
-	default:
-		return string(status), "neutral", "Неизвестный статус", 0, false
-	}
 }
 
 func wantsJSON(r *http.Request) bool {

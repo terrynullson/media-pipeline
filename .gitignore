@@ -7,3 +7,5 @@ data/manual-*
 data/*.pid
 data/smoke-*.db
 data/smoke-*.pid
+data/*.db-wal
+data/*.db-shm

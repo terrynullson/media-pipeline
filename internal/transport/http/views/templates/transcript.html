@@ -66,6 +66,35 @@
             <div class="settings-panel">
                 <div class="section-header">
                     <div>
+                        <h2>Состояние пайплайна</h2>
+                        <p class="hint">Здесь видно, какие шаги уже завершены, какой шаг выполняется сейчас и где именно произошла ошибка.</p>
+                    </div>
+                </div>
+                <div class="detail-item">
+                    <dt>Текущий статус</dt>
+                    <dd>{{.PipelineStageLabel}}</dd>
+                </div>
+                <div class="detail-item">
+                    <dt>Прогресс</dt>
+                    <dd>Шаг {{.PipelineStageValue}} из {{.PipelineStageTotal}}</dd>
+                </div>
+                <div class="pipeline-step-list pipeline-step-list-sidebar">
+                    {{range .PipelineSteps}}
+                    <span class="step-pill step-pill-{{.Tone}}{{if .IsCurrent}} is-current{{end}}{{if .IsFailed}} is-failed{{end}}">{{.Label}}: {{.StatusLabel}}</span>
+                    {{end}}
+                </div>
+                {{if .PipelineFailedStep}}
+                <div class="pipeline-problem pipeline-problem-sidebar">
+                    <strong>Ошибка на шаге: {{.PipelineFailedStep}}</strong>
+                    <p>Причина: {{.PipelineError}}</p>
+                    <p class="hint">{{.PipelineErrorHint}}</p>
+                </div>
+                {{end}}
+            </div>
+
+            <div class="settings-panel">
+                <div class="section-header">
+                    <div>
                         <h2>Параметры запуска</h2>
                         <p class="hint">Это снимок настроек, который был сохранён в задаче <code>transcribe</code> в момент её создания.</p>
                     </div>
@@ -238,8 +267,14 @@
                     </div>
                 </div>
                 <div class="empty-state transcript-empty">
-                    <p>Текущий статус: {{.StatusLabel}}.</p>
+                    <p>{{.PipelineStageLabel}}.</p>
+                    {{if .PipelineFailedStep}}
+                    <p>Ошибка на шаге: {{.PipelineFailedStep}}.</p>
+                    <p>Причина: {{.PipelineError}}</p>
+                    <p class="hint">{{.PipelineErrorHint}}</p>
+                    {{else}}
                     <p class="hint">Можно вернуться на главную страницу и наблюдать за карточкой прогресса пайплайна.</p>
+                    {{end}}
                 </div>
             </div>
             {{end}}
