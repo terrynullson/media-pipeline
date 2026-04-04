@@ -143,15 +143,32 @@
                         <div class="media-player-frame" id="media-player-root">
                             {{if .HasMediaPlayer}}
                                 {{if .IsAudioOnly}}
-                                <audio class="details-media-player details-media-player-audio" controls preload="metadata" data-media-player>
+                                <audio class="details-media-player details-media-player-audio" controls preload="metadata" data-media-player data-player-kind="audio">
                                     <source src="{{.MediaSourceURL}}" {{if .MediaSourceType}}type="{{.MediaSourceType}}"{{end}}>
                                     Ваш браузер не поддерживает встроенное воспроизведение аудио.
                                 </audio>
                                 {{else}}
-                                <video class="details-media-player details-media-player-video" controls preload="metadata" playsinline data-media-player>
+                                <div class="media-player-stack" data-player-stack>
+                                    <video class="details-media-player details-media-player-video" controls preload="metadata" playsinline data-media-player data-player-kind="video">
                                     <source src="{{.MediaSourceURL}}" {{if .MediaSourceType}}type="{{.MediaSourceType}}"{{end}}>
                                     Ваш браузер не поддерживает встроенное воспроизведение видео.
-                                </video>
+                                    </video>
+                                    {{if .HasAudioFallback}}
+                                    <audio class="details-media-player details-media-player-audio" controls preload="metadata" data-media-player data-player-kind="audio-fallback" hidden>
+                                        <source src="{{.AudioFallbackURL}}" {{if .AudioFallbackType}}type="{{.AudioFallbackType}}"{{end}}>
+                                        Р’Р°С€ Р±СЂР°СѓР·РµСЂ РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚ РІСЃС‚СЂРѕРµРЅРЅРѕРµ РІРѕСЃРїСЂРѕРёР·РІРµРґРµРЅРёРµ Р°СѓРґРёРѕ.
+                                    </audio>
+                                    {{end}}
+                                </div>
+                                {{if .HasAudioFallback}}
+                                <div class="media-player-fallback-note">
+                                    <p class="hint">Если видео в браузере не играет или не перематывается, переключитесь на извлечённую аудиодорожку. Таймлайн и подсветка продолжат работать.</p>
+                                    <div class="media-player-switches" role="tablist" aria-label="Режим проигрывателя">
+                                        <button type="button" class="tab-button is-active" data-player-mode="video" aria-pressed="true">Видео</button>
+                                        <button type="button" class="tab-button" data-player-mode="audio-fallback" aria-pressed="false">Аудио fallback</button>
+                                    </div>
+                                </div>
+                                {{end}}
                                 {{end}}
                             {{else}}
                             <div class="empty-state media-player-empty">
@@ -173,7 +190,7 @@
                         <div class="transcript-panel" data-transcript-panel="timeline" hidden>
                             <div class="timeline-list" data-transcript-scroll-region>
                                 {{range .Segments}}
-                                <article class="timeline-segment" data-segment data-segment-index="{{.Index}}" data-start="{{printf "%.3f" .StartSec}}" data-end="{{printf "%.3f" .EndSec}}">
+                                <article class="timeline-segment" data-segment data-segment-index="{{.Index}}" data-start="{{printf "%.3f" .StartSec}}" data-end="{{printf "%.3f" .EndSec}}" data-seek="{{printf "%.3f" .StartSec}}">
                                     <div class="timeline-segment-rail">
                                         <button type="button" class="timeline-time timeline-time-button" data-seek="{{printf "%.3f" .StartSec}}">
                                             {{.StartLabel}}
@@ -219,7 +236,7 @@
                 {{if .TriggerMatches}}
                 <div class="trigger-match-list">
                     {{range .TriggerMatches}}
-                    <article class="trigger-match-card">
+                    <article class="trigger-match-card" data-seek="{{printf "%.3f" .SeekSec}}">
                         <div class="trigger-match-header">
                             <button type="button" class="trigger-match-meta trigger-seek-button" data-seek="{{printf "%.3f" .SeekSec}}">
                                 <span class="pill">{{.Category}}</span>

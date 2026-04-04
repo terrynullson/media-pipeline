@@ -107,7 +107,7 @@ func main() {
 		logger.Error("resolve static path", slog.Any("error", err))
 		os.Exit(1)
 	}
-	router := httptransport.NewRouter(logger, uploadHandler, staticPath, cfg.UploadDir, cfg.ScreenshotsDir)
+	router := httptransport.NewRouter(logger, uploadHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.ScreenshotsDir)
 
 	addr := ":" + cfg.AppPort
 	logger.Info("starting web server",

@@ -44,6 +44,9 @@ type TranscriptPageViewData struct {
 	IsAudioOnly         bool
 	MediaSourceURL      string
 	MediaSourceType     string
+	HasAudioFallback    bool
+	AudioFallbackURL    string
+	AudioFallbackType   string
 	PlayerFallbackText  string
 	HasTranscript       bool
 	Settings            []TranscriptSettingItem
@@ -180,6 +183,9 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		IsAudioOnly:         result.Media.IsAudioOnly(),
 		MediaSourceURL:      buildMediaSourceURL(result.MediaSourcePath),
 		MediaSourceType:     strings.TrimSpace(result.Media.MIMEType),
+		HasAudioFallback:    !result.Media.IsAudioOnly() && result.AudioSourceReady,
+		AudioFallbackURL:    buildMediaAudioURL(result.AudioSourcePath),
+		AudioFallbackType:   "audio/wav",
 		PlayerFallbackText:  describeMediaPlayerFallback(result.Media, result.MediaSourceReady),
 		HasTranscript:       result.HasTranscript,
 		Settings:            buildTranscriptSettings(result.Settings),
@@ -460,6 +466,15 @@ func buildMediaSourceURL(relativePath string) string {
 	}
 
 	return "/media-source/" + filepath.ToSlash(relativePath)
+}
+
+func buildMediaAudioURL(relativePath string) string {
+	relativePath = strings.TrimSpace(relativePath)
+	if relativePath == "" {
+		return ""
+	}
+
+	return "/media-audio/" + filepath.ToSlash(relativePath)
 }
 
 func describeMediaPlayerFallback(mediaItem media.Media, sourceReady bool) string {

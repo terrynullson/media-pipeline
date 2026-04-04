@@ -287,6 +287,7 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 		MIMEType:            "video/mp4",
 		SizeBytes:           2048,
 		StoragePath:         "2026-04-03/timeline.mp4",
+		ExtractedAudioPath:  "2026-04-03/timeline.wav",
 		RuntimeSnapshotJSON: `{"request_ip":"127.0.0.1","user_agent":"test-agent","hardware_concurrency":8}`,
 		Status:              media.StatusTranscribed,
 		CreatedAtUTC:        nowUTC,
@@ -296,6 +297,7 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 		t.Fatalf("Create(media) error = %v", err)
 	}
 	createUploadedMediaFile(t, app.uploadDir, "2026-04-03/timeline.mp4", []byte("video"))
+	createUploadedMediaFile(t, app.audioDir, "2026-04-03/timeline.wav", []byte("audio"))
 
 	settingsPayload, err := job.EncodeTranscribePayload(job.TranscribePayload{
 		Settings: domaintranscription.Settings{
@@ -450,8 +452,10 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 		"billing",
 		"/media-screenshots/2026-04-03/media_1_trigger_1_2100ms.jpg",
 		"/media-source/2026-04-03/timeline.mp4",
+		"/media-audio/2026-04-03/timeline.wav",
 		"data-media-player",
 		"details-media-player-video",
+		`data-player-mode="audio-fallback"`,
 		`data-segment-index="0"`,
 		`data-start="0.000"`,
 		`data-end="1.400"`,
@@ -1250,7 +1254,7 @@ func newTestApp(t *testing.T) testWebApp {
 	}
 
 	return testWebApp{
-		router:         httptransport.NewRouter(logger, handler, staticPath, uploadDir, screenshotsDir),
+		router:         httptransport.NewRouter(logger, handler, staticPath, uploadDir, audioDir, screenshotsDir),
 		db:             sqlDB,
 		uploadDir:      uploadDir,
 		audioDir:       audioDir,

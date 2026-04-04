@@ -78,6 +78,8 @@ type TranscriptViewResult struct {
 	RuntimePolicyReady  bool
 	MediaSourcePath     string
 	MediaSourceReady    bool
+	AudioSourcePath     string
+	AudioSourceReady    bool
 }
 
 func NewTranscriptViewUseCase(
@@ -173,6 +175,7 @@ func (u *TranscriptViewUseCase) Load(ctx context.Context, mediaID int64) (Transc
 	}
 
 	result.MediaSourcePath, result.MediaSourceReady = u.resolvePlayableMediaSource(mediaItem)
+	result.AudioSourcePath, result.AudioSourceReady = u.resolvePlayableAudioSource(mediaItem)
 
 	if result.TranscribeJob == nil || strings.TrimSpace(result.TranscribeJob.Payload) == "" {
 		return result, nil
@@ -233,6 +236,22 @@ func (u *TranscriptViewUseCase) resolvePlayableMediaSource(mediaItem domainmedia
 	}
 
 	return filepath.ToSlash(filepath.Clean(mediaItem.StoragePath)), true
+}
+
+func (u *TranscriptViewUseCase) resolvePlayableAudioSource(mediaItem domainmedia.Media) (string, bool) {
+	if strings.TrimSpace(u.audioDir) == "" || strings.TrimSpace(mediaItem.ExtractedAudioPath) == "" {
+		return "", false
+	}
+
+	audioPath, err := safeJoinBasePath(u.audioDir, mediaItem.ExtractedAudioPath)
+	if err != nil {
+		return "", false
+	}
+	if _, err := os.Stat(audioPath); err != nil {
+		return "", false
+	}
+
+	return filepath.ToSlash(filepath.Clean(mediaItem.ExtractedAudioPath)), true
 }
 
 func safeJoinBasePath(baseDir string, relativePath string) (string, error) {

@@ -3,6 +3,8 @@ package mediaapp
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -149,6 +151,48 @@ func TestTranscriptViewUseCase_LoadBuildsRuntimePolicyFromAudioDuration(t *testi
 	}
 	if result.RuntimePolicy.EffectiveTimeout != 9*time.Hour+15*time.Minute {
 		t.Fatalf("EffectiveTimeout = %s, want 9h15m", result.RuntimePolicy.EffectiveTimeout)
+	}
+}
+
+func TestTranscriptViewUseCase_LoadResolvesAudioFallbackSource(t *testing.T) {
+	t.Parallel()
+
+	audioDir := t.TempDir()
+	audioRelative := "2026-04-03/demo.wav"
+	audioPath := filepath.Join(audioDir, filepath.FromSlash(audioRelative))
+	if err := os.MkdirAll(filepath.Dir(audioPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(audio dir) error = %v", err)
+	}
+	if err := os.WriteFile(audioPath, []byte("audio"), 0o644); err != nil {
+		t.Fatalf("WriteFile(audio) error = %v", err)
+	}
+
+	uc := NewTranscriptViewUseCase(
+		stubTranscriptMediaReader{item: domainmedia.Media{
+			ID:                 91,
+			Status:             domainmedia.StatusTranscribed,
+			ExtractedAudioPath: audioRelative,
+		}},
+		stubTranscriptReader{},
+		stubTriggerEventReader{},
+		stubTriggerScreenshotReader{},
+		stubSummaryReader{},
+		stubTranscriptJobReader{},
+		t.TempDir(),
+		stubTranscriptAudioDurationReader{},
+		audioDir,
+		5*time.Minute,
+	)
+
+	result, err := uc.Load(context.Background(), 91)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !result.AudioSourceReady {
+		t.Fatal("AudioSourceReady = false, want true")
+	}
+	if result.AudioSourcePath != audioRelative {
+		t.Fatalf("AudioSourcePath = %q, want %q", result.AudioSourcePath, audioRelative)
 	}
 }
 

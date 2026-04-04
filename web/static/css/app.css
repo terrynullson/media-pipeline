@@ -1346,6 +1346,10 @@ tbody tr:hover {
     overflow: hidden;
 }
 
+.media-player-stack {
+    display: grid;
+}
+
 .details-media-player {
     display: block;
     width: 100%;
@@ -1358,6 +1362,24 @@ tbody tr:hover {
 
 .details-media-player-audio {
     min-height: 5.25rem;
+}
+
+.media-player-fallback-note {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.9rem 1rem 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.media-player-fallback-note .hint {
+    margin: 0;
+}
+
+.media-player-switches {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
 }
 
 .media-player-empty {
@@ -1447,6 +1469,11 @@ tbody tr:hover {
     background:
         linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.01)),
         rgba(255, 255, 255, 0.02);
+}
+
+.timeline-segment,
+.trigger-match-card {
+    cursor: pointer;
 }
 
 .timeline-segment.is-active {

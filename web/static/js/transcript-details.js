@@ -36,7 +36,7 @@
         return;
     }
 
-    const player = root.querySelector("[data-media-player]");
+    const players = Array.from(root.querySelectorAll("[data-media-player]"));
     const segments = Array.from(root.querySelectorAll("[data-segment]")).map((element) => ({
         element,
         index: Number(element.dataset.segmentIndex),
@@ -45,10 +45,13 @@
     })).filter((segment) => Number.isFinite(segment.start) && Number.isFinite(segment.end));
     const scrollRegion = root.querySelector("[data-transcript-scroll-region]");
     const seekables = Array.from(document.querySelectorAll("[data-seek]"));
+    const playerModeButtons = Array.from(root.querySelectorAll("[data-player-mode]"));
 
-    if (!player) {
+    if (players.length === 0) {
         return;
     }
+
+    let player = players.find((item) => !item.hidden) || players[0];
 
     const toleranceSec = 0.05;
     const manualScrollCooldownMS = 2500;
@@ -63,6 +66,45 @@
     function resetAutoFollow(reason) {
         if (reason === "seek" || reason === "play") {
             manualScrollUntil = 0;
+        }
+    }
+
+    function syncPlayerModeButtons(nextKind) {
+        playerModeButtons.forEach((button) => {
+            const isActive = button.dataset.playerMode === nextKind;
+            button.classList.toggle("is-active", isActive);
+            button.setAttribute("aria-pressed", isActive ? "true" : "false");
+        });
+    }
+
+    async function setActivePlayer(nextKind) {
+        const nextPlayer = players.find((item) => item.dataset.playerKind === nextKind);
+        if (!nextPlayer || nextPlayer === player) {
+            syncPlayerModeButtons(nextKind);
+            return;
+        }
+
+        const previousPlayer = player;
+        const resumeAt = Number.isFinite(previousPlayer.currentTime) ? previousPlayer.currentTime : 0;
+        const shouldResume = !previousPlayer.paused && !previousPlayer.ended;
+
+        previousPlayer.pause();
+        previousPlayer.hidden = true;
+        nextPlayer.hidden = false;
+        player = nextPlayer;
+        syncPlayerModeButtons(nextKind);
+
+        if (Number.isFinite(resumeAt)) {
+            player.currentTime = Math.max(0, resumeAt);
+        }
+        syncActiveSegment({ follow: false });
+
+        if (shouldResume) {
+            try {
+                await player.play();
+            } catch (_error) {
+                // Keep the UI stable even if the browser blocks resumed playback.
+            }
         }
     }
 
@@ -167,23 +209,44 @@
     seekables.forEach((element) => {
         element.addEventListener("click", (event) => {
             event.preventDefault();
+            event.stopPropagation();
             seekTo(Number(element.dataset.seek), "seek");
         });
     });
 
-    player.addEventListener("timeupdate", () => {
-        syncActiveSegment();
+    playerModeButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+            void setActivePlayer(button.dataset.playerMode);
+        });
     });
-    player.addEventListener("seeked", () => {
-        resetAutoFollow("seek");
-        syncActiveSegment();
-    });
-    player.addEventListener("play", () => {
-        resetAutoFollow("play");
-        syncActiveSegment();
-    });
-    player.addEventListener("pause", () => {
-        syncActiveSegment({ follow: false });
+
+    players.forEach((currentPlayer) => {
+        currentPlayer.addEventListener("timeupdate", () => {
+            if (currentPlayer !== player) {
+                return;
+            }
+            syncActiveSegment();
+        });
+        currentPlayer.addEventListener("seeked", () => {
+            if (currentPlayer !== player) {
+                return;
+            }
+            resetAutoFollow("seek");
+            syncActiveSegment();
+        });
+        currentPlayer.addEventListener("play", () => {
+            if (currentPlayer !== player) {
+                return;
+            }
+            resetAutoFollow("play");
+            syncActiveSegment();
+        });
+        currentPlayer.addEventListener("pause", () => {
+            if (currentPlayer !== player) {
+                return;
+            }
+            syncActiveSegment({ follow: false });
+        });
     });
 
     syncActiveSegment({ follow: false });
