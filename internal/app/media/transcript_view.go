@@ -3,6 +3,7 @@ package mediaapp
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -51,6 +52,7 @@ type TranscriptViewUseCase struct {
 	screenshots    TriggerScreenshotReader
 	summaries      SummaryReader
 	jobRepo        TranscriptJobReader
+	uploadDir      string
 	audioDurations TranscriptAudioDurationReader
 	audioDir       string
 	baseTimeout    time.Duration
@@ -74,6 +76,8 @@ type TranscriptViewResult struct {
 	SettingsUnavailable bool
 	RuntimePolicy       *transcription.RuntimePolicy
 	RuntimePolicyReady  bool
+	MediaSourcePath     string
+	MediaSourceReady    bool
 }
 
 func NewTranscriptViewUseCase(
@@ -83,6 +87,7 @@ func NewTranscriptViewUseCase(
 	triggerScreenshotRepo TriggerScreenshotReader,
 	summaryRepo SummaryReader,
 	jobRepo TranscriptJobReader,
+	uploadDir string,
 	audioDurationReader TranscriptAudioDurationReader,
 	audioDir string,
 	baseTimeout time.Duration,
@@ -94,6 +99,7 @@ func NewTranscriptViewUseCase(
 		screenshots:    triggerScreenshotRepo,
 		summaries:      summaryRepo,
 		jobRepo:        jobRepo,
+		uploadDir:      uploadDir,
 		audioDurations: audioDurationReader,
 		audioDir:       audioDir,
 		baseTimeout:    baseTimeout,
@@ -166,6 +172,8 @@ func (u *TranscriptViewUseCase) Load(ctx context.Context, mediaID int64) (Transc
 		result.HasSummary = true
 	}
 
+	result.MediaSourcePath, result.MediaSourceReady = u.resolvePlayableMediaSource(mediaItem)
+
 	if result.TranscribeJob == nil || strings.TrimSpace(result.TranscribeJob.Payload) == "" {
 		return result, nil
 	}
@@ -209,6 +217,22 @@ func (u *TranscriptViewUseCase) buildRuntimePolicy(
 
 	policy := transcription.EvaluateRuntimePolicy(settings, audioDuration, u.baseTimeout)
 	return &policy, true
+}
+
+func (u *TranscriptViewUseCase) resolvePlayableMediaSource(mediaItem domainmedia.Media) (string, bool) {
+	if strings.TrimSpace(u.uploadDir) == "" || strings.TrimSpace(mediaItem.StoragePath) == "" {
+		return "", false
+	}
+
+	sourcePath, err := safeJoinBasePath(u.uploadDir, mediaItem.StoragePath)
+	if err != nil {
+		return "", false
+	}
+	if _, err := os.Stat(sourcePath); err != nil {
+		return "", false
+	}
+
+	return filepath.ToSlash(filepath.Clean(mediaItem.StoragePath)), true
 }
 
 func safeJoinBasePath(baseDir string, relativePath string) (string, error) {

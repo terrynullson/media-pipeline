@@ -1327,6 +1327,46 @@ tbody tr:hover {
     min-height: 70vh;
 }
 
+.media-review-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.92fr);
+    gap: 1rem;
+    align-items: start;
+}
+
+.media-player-card,
+.transcript-review-card {
+    min-width: 0;
+}
+
+.media-player-frame {
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.025);
+    overflow: hidden;
+}
+
+.details-media-player {
+    display: block;
+    width: 100%;
+}
+
+.details-media-player-video {
+    aspect-ratio: 16 / 9;
+    background: #050506;
+}
+
+.details-media-player-audio {
+    min-height: 5.25rem;
+}
+
+.media-player-empty {
+    min-height: 12rem;
+    display: grid;
+    place-items: center;
+    padding: 1rem;
+}
+
 .transcript-header {
     align-items: center;
 }
@@ -1365,6 +1405,10 @@ tbody tr:hover {
     margin-top: 1rem;
 }
 
+.transcript-review-card .transcript-panel {
+    height: 100%;
+}
+
 .transcript-reading-surface {
     padding: 1.4rem;
     border: 1px solid var(--border);
@@ -1388,6 +1432,9 @@ tbody tr:hover {
 .timeline-list {
     display: grid;
     gap: 0.9rem;
+    max-height: 34rem;
+    overflow: auto;
+    padding-right: 0.25rem;
 }
 
 .timeline-segment {
@@ -1400,6 +1447,14 @@ tbody tr:hover {
     background:
         linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.01)),
         rgba(255, 255, 255, 0.02);
+}
+
+.timeline-segment.is-active {
+    border-color: rgba(255, 186, 73, 0.44);
+    background:
+        linear-gradient(180deg, rgba(255, 186, 73, 0.1), rgba(255, 255, 255, 0.03)),
+        rgba(255, 255, 255, 0.03);
+    box-shadow: inset 0 0 0 1px rgba(255, 186, 73, 0.08);
 }
 
 .timeline-segment-rail {
@@ -1440,6 +1495,69 @@ tbody tr:hover {
 .timeline-segment-body p {
     margin: 0;
     line-height: 1.75;
+}
+
+.timeline-time-button,
+.timeline-segment-button,
+.trigger-seek-button,
+.trigger-time-button,
+.trigger-screenshot-link {
+    cursor: pointer;
+}
+
+.timeline-time-button,
+.timeline-segment-button,
+.trigger-seek-button,
+.trigger-time-button {
+    border: 0;
+    padding: 0;
+    min-height: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    display: block;
+    text-align: left;
+    box-shadow: none;
+    transform: none;
+}
+
+.timeline-time-button:hover,
+.timeline-time-button:focus-visible,
+.trigger-time-button:hover,
+.trigger-time-button:focus-visible {
+    border-color: rgba(255, 186, 73, 0.38);
+}
+
+.timeline-segment-button {
+    display: block;
+    width: 100%;
+}
+
+.timeline-segment-button span {
+    display: block;
+}
+
+.trigger-seek-button {
+    display: grid;
+    gap: 0.3rem;
+    align-items: start;
+    justify-content: start;
+}
+
+.trigger-screenshot-link {
+    display: inline-flex;
+    min-height: 0;
+    padding: 0;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+    box-shadow: var(--shadow-soft);
+    color: inherit;
+    transform: none;
+}
+
+.trigger-screenshot-link:hover,
+.trigger-screenshot-link:focus-visible {
+    filter: none;
 }
 
 .transcript-inline-notice {
@@ -2471,6 +2589,12 @@ body.page-home-body {
     gap: 0.85rem;
 }
 
+.page-home-body .media-player-frame,
+.page-home-body .media-player-empty {
+    background: rgba(69, 40, 41, 0.18);
+    border-color: rgba(232, 209, 197, 0.16);
+}
+
 .page-home-body .summary-body {
     gap: 0.75rem;
 }
@@ -2521,14 +2645,28 @@ body.page-home-body {
     gap: 0.55rem;
 }
 
+.page-home-body .timeline-list {
+    max-height: 32rem;
+}
+
 .page-home-body .timeline-segment,
 .page-home-body .trigger-match-card {
     padding: 0.75rem 0.8rem;
     border-radius: 12px;
 }
 
+.page-home-body .timeline-segment.is-active {
+    border-color: rgba(255, 197, 112, 0.4);
+    background: rgba(255, 197, 112, 0.12);
+}
+
 .page-home-body .trigger-match-header {
     gap: 0.55rem;
+}
+
+.page-home-body .trigger-seek-button,
+.page-home-body .timeline-segment-button {
+    color: var(--text);
 }
 
 .page-home-body .trigger-screenshot-block {
@@ -2615,5 +2753,11 @@ body.page-home-body {
 
     .page-home-body .floating-mark {
         display: none;
+    }
+}
+
+@media (max-width: 900px) {
+    .media-review-shell {
+        grid-template-columns: 1fr;
     }
 }

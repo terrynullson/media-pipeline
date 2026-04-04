@@ -295,6 +295,7 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create(media) error = %v", err)
 	}
+	createUploadedMediaFile(t, app.uploadDir, "2026-04-03/timeline.mp4", []byte("video"))
 
 	settingsPayload, err := job.EncodeTranscribePayload(job.TranscribePayload{
 		Settings: domaintranscription.Settings{
@@ -448,6 +449,13 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 		"refund",
 		"billing",
 		"/media-screenshots/2026-04-03/media_1_trigger_1_2100ms.jpg",
+		"/media-source/2026-04-03/timeline.mp4",
+		"data-media-player",
+		"details-media-player-video",
+		`data-segment-index="0"`,
+		`data-start="0.000"`,
+		`data-end="1.400"`,
+		`data-seek="2.100"`,
 		"00:00:00.000",
 		"00:00:01.400",
 		"Уверенность 0.87",
@@ -558,6 +566,7 @@ func TestUploadHandler_TranscriptPageShowsTriggerEmptyState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create(media) error = %v", err)
 	}
+	createUploadedMediaFile(t, app.uploadDir, "2026-04-03/no-triggers.wav", []byte("audio"))
 	if _, err := jobRepo.Create(ctx, job.Job{
 		MediaID:      mediaID,
 		Type:         job.TypeAnalyzeTriggers,
@@ -592,6 +601,64 @@ func TestUploadHandler_TranscriptPageShowsTriggerEmptyState(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Для этой расшифровки триггеры не найдены.") {
 		t.Fatalf("transcript page body missing trigger empty state: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "details-media-player-audio") {
+		t.Fatalf("transcript page body missing audio player: %s", rec.Body.String())
+	}
+}
+
+func TestUploadHandler_TranscriptPageShowsPlayerFallbackWhenSourceMissing(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	ctx := context.Background()
+	mediaRepo := repositories.NewMediaRepository(app.db)
+	transcriptRepo := repositories.NewTranscriptRepository(app.db)
+
+	nowUTC := time.Date(2026, 4, 3, 19, 15, 0, 0, time.UTC)
+	mediaID, err := mediaRepo.Create(ctx, media.Media{
+		OriginalName: "missing-video.mp4",
+		StoredName:   "missing-video.mp4",
+		Extension:    ".mp4",
+		MIMEType:     "video/mp4",
+		SizeBytes:    1024,
+		StoragePath:  "2026-04-03/missing-video.mp4",
+		Status:       media.StatusTranscribed,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	})
+	if err != nil {
+		t.Fatalf("Create(media) error = %v", err)
+	}
+	if err := transcriptRepo.Save(ctx, transcript.Transcript{
+		MediaID:      mediaID,
+		Language:     "ru",
+		FullText:     "файл без исходника",
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+		Segments: []transcript.Segment{
+			{StartSec: 0, EndSec: 1.5, Text: "файл без исходника"},
+		},
+	}); err != nil {
+		t.Fatalf("Save(transcript) error = %v", err)
+	}
+	if err := mediaRepo.MarkTranscribed(ctx, mediaID, "файл без исходника", nowUTC); err != nil {
+		t.Fatalf("MarkTranscribed() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(mediaID, 10)+"/transcript", nil)
+	rec := httptest.NewRecorder()
+	app.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("transcript page status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Видеофайл сейчас недоступен для встроенного проигрывателя") {
+		t.Fatalf("transcript page body missing player fallback: %s", body)
+	}
+	if strings.Contains(body, "data-media-player") {
+		t.Fatalf("transcript page unexpectedly rendered media player: %s", body)
 	}
 }
 
@@ -1159,6 +1226,7 @@ func newTestApp(t *testing.T) testWebApp {
 		triggerScreenshotRepo,
 		summaryRepo,
 		jobRepo,
+		uploadDir,
 		audioDurationReader,
 		audioDir,
 		5*time.Minute,
@@ -1182,7 +1250,7 @@ func newTestApp(t *testing.T) testWebApp {
 	}
 
 	return testWebApp{
-		router:         httptransport.NewRouter(logger, handler, staticPath, screenshotsDir),
+		router:         httptransport.NewRouter(logger, handler, staticPath, uploadDir, screenshotsDir),
 		db:             sqlDB,
 		uploadDir:      uploadDir,
 		audioDir:       audioDir,
@@ -1230,6 +1298,18 @@ func pngPixelBytes() []byte {
 		0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00,
 		0x18, 0xdd, 0x8d, 0xb3,
 		0x00, 0x00, 0x00, 0x00, 'I', 'E', 'N', 'D', 0xae, 0x42, 0x60, 0x82,
+	}
+}
+
+func createUploadedMediaFile(t *testing.T, uploadDir string, relativePath string, content []byte) {
+	t.Helper()
+
+	fullPath := filepath.Join(uploadDir, filepath.FromSlash(relativePath))
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(uploaded media dir) error = %v", err)
+	}
+	if err := os.WriteFile(fullPath, content, 0o644); err != nil {
+		t.Fatalf("WriteFile(uploaded media) error = %v", err)
 	}
 }
 

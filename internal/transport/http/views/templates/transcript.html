@@ -126,7 +126,7 @@
                 {{end}}
             </div>
 
-            <div class="card transcript-viewer">
+            <div class="card transcript-viewer" data-details-controller>
                 <div class="section-header section-header-wide transcript-header">
                     <div>
                         <h2>Расшифровка</h2>
@@ -138,33 +138,63 @@
                     </div>
                 </div>
 
-                <div class="transcript-panel" data-transcript-panel="full-text">
-                    <div class="transcript-reading-surface">
-                        {{range .FullTextParagraphs}}
-                        <p>{{.}}</p>
-                        {{end}}
+                <section class="media-review-shell">
+                    <div class="media-player-card">
+                        <div class="media-player-frame" id="media-player-root">
+                            {{if .HasMediaPlayer}}
+                                {{if .IsAudioOnly}}
+                                <audio class="details-media-player details-media-player-audio" controls preload="metadata" data-media-player>
+                                    <source src="{{.MediaSourceURL}}" {{if .MediaSourceType}}type="{{.MediaSourceType}}"{{end}}>
+                                    Ваш браузер не поддерживает встроенное воспроизведение аудио.
+                                </audio>
+                                {{else}}
+                                <video class="details-media-player details-media-player-video" controls preload="metadata" playsinline data-media-player>
+                                    <source src="{{.MediaSourceURL}}" {{if .MediaSourceType}}type="{{.MediaSourceType}}"{{end}}>
+                                    Ваш браузер не поддерживает встроенное воспроизведение видео.
+                                </video>
+                                {{end}}
+                            {{else}}
+                            <div class="empty-state media-player-empty">
+                                <p>{{.PlayerFallbackText}}</p>
+                            </div>
+                            {{end}}
+                        </div>
                     </div>
-                </div>
 
-                <div class="transcript-panel" data-transcript-panel="timeline" hidden>
-                    <div class="timeline-list">
-                        {{range .Segments}}
-                        <article class="timeline-segment">
-                            <div class="timeline-segment-rail">
-                                <span class="timeline-time">{{.StartLabel}}</span>
-                                <span class="timeline-arrow">до</span>
-                                <span class="timeline-time">{{.EndLabel}}</span>
-                                {{if .HasConfidence}}
-                                <span class="timeline-confidence">Уверенность {{.Confidence}}</span>
+                    <div class="transcript-review-card">
+                        <div class="transcript-panel" data-transcript-panel="full-text">
+                            <div class="transcript-reading-surface">
+                                {{range .FullTextParagraphs}}
+                                <p>{{.}}</p>
                                 {{end}}
                             </div>
-                            <div class="timeline-segment-body">
-                                <p>{{.Text}}</p>
+                        </div>
+
+                        <div class="transcript-panel" data-transcript-panel="timeline" hidden>
+                            <div class="timeline-list" data-transcript-scroll-region>
+                                {{range .Segments}}
+                                <article class="timeline-segment" data-segment data-segment-index="{{.Index}}" data-start="{{printf "%.3f" .StartSec}}" data-end="{{printf "%.3f" .EndSec}}">
+                                    <div class="timeline-segment-rail">
+                                        <button type="button" class="timeline-time timeline-time-button" data-seek="{{printf "%.3f" .StartSec}}">
+                                            {{.StartLabel}}
+                                        </button>
+                                        <span class="timeline-arrow">до</span>
+                                        <span class="timeline-time">{{.EndLabel}}</span>
+                                        {{if .HasConfidence}}
+                                        <span class="timeline-confidence">Уверенность {{.Confidence}}</span>
+                                        {{end}}
+                                    </div>
+                                    <div class="timeline-segment-body">
+                                        <button type="button" class="timeline-segment-button" data-seek="{{printf "%.3f" .StartSec}}">
+                                            <span>{{.Text}}</span>
+                                        </button>
+                                    </div>
+                                </article>
+                                {{end}}
                             </div>
-                        </article>
-                        {{end}}
+                        </div>
                     </div>
-                </div>
+                </section>
             </div>
 
             <div class="card transcript-trigger-card">
@@ -191,12 +221,14 @@
                     {{range .TriggerMatches}}
                     <article class="trigger-match-card">
                         <div class="trigger-match-header">
-                            <div class="trigger-match-meta">
+                            <button type="button" class="trigger-match-meta trigger-seek-button" data-seek="{{printf "%.3f" .SeekSec}}">
                                 <span class="pill">{{.Category}}</span>
                                 <strong>{{.MatchedPhrase}}</strong>
                                 <span class="hint">Правило: {{.RuleName}}</span>
-                            </div>
-                            <span class="timeline-time">{{.Timestamp}}</span>
+                            </button>
+                            <button type="button" class="timeline-time timeline-time-button trigger-time-button" data-seek="{{printf "%.3f" .SeekSec}}">
+                                {{.Timestamp}}
+                            </button>
                         </div>
                         <p class="trigger-match-text">{{.SegmentText}}</p>
                         {{if .ContextText}}
@@ -204,7 +236,7 @@
                         {{end}}
                         <div class="trigger-screenshot-block">
                             {{if .HasScreenshot}}
-                            <a class="trigger-screenshot-link" href="{{.ScreenshotURL}}" target="_blank" rel="noopener noreferrer">
+                            <button type="button" class="trigger-screenshot-link" data-seek="{{printf "%.3f" .ScreenshotSeekSec}}" aria-label="{{.ScreenshotAlt}}">
                                 <img
                                     class="trigger-screenshot-image"
                                     src="{{.ScreenshotURL}}"
@@ -213,7 +245,7 @@
                                     {{if gt .ScreenshotH 0}}height="{{.ScreenshotH}}"{{end}}
                                     loading="lazy"
                                 >
-                            </a>
+                            </button>
                             {{else}}
                             <div class="empty-state trigger-screenshot-empty">
                                 <p>{{.Placeholder}}</p>
@@ -372,41 +404,8 @@
         </section>
     </section>
 </main>
+<script src="/static/js/transcript-details.js" defer></script>
 <script>
-(() => {
-    const buttons = Array.from(document.querySelectorAll("[data-transcript-tab]"));
-    const panels = Array.from(document.querySelectorAll("[data-transcript-panel]"));
-    const deleteForm = document.querySelector(".transcript-delete-form");
-
-    function activateTab(target) {
-        buttons.forEach((button) => {
-            const isActive = button.dataset.transcriptTab === target;
-            button.classList.toggle("is-active", isActive);
-            button.setAttribute("aria-selected", isActive ? "true" : "false");
-        });
-        panels.forEach((panel) => {
-            panel.hidden = panel.dataset.transcriptPanel !== target;
-        });
-    }
-
-    buttons.forEach((button) => {
-        button.addEventListener("click", () => {
-            activateTab(button.dataset.transcriptTab);
-        });
-    });
-
-    if (deleteForm) {
-        deleteForm.addEventListener("submit", (event) => {
-            const confirmed = window.confirm("Удалить этот файл? Будут удалены расшифровка, задачи и сохранённые файлы.");
-            if (!confirmed) {
-                event.preventDefault();
-            }
-        });
-    }
-
-    activateTab("full-text");
-})();
-
 (() => {
     const mark = document.querySelector(".floating-mark");
     if (!mark) {

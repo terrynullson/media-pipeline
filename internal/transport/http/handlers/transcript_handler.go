@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,11 @@ type TranscriptPageViewData struct {
 	PipelineErrorHint   string
 	PipelineSteps       []PipelineStepView
 	DeleteURL           string
+	HasMediaPlayer      bool
+	IsAudioOnly         bool
+	MediaSourceURL      string
+	MediaSourceType     string
+	PlayerFallbackText  string
 	HasTranscript       bool
 	Settings            []TranscriptSettingItem
 	SettingsWarnings    []string
@@ -85,6 +91,9 @@ type TranscriptRuntimePolicyView struct {
 }
 
 type TranscriptSegmentView struct {
+	Index         int
+	StartSec      float64
+	EndSec        float64
 	StartLabel    string
 	EndLabel      string
 	Text          string
@@ -93,18 +102,20 @@ type TranscriptSegmentView struct {
 }
 
 type TriggerEventView struct {
-	Category      string
-	RuleName      string
-	MatchedPhrase string
-	Timestamp     string
-	SegmentText   string
-	ContextText   string
-	HasScreenshot bool
-	ScreenshotURL string
-	ScreenshotAlt string
-	ScreenshotW   int
-	ScreenshotH   int
-	Placeholder   string
+	Category          string
+	RuleName          string
+	MatchedPhrase     string
+	SeekSec           float64
+	Timestamp         string
+	SegmentText       string
+	ContextText       string
+	HasScreenshot     bool
+	ScreenshotSeekSec float64
+	ScreenshotURL     string
+	ScreenshotAlt     string
+	ScreenshotW       int
+	ScreenshotH       int
+	Placeholder       string
 }
 
 func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +176,11 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		PipelineErrorHint:   pipelineView.ErrorLocation,
 		PipelineSteps:       pipelineView.Steps,
 		DeleteURL:           fmt.Sprintf("/media/%d/delete", result.Media.ID),
+		HasMediaPlayer:      result.MediaSourceReady,
+		IsAudioOnly:         result.Media.IsAudioOnly(),
+		MediaSourceURL:      buildMediaSourceURL(result.MediaSourcePath),
+		MediaSourceType:     strings.TrimSpace(result.Media.MIMEType),
+		PlayerFallbackText:  describeMediaPlayerFallback(result.Media, result.MediaSourceReady),
 		HasTranscript:       result.HasTranscript,
 		Settings:            buildTranscriptSettings(result.Settings),
 		SettingsWarnings:    buildTranscriptSettingsWarnings(result.Settings),
@@ -377,8 +393,11 @@ func buildTranscriptRuntimePolicyView(result mediaapp.TranscriptViewResult) Tran
 
 func buildTranscriptSegments(items []transcript.Segment) []TranscriptSegmentView {
 	segments := make([]TranscriptSegmentView, 0, len(items))
-	for _, item := range items {
+	for index, item := range items {
 		segment := TranscriptSegmentView{
+			Index:      index,
+			StartSec:   item.StartSec,
+			EndSec:     item.EndSec,
 			StartLabel: FormatTimestamp(item.StartSec),
 			EndLabel:   FormatTimestamp(item.EndSec),
 			Text:       strings.TrimSpace(item.Text),
@@ -408,17 +427,20 @@ func buildTriggerEventViews(
 		}
 
 		view := TriggerEventView{
-			Category:      item.Category,
-			RuleName:      item.RuleName,
-			MatchedPhrase: item.MatchedText,
-			Timestamp:     FormatTimestamp(item.StartSec),
-			SegmentText:   segmentText,
-			ContextText:   contextText,
-			ScreenshotAlt: fmt.Sprintf("Скриншот для %s на %s", item.MatchedText, FormatTimestamp(item.StartSec)),
-			Placeholder:   describeScreenshotPlaceholder(mediaItem, screenshotJob),
+			Category:          item.Category,
+			RuleName:          item.RuleName,
+			MatchedPhrase:     item.MatchedText,
+			SeekSec:           item.StartSec,
+			Timestamp:         FormatTimestamp(item.StartSec),
+			SegmentText:       segmentText,
+			ContextText:       contextText,
+			ScreenshotSeekSec: item.StartSec,
+			ScreenshotAlt:     fmt.Sprintf("Скриншот для %s на %s", item.MatchedText, FormatTimestamp(item.StartSec)),
+			Placeholder:       describeScreenshotPlaceholder(mediaItem, screenshotJob),
 		}
 		if screenshot, ok := screenshots[item.ID]; ok {
 			view.HasScreenshot = true
+			view.ScreenshotSeekSec = screenshot.TimestampSec
 			view.ScreenshotURL = "/media-screenshots/" + screenshot.ImagePath
 			view.ScreenshotW = screenshot.Width
 			view.ScreenshotH = screenshot.Height
@@ -429,6 +451,28 @@ func buildTriggerEventViews(
 	}
 
 	return views
+}
+
+func buildMediaSourceURL(relativePath string) string {
+	relativePath = strings.TrimSpace(relativePath)
+	if relativePath == "" {
+		return ""
+	}
+
+	return "/media-source/" + filepath.ToSlash(relativePath)
+}
+
+func describeMediaPlayerFallback(mediaItem media.Media, sourceReady bool) string {
+	if sourceReady {
+		return ""
+	}
+	if strings.TrimSpace(mediaItem.StoragePath) == "" {
+		return "Исходный медиафайл для встроенного плеера не найден."
+	}
+	if mediaItem.IsAudioOnly() {
+		return "Аудиофайл сейчас недоступен для встроенного проигрывателя, но расшифровка и таймлайн остаются доступными."
+	}
+	return "Видеофайл сейчас недоступен для встроенного проигрывателя, но расшифровка и таймлайн остаются доступными."
 }
 
 func describeScreenshotPlaceholder(mediaItem media.Media, currentJob *job.Job) string {
