@@ -40,14 +40,7 @@ type TranscriptPageViewData struct {
 	PipelineErrorHint   string
 	PipelineSteps       []PipelineStepView
 	DeleteURL           string
-	HasMediaPlayer      bool
-	IsAudioOnly         bool
-	MediaSourceURL      string
-	MediaSourceType     string
-	HasAudioFallback    bool
-	AudioFallbackURL    string
-	AudioFallbackType   string
-	PlayerFallbackText  string
+	Player              TranscriptPlayerView
 	HasTranscript       bool
 	Settings            []TranscriptSettingItem
 	SettingsWarnings    []string
@@ -75,6 +68,26 @@ type TranscriptPageViewData struct {
 	ShowSummaryAction   bool
 	SummaryActionLabel  string
 	SummaryActionURL    string
+}
+
+type TranscriptPlayerView struct {
+	HasMediaPlayer            bool
+	IsAudioOnly               bool
+	HasVideoPlayer            bool
+	VideoSourceURL            string
+	VideoSourceType           string
+	HasAudioPlayer            bool
+	AudioPlayerURL            string
+	AudioPlayerType           string
+	HasSecondaryAudioFallback bool
+	AudioFallbackURL          string
+	AudioFallbackType         string
+	UseAudioFallbackAsPrimary bool
+	PreviewStatusLabel        string
+	PreviewStatusTone         string
+	PreviewNotice             string
+	PreviewNoticeTone         string
+	PlayerFallbackText        string
 }
 
 type TranscriptSettingItem struct {
@@ -161,6 +174,7 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		jobs = append(jobs, *result.SummaryJob)
 	}
 	pipelineView := buildMediaPipelineView(result.Media, jobs)
+	playerView := buildTranscriptPlayerView(result)
 	data := TranscriptPageViewData{
 		PageNotice:          transcriptFlashMessage(r.URL.Query().Get("summary_status")),
 		PageNoticeTone:      transcriptFlashTone(r.URL.Query().Get("summary_status")),
@@ -179,14 +193,7 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		PipelineErrorHint:   pipelineView.ErrorLocation,
 		PipelineSteps:       pipelineView.Steps,
 		DeleteURL:           fmt.Sprintf("/media/%d/delete", result.Media.ID),
-		HasMediaPlayer:      result.MediaSourceReady,
-		IsAudioOnly:         result.Media.IsAudioOnly(),
-		MediaSourceURL:      buildMediaSourceURL(result.MediaSourcePath),
-		MediaSourceType:     strings.TrimSpace(result.Media.MIMEType),
-		HasAudioFallback:    !result.Media.IsAudioOnly() && result.AudioSourceReady,
-		AudioFallbackURL:    buildMediaAudioURL(result.AudioSourcePath),
-		AudioFallbackType:   "audio/wav",
-		PlayerFallbackText:  describeMediaPlayerFallback(result.Media, result.MediaSourceReady),
+		Player:              playerView,
 		HasTranscript:       result.HasTranscript,
 		Settings:            buildTranscriptSettings(result.Settings),
 		SettingsWarnings:    buildTranscriptSettingsWarnings(result.Settings),
@@ -475,6 +482,94 @@ func buildMediaAudioURL(relativePath string) string {
 	}
 
 	return "/media-audio/" + filepath.ToSlash(relativePath)
+}
+
+func buildMediaPreviewURL(relativePath string) string {
+	relativePath = strings.TrimSpace(relativePath)
+	if relativePath == "" {
+		return ""
+	}
+
+	return "/media-preview/" + filepath.ToSlash(relativePath)
+}
+
+func buildTranscriptPlayerView(result mediaapp.TranscriptViewResult) TranscriptPlayerView {
+	view := TranscriptPlayerView{
+		IsAudioOnly:       result.Media.IsAudioOnly(),
+		AudioFallbackType: "audio/wav",
+	}
+
+	if result.Media.IsAudioOnly() {
+		view.HasAudioPlayer = result.MediaSourceReady
+		view.AudioPlayerURL = buildMediaSourceURL(result.MediaSourcePath)
+		view.AudioPlayerType = strings.TrimSpace(result.Media.MIMEType)
+		view.HasMediaPlayer = view.HasAudioPlayer
+		if !view.HasMediaPlayer {
+			view.PlayerFallbackText = "Аудиофайл сейчас недоступен для встроенного проигрывателя, но страница остаётся доступной."
+		}
+		return view
+	}
+
+	view.HasVideoPlayer = result.PreviewSourceReady
+	view.VideoSourceURL = buildMediaPreviewURL(result.PreviewSourcePath)
+	view.VideoSourceType = fallbackValue(strings.TrimSpace(result.Media.PreviewVideoMIMEType), "video/mp4")
+	view.PreviewStatusLabel, view.PreviewStatusTone, view.PreviewNotice, view.PreviewNoticeTone = describePreviewState(result.PreviewJob, result.PreviewSourceReady)
+
+	if result.PreviewSourceReady {
+		view.HasMediaPlayer = true
+		if result.AudioSourceReady {
+			view.HasSecondaryAudioFallback = true
+			view.AudioFallbackURL = buildMediaAudioURL(result.AudioSourcePath)
+		}
+		return view
+	}
+
+	if result.AudioSourceReady {
+		view.HasMediaPlayer = true
+		view.HasAudioPlayer = true
+		view.UseAudioFallbackAsPrimary = true
+		view.AudioPlayerURL = buildMediaAudioURL(result.AudioSourcePath)
+		return view
+	}
+
+	view.PlayerFallbackText = describeVideoPlayerFallback(result)
+	return view
+}
+
+func describePreviewState(currentJob *job.Job, previewReady bool) (label string, tone string, notice string, noticeTone string) {
+	if previewReady {
+		return "Готово", "success", "", ""
+	}
+	if currentJob == nil {
+		return "Недоступно", "neutral", "Browser-safe preview для этого видео ещё не подготовлен.", "neutral"
+	}
+
+	switch currentJob.Status {
+	case job.StatusPending:
+		return "В очереди", "ready", "Browser-safe preview поставлен в очередь. Пока можно использовать audio fallback, если он уже готов.", "neutral"
+	case job.StatusRunning:
+		return "В работе", "running", "Browser-safe preview сейчас готовится. Пока можно использовать audio fallback, если он уже готов.", "neutral"
+	case job.StatusFailed:
+		message := "Не удалось подготовить browser-safe preview видео."
+		if current := userFacingJobError(currentJob); current != "" {
+			message = current
+		}
+		return "Ошибка", "error", message, "error"
+	case job.StatusDone:
+		return "Недоступно", "warning", "Preview job завершился, но preview-файл не найден на диске. Можно использовать audio fallback.", "warning"
+	default:
+		return "Недоступно", "neutral", "Browser-safe preview сейчас недоступен.", "neutral"
+	}
+}
+
+func describeVideoPlayerFallback(result mediaapp.TranscriptViewResult) string {
+	if result.PreviewJob != nil && result.PreviewJob.Status == job.StatusFailed {
+		return "Browser-safe preview недоступен, а извлечённая аудиодорожка тоже пока не готова."
+	}
+	if result.PreviewJob != nil && (result.PreviewJob.Status == job.StatusPending || result.PreviewJob.Status == job.StatusRunning) {
+		return "Browser-safe preview ещё готовится. Проигрыватель появится автоматически после завершения задачи."
+	}
+	return "Browser-safe preview сейчас недоступен, поэтому встроенный video player временно не показывается."
 }
 
 func describeMediaPlayerFallback(mediaItem media.Media, sourceReady bool) string {

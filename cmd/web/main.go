@@ -60,6 +60,7 @@ func main() {
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
 	fileStorage := storage.NewLocalStorage(cfg.UploadDir)
 	audioStorage := storage.NewLocalStorage(cfg.AudioDir)
+	previewStorage := storage.NewLocalStorage(cfg.PreviewDir)
 	screenshotStorage := storage.NewLocalStorage(cfg.ScreenshotsDir)
 	audioDurationReader := inframedia.NewWAVDurationReader()
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
@@ -74,10 +75,11 @@ func main() {
 		cfg.UploadDir,
 		audioDurationReader,
 		cfg.AudioDir,
+		cfg.PreviewDir,
 		cfg.TranscribeTimeout(),
 	)
 	requestSummaryUC := mediaapp.NewRequestSummaryUseCase(mediaRepo, transcriptRepo, jobRepo)
-	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, fileStorage, audioStorage, screenshotStorage, logger)
+	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, fileStorage, audioStorage, previewStorage, screenshotStorage, logger)
 
 	uploadUC := command.NewUploadMediaUseCase(mediaRepo, jobRepo, fileStorage, cfg.MaxUploadSizeBytes(), logger)
 	templatesDir, err := infraRuntime.ResolvePath("internal/transport/http/views/templates")
@@ -107,13 +109,14 @@ func main() {
 		logger.Error("resolve static path", slog.Any("error", err))
 		os.Exit(1)
 	}
-	router := httptransport.NewRouter(logger, uploadHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.ScreenshotsDir)
+	router := httptransport.NewRouter(logger, uploadHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir)
 
 	addr := ":" + cfg.AppPort
 	logger.Info("starting web server",
 		slog.String("addr", addr),
 		slog.String("db_path", cfg.DBPath),
 		slog.String("upload_dir", cfg.UploadDir),
+		slog.String("preview_dir", cfg.PreviewDir),
 		slog.Int64("max_upload_bytes", cfg.MaxUploadSizeBytes()),
 	)
 	if err = http.ListenAndServe(addr, router); err != nil {

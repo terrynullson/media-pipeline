@@ -20,12 +20,14 @@ func TestDeleteMediaUseCase_DeleteRemovesRecordAndCollectsWarnings(t *testing.T)
 			ID:                 9,
 			StoragePath:        "uploads/demo.wav",
 			ExtractedAudioPath: "audio/demo.wav",
+			PreviewVideoPath:   "preview/demo.mp4",
 		},
 	}
 	uc := NewDeleteMediaUseCase(
 		repo,
 		stubScreenshotPathReader{},
 		stubDeleteStorage{err: errors.New("disk busy")},
+		stubDeleteStorage{},
 		stubDeleteStorage{},
 		stubDeleteStorage{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -49,6 +51,7 @@ func TestDeleteMediaUseCase_DeleteReturnsNotFound(t *testing.T) {
 	uc := NewDeleteMediaUseCase(
 		&stubMediaDeletionRepository{getErr: sql.ErrNoRows},
 		stubScreenshotPathReader{},
+		stubDeleteStorage{},
 		stubDeleteStorage{},
 		stubDeleteStorage{},
 		stubDeleteStorage{},

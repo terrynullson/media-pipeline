@@ -1376,6 +1376,14 @@ tbody tr:hover {
     margin: 0;
 }
 
+.media-player-status {
+    padding: 0.9rem 1rem 0;
+}
+
+.media-player-inline-notice {
+    margin: 0.9rem 1rem 0;
+}
+
 .media-player-switches {
     display: inline-flex;
     flex-wrap: wrap;

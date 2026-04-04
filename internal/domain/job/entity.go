@@ -16,12 +16,13 @@ type Type string
 type Status string
 
 const (
-	TypeUpload             Type = "upload"
-	TypeExtractAudio       Type = "extract_audio"
-	TypeTranscribe         Type = "transcribe"
-	TypeAnalyzeTriggers    Type = "analyze_triggers"
-	TypeExtractScreenshots Type = "extract_screenshots"
-	TypeGenerateSummary    Type = "generate_summary"
+	TypeUpload              Type = "upload"
+	TypeExtractAudio        Type = "extract_audio"
+	TypePreparePreviewVideo Type = "prepare_preview_video"
+	TypeTranscribe          Type = "transcribe"
+	TypeAnalyzeTriggers     Type = "analyze_triggers"
+	TypeExtractScreenshots  Type = "extract_screenshots"
+	TypeGenerateSummary     Type = "generate_summary"
 
 	StatusPending Status = "pending"
 	StatusRunning Status = "running"

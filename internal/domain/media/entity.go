@@ -21,19 +21,23 @@ const (
 )
 
 type Media struct {
-	ID                  int64
-	OriginalName        string
-	StoredName          string
-	Extension           string
-	MIMEType            string
-	SizeBytes           int64
-	StoragePath         string
-	ExtractedAudioPath  string
-	TranscriptText      string
-	RuntimeSnapshotJSON string
-	Status              Status
-	CreatedAtUTC        time.Time
-	UpdatedAtUTC        time.Time
+	ID                       int64
+	OriginalName             string
+	StoredName               string
+	Extension                string
+	MIMEType                 string
+	SizeBytes                int64
+	StoragePath              string
+	ExtractedAudioPath       string
+	PreviewVideoPath         string
+	PreviewVideoSizeBytes    int64
+	PreviewVideoMIMEType     string
+	PreviewVideoCreatedAtUTC *time.Time
+	TranscriptText           string
+	RuntimeSnapshotJSON      string
+	Status                   Status
+	CreatedAtUTC             time.Time
+	UpdatedAtUTC             time.Time
 }
 
 type RuntimeSnapshot struct {

@@ -60,6 +60,7 @@ func main() {
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
 	audioExtractor := infraMedia.NewFFmpegExtractor(cfg.FFmpegBinary)
+	previewGenerator := infraMedia.NewFFmpegPreviewGenerator(cfg.FFmpegBinary)
 	audioDurationReader := infraMedia.NewWAVDurationReader()
 	screenshotExtractor := infraMedia.NewFFmpegScreenshotExtractor(cfg.FFmpegBinary)
 	summarizer := infraSummary.NewSimpleSummarizer()
@@ -79,6 +80,7 @@ func main() {
 		triggerScreenshotRepo,
 		summaryRepo,
 		audioExtractor,
+		previewGenerator,
 		audioDurationReader,
 		screenshotExtractor,
 		transcriber,
@@ -86,8 +88,10 @@ func main() {
 		profileService,
 		cfg.UploadDir,
 		cfg.AudioDir,
+		cfg.PreviewDir,
 		cfg.ScreenshotsDir,
 		cfg.FFmpegTimeout(),
+		cfg.PreviewTimeout(),
 		cfg.ScreenshotTimeout(),
 		cfg.TranscribeTimeout(),
 		logger,
@@ -98,12 +102,14 @@ func main() {
 		slog.String("db_path", cfg.DBPath),
 		slog.String("upload_dir", cfg.UploadDir),
 		slog.String("audio_dir", cfg.AudioDir),
+		slog.String("preview_dir", cfg.PreviewDir),
 		slog.String("screenshots_dir", cfg.ScreenshotsDir),
 		slog.String("ffmpeg_binary", cfg.FFmpegBinary),
 		slog.String("python_binary", cfg.PythonBinary),
 		slog.String("transcribe_script", transcribeScriptPath),
 		slog.Duration("poll_interval", cfg.WorkerPollInterval()),
 		slog.Duration("ffmpeg_timeout", cfg.FFmpegTimeout()),
+		slog.Duration("preview_timeout", cfg.PreviewTimeout()),
 		slog.Duration("screenshot_timeout", cfg.ScreenshotTimeout()),
 		slog.Duration("transcribe_base_timeout", cfg.TranscribeTimeout()),
 	)

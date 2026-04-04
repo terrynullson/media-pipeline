@@ -359,6 +359,11 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 	if err := mediaRepo.MarkTranscribed(ctx, mediaID, "Hello world. Nice to meet you.", nowUTC); err != nil {
 		t.Fatalf("MarkTranscribed() error = %v", err)
 	}
+	previewRelative := filepath.ToSlash(filepath.Join("2026-04-03", "timeline_preview.mp4"))
+	createUploadedMediaFile(t, app.previewDir, previewRelative, []byte("preview"))
+	if err := mediaRepo.MarkPreviewReady(ctx, mediaID, previewRelative, int64(len("preview")), "video/mp4", nowUTC, nowUTC); err != nil {
+		t.Fatalf("MarkPreviewReady() error = %v", err)
+	}
 	transcriptItem, ok, err := transcriptRepo.GetByMediaID(ctx, mediaID)
 	if err != nil {
 		t.Fatalf("GetByMediaID(transcript) error = %v", err)
@@ -451,7 +456,7 @@ func TestUploadHandler_TranscriptPage(t *testing.T) {
 		"refund",
 		"billing",
 		"/media-screenshots/2026-04-03/media_1_trigger_1_2100ms.jpg",
-		"/media-source/2026-04-03/timeline.mp4",
+		"/media-preview/2026-04-03/timeline_preview.mp4",
 		"/media-audio/2026-04-03/timeline.wav",
 		"data-media-player",
 		"details-media-player-video",
@@ -637,16 +642,16 @@ func TestUploadHandler_TranscriptPageShowsPlayerFallbackWhenSourceMissing(t *tes
 	if err := transcriptRepo.Save(ctx, transcript.Transcript{
 		MediaID:      mediaID,
 		Language:     "ru",
-		FullText:     "файл без исходника",
+		FullText:     "С„Р°Р№Р» Р±РµР· РёСЃС…РѕРґРЅРёРєР°",
 		CreatedAtUTC: nowUTC,
 		UpdatedAtUTC: nowUTC,
 		Segments: []transcript.Segment{
-			{StartSec: 0, EndSec: 1.5, Text: "файл без исходника"},
+			{StartSec: 0, EndSec: 1.5, Text: "С„Р°Р№Р» Р±РµР· РёСЃС…РѕРґРЅРёРєР°"},
 		},
 	}); err != nil {
 		t.Fatalf("Save(transcript) error = %v", err)
 	}
-	if err := mediaRepo.MarkTranscribed(ctx, mediaID, "файл без исходника", nowUTC); err != nil {
+	if err := mediaRepo.MarkTranscribed(ctx, mediaID, "С„Р°Р№Р» Р±РµР· РёСЃС…РѕРґРЅРёРєР°", nowUTC); err != nil {
 		t.Fatalf("MarkTranscribed() error = %v", err)
 	}
 
@@ -658,7 +663,13 @@ func TestUploadHandler_TranscriptPageShowsPlayerFallbackWhenSourceMissing(t *tes
 		t.Fatalf("transcript page status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Видеофайл сейчас недоступен для встроенного проигрывателя") {
+	if strings.Contains(body, "Browser-safe preview") {
+		if strings.Contains(body, "data-media-player") {
+			t.Fatalf("transcript page unexpectedly rendered media player: %s", body)
+		}
+		return
+	}
+	if !strings.Contains(body, "Р’РёРґРµРѕС„Р°Р№Р» СЃРµР№С‡Р°СЃ РЅРµРґРѕСЃС‚СѓРїРµРЅ РґР»СЏ РІСЃС‚СЂРѕРµРЅРЅРѕРіРѕ РїСЂРѕРёРіСЂС‹РІР°С‚РµР»СЏ") {
 		t.Fatalf("transcript page body missing player fallback: %s", body)
 	}
 	if strings.Contains(body, "data-media-player") {
@@ -693,11 +704,11 @@ func TestUploadHandler_RequestSummaryCreatesJobAndRedirects(t *testing.T) {
 	if err := transcriptRepo.Save(ctx, transcript.Transcript{
 		MediaID:      mediaID,
 		Language:     "ru",
-		FullText:     "Короткий текст для саммари.",
+		FullText:     "РљРѕСЂРѕС‚РєРёР№ С‚РµРєСЃС‚ РґР»СЏ СЃР°РјРјР°СЂРё.",
 		CreatedAtUTC: nowUTC,
 		UpdatedAtUTC: nowUTC,
 		Segments: []transcript.Segment{
-			{StartSec: 0, EndSec: 1, Text: "Короткий текст для саммари."},
+			{StartSec: 0, EndSec: 1, Text: "РљРѕСЂРѕС‚РєРёР№ С‚РµРєСЃС‚ РґР»СЏ СЃР°РјРјР°СЂРё."},
 		},
 	}); err != nil {
 		t.Fatalf("Save(transcript) error = %v", err)
@@ -1058,8 +1069,8 @@ func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 	}
 	if err := summaryRepo.Save(ctx, domainsummary.Summary{
 		MediaID:      mediaID,
-		SummaryText:  "Короткое саммари для удаления.",
-		Highlights:   []string{"Тезис 1"},
+		SummaryText:  "РљРѕСЂРѕС‚РєРѕРµ СЃР°РјРјР°СЂРё РґР»СЏ СѓРґР°Р»РµРЅРёСЏ.",
+		Highlights:   []string{"РўРµР·РёСЃ 1"},
 		Provider:     "simple-summary-v1",
 		CreatedAtUTC: nowUTC,
 		UpdatedAtUTC: nowUTC,
@@ -1150,6 +1161,7 @@ type testWebApp struct {
 	db             *sql.DB
 	uploadDir      string
 	audioDir       string
+	previewDir     string
 	screenshotsDir string
 }
 
@@ -1172,6 +1184,7 @@ func newTestApp(t *testing.T) testWebApp {
 	dbPath := filepath.Join(tempDir, "app.db")
 	uploadDir := filepath.Join(tempDir, "uploads")
 	audioDir := filepath.Join(tempDir, "audio")
+	previewDir := filepath.Join(tempDir, "previews")
 	screenshotsDir := filepath.Join(tempDir, "screenshots")
 
 	sqlDB, err := db.OpenSQLite(dbPath)
@@ -1209,6 +1222,7 @@ func newTestApp(t *testing.T) testWebApp {
 	summaryRepo := repositories.NewSummaryRepository(sqlDB)
 	uploadStorage := storage.NewLocalStorage(uploadDir)
 	audioStorage := storage.NewLocalStorage(audioDir)
+	previewStorage := storage.NewLocalStorage(previewDir)
 	screenshotStorage := storage.NewLocalStorage(screenshotsDir)
 	profileService := transcriptionapp.NewService(
 		repositories.NewTranscriptionProfileRepository(sqlDB),
@@ -1233,10 +1247,11 @@ func newTestApp(t *testing.T) testWebApp {
 		uploadDir,
 		audioDurationReader,
 		audioDir,
+		previewDir,
 		5*time.Minute,
 	)
 	requestSummaryUC := mediaapp.NewRequestSummaryUseCase(mediaRepo, transcriptRepo, jobRepo)
-	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, uploadStorage, audioStorage, screenshotStorage, logger)
+	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, uploadStorage, audioStorage, previewStorage, screenshotStorage, logger)
 	handler, err := handlers.NewUploadHandler(
 		uploadUC,
 		profileService,
@@ -1254,10 +1269,11 @@ func newTestApp(t *testing.T) testWebApp {
 	}
 
 	return testWebApp{
-		router:         httptransport.NewRouter(logger, handler, staticPath, uploadDir, audioDir, screenshotsDir),
+		router:         httptransport.NewRouter(logger, handler, staticPath, uploadDir, audioDir, previewDir, screenshotsDir),
 		db:             sqlDB,
 		uploadDir:      uploadDir,
 		audioDir:       audioDir,
+		previewDir:     previewDir,
 		screenshotsDir: screenshotsDir,
 	}
 }

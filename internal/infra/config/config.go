@@ -11,6 +11,7 @@ type Config struct {
 	DBPath               string
 	UploadDir            string
 	AudioDir             string
+	PreviewDir           string
 	ScreenshotsDir       string
 	FFmpegBinary         string
 	PythonBinary         string
@@ -19,6 +20,7 @@ type Config struct {
 	MaxUploadSizeMB      int64
 	WorkerPollIntervalMS int64
 	FFmpegTimeoutSec     int64
+	PreviewTimeoutSec    int64
 	ScreenshotTimeoutSec int64
 	TranscribeTimeoutSec int64
 }
@@ -29,6 +31,7 @@ func Load() Config {
 		DBPath:               getEnv("DB_PATH", "./data/app.db"),
 		UploadDir:            getEnv("UPLOAD_DIR", "./data/uploads"),
 		AudioDir:             getEnv("AUDIO_DIR", "./data/audio"),
+		PreviewDir:           getEnv("PREVIEW_DIR", "./data/previews"),
 		ScreenshotsDir:       getEnv("SCREENSHOTS_DIR", "./data/screenshots"),
 		FFmpegBinary:         getEnv("FFMPEG_BINARY", "ffmpeg"),
 		PythonBinary:         getEnv("PYTHON_BINARY", "python"),
@@ -37,6 +40,7 @@ func Load() Config {
 		MaxUploadSizeMB:      getEnvInt64("MAX_UPLOAD_SIZE_MB", 500),
 		WorkerPollIntervalMS: getEnvInt64("WORKER_POLL_INTERVAL_MS", 2000),
 		FFmpegTimeoutSec:     getEnvInt64("FFMPEG_TIMEOUT_SEC", 120),
+		PreviewTimeoutSec:    getEnvInt64("PREVIEW_TIMEOUT_SEC", 600),
 		ScreenshotTimeoutSec: getEnvInt64("SCREENSHOT_TIMEOUT_SEC", 60),
 		TranscribeTimeoutSec: getEnvInt64("TRANSCRIBE_TIMEOUT_SEC", 300),
 	}
@@ -48,6 +52,9 @@ func Load() Config {
 	}
 	if cfg.FFmpegTimeoutSec <= 0 {
 		cfg.FFmpegTimeoutSec = 120
+	}
+	if cfg.PreviewTimeoutSec <= 0 {
+		cfg.PreviewTimeoutSec = 600
 	}
 	if cfg.ScreenshotTimeoutSec <= 0 {
 		cfg.ScreenshotTimeoutSec = 60
@@ -72,6 +79,10 @@ func (c Config) FFmpegTimeout() time.Duration {
 
 func (c Config) ScreenshotTimeout() time.Duration {
 	return time.Duration(c.ScreenshotTimeoutSec) * time.Second
+}
+
+func (c Config) PreviewTimeout() time.Duration {
+	return time.Duration(c.PreviewTimeoutSec) * time.Second
 }
 
 func (c Config) TranscribeTimeout() time.Duration {

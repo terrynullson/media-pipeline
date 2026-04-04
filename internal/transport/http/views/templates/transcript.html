@@ -141,26 +141,50 @@
                 <section class="media-review-shell">
                     <div class="media-player-card">
                         <div class="media-player-frame" id="media-player-root">
-                            {{if .HasMediaPlayer}}
-                                {{if .IsAudioOnly}}
+                            {{if .Player.HasMediaPlayer}}
+                                {{if .Player.IsAudioOnly}}
                                 <audio class="details-media-player details-media-player-audio" controls preload="metadata" data-media-player data-player-kind="audio">
-                                    <source src="{{.MediaSourceURL}}" {{if .MediaSourceType}}type="{{.MediaSourceType}}"{{end}}>
+                                    <source src="{{.Player.AudioPlayerURL}}" {{if .Player.AudioPlayerType}}type="{{.Player.AudioPlayerType}}"{{end}}>
                                     Ваш браузер не поддерживает встроенное воспроизведение аудио.
                                 </audio>
                                 {{else}}
                                 <div class="media-player-stack" data-player-stack>
+                                    {{if .Player.HasVideoPlayer}}
                                     <video class="details-media-player details-media-player-video" controls preload="metadata" playsinline data-media-player data-player-kind="video">
-                                    <source src="{{.MediaSourceURL}}" {{if .MediaSourceType}}type="{{.MediaSourceType}}"{{end}}>
+                                    <source src="{{.Player.VideoSourceURL}}" {{if .Player.VideoSourceType}}type="{{.Player.VideoSourceType}}"{{end}}>
                                     Ваш браузер не поддерживает встроенное воспроизведение видео.
                                     </video>
-                                    {{if .HasAudioFallback}}
+                                    {{end}}
+                                    {{if .Player.HasSecondaryAudioFallback}}
                                     <audio class="details-media-player details-media-player-audio" controls preload="metadata" data-media-player data-player-kind="audio-fallback" hidden>
-                                        <source src="{{.AudioFallbackURL}}" {{if .AudioFallbackType}}type="{{.AudioFallbackType}}"{{end}}>
+                                        <source src="{{.Player.AudioFallbackURL}}" {{if .Player.AudioFallbackType}}type="{{.Player.AudioFallbackType}}"{{end}}>
                                         Р’Р°С€ Р±СЂР°СѓР·РµСЂ РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚ РІСЃС‚СЂРѕРµРЅРЅРѕРµ РІРѕСЃРїСЂРѕРёР·РІРµРґРµРЅРёРµ Р°СѓРґРёРѕ.
                                     </audio>
                                     {{end}}
+                                    {{if and (not .Player.HasVideoPlayer) .Player.HasAudioPlayer}}
+                                    <audio class="details-media-player details-media-player-audio" controls preload="metadata" data-media-player data-player-kind="audio-fallback">
+                                        <source src="{{.Player.AudioPlayerURL}}" {{if .Player.AudioPlayerType}}type="{{.Player.AudioPlayerType}}"{{end}}>
+                                        Ваш браузер не поддерживает встроенное воспроизведение аудио.
+                                    </audio>
+                                    {{end}}
                                 </div>
-                                {{if .HasAudioFallback}}
+                                {{if .Player.PreviewStatusLabel}}
+                                <div class="media-player-status">
+                                    <span class="status-chip status-chip-{{.Player.PreviewStatusTone}}">{{.Player.PreviewStatusLabel}}</span>
+                                </div>
+                                {{end}}
+                                {{if .Player.PreviewNotice}}
+                                    {{if eq .Player.PreviewNoticeTone "error"}}
+                                    <div class="notice notice-error media-player-inline-notice">{{.Player.PreviewNotice}}</div>
+                                    {{else if eq .Player.PreviewNoticeTone "warning"}}
+                                    <div class="notice notice-warning media-player-inline-notice">{{.Player.PreviewNotice}}</div>
+                                    {{else}}
+                                    <div class="empty-state transcript-empty media-player-inline-notice">
+                                        <p>{{.Player.PreviewNotice}}</p>
+                                    </div>
+                                    {{end}}
+                                {{end}}
+                                {{if .Player.HasSecondaryAudioFallback}}
                                 <div class="media-player-fallback-note">
                                     <p class="hint">Если видео в браузере не играет или не перематывается, переключитесь на извлечённую аудиодорожку. Таймлайн и подсветка продолжат работать.</p>
                                     <div class="media-player-switches" role="tablist" aria-label="Режим проигрывателя">
@@ -172,7 +196,7 @@
                                 {{end}}
                             {{else}}
                             <div class="empty-state media-player-empty">
-                                <p>{{.PlayerFallbackText}}</p>
+                                <p>{{.Player.PlayerFallbackText}}</p>
                             </div>
                             {{end}}
                         </div>

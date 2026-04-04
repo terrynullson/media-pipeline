@@ -22,8 +22,8 @@ func (r *MediaRepository) Create(ctx context.Context, m media.Media) (int64, err
 		ctx,
 		`INSERT INTO media (
 			original_name, stored_name, extension, mime_type,
-			size_bytes, storage_path, extracted_audio_path, transcript_text, runtime_snapshot_json, status, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			size_bytes, storage_path, extracted_audio_path, preview_video_path, preview_video_size_bytes, preview_video_mime_type, preview_video_created_at, transcript_text, runtime_snapshot_json, status, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.OriginalName,
 		m.StoredName,
 		m.Extension,
@@ -31,6 +31,10 @@ func (r *MediaRepository) Create(ctx context.Context, m media.Media) (int64, err
 		m.SizeBytes,
 		m.StoragePath,
 		m.ExtractedAudioPath,
+		nullIfEmpty(m.PreviewVideoPath),
+		nullIfZero(m.PreviewVideoSizeBytes),
+		nullIfEmpty(m.PreviewVideoMIMEType),
+		formatOptionalTime(m.PreviewVideoCreatedAtUTC),
 		m.TranscriptText,
 		m.RuntimeSnapshotJSON,
 		m.Status,
@@ -109,7 +113,7 @@ func (r *MediaRepository) ListRecent(ctx context.Context, limit int) ([]media.Me
 	rows, err := r.db.QueryContext(
 		ctx,
 		`SELECT id, original_name, stored_name, extension, mime_type,
-			size_bytes, storage_path, extracted_audio_path, transcript_text, runtime_snapshot_json, status, created_at, updated_at
+			size_bytes, storage_path, extracted_audio_path, preview_video_path, preview_video_size_bytes, preview_video_mime_type, preview_video_created_at, transcript_text, runtime_snapshot_json, status, created_at, updated_at
 		 FROM media
 		 ORDER BY datetime(created_at) DESC
 		 LIMIT ?`,
@@ -124,6 +128,10 @@ func (r *MediaRepository) ListRecent(ctx context.Context, limit int) ([]media.Me
 	for rows.Next() {
 		var item media.Media
 		var createdAt, updatedAt string
+		var previewVideoPath sql.NullString
+		var previewVideoSizeBytes sql.NullInt64
+		var previewVideoMIMEType sql.NullString
+		var previewVideoCreatedAt sql.NullString
 		if scanErr := rows.Scan(
 			&item.ID,
 			&item.OriginalName,
@@ -133,6 +141,10 @@ func (r *MediaRepository) ListRecent(ctx context.Context, limit int) ([]media.Me
 			&item.SizeBytes,
 			&item.StoragePath,
 			&item.ExtractedAudioPath,
+			&previewVideoPath,
+			&previewVideoSizeBytes,
+			&previewVideoMIMEType,
+			&previewVideoCreatedAt,
 			&item.TranscriptText,
 			&item.RuntimeSnapshotJSON,
 			&item.Status,
@@ -150,6 +162,7 @@ func (r *MediaRepository) ListRecent(ctx context.Context, limit int) ([]media.Me
 		if err != nil {
 			return nil, fmt.Errorf("parse media updated_at: %w", err)
 		}
+		applyPreviewFields(&item, previewVideoPath, previewVideoSizeBytes, previewVideoMIMEType, previewVideoCreatedAt)
 		items = append(items, item)
 	}
 
@@ -164,7 +177,7 @@ func (r *MediaRepository) GetByID(ctx context.Context, id int64) (media.Media, e
 	row := r.db.QueryRowContext(
 		ctx,
 		`SELECT id, original_name, stored_name, extension, mime_type,
-			size_bytes, storage_path, extracted_audio_path, transcript_text, runtime_snapshot_json, status, created_at, updated_at
+			size_bytes, storage_path, extracted_audio_path, preview_video_path, preview_video_size_bytes, preview_video_mime_type, preview_video_created_at, transcript_text, runtime_snapshot_json, status, created_at, updated_at
 		 FROM media
 		 WHERE id = ?`,
 		id,
@@ -173,6 +186,10 @@ func (r *MediaRepository) GetByID(ctx context.Context, id int64) (media.Media, e
 	var item media.Media
 	var createdAt string
 	var updatedAt string
+	var previewVideoPath sql.NullString
+	var previewVideoSizeBytes sql.NullInt64
+	var previewVideoMIMEType sql.NullString
+	var previewVideoCreatedAt sql.NullString
 	if err := row.Scan(
 		&item.ID,
 		&item.OriginalName,
@@ -182,6 +199,10 @@ func (r *MediaRepository) GetByID(ctx context.Context, id int64) (media.Media, e
 		&item.SizeBytes,
 		&item.StoragePath,
 		&item.ExtractedAudioPath,
+		&previewVideoPath,
+		&previewVideoSizeBytes,
+		&previewVideoMIMEType,
+		&previewVideoCreatedAt,
 		&item.TranscriptText,
 		&item.RuntimeSnapshotJSON,
 		&item.Status,
@@ -204,6 +225,7 @@ func (r *MediaRepository) GetByID(ctx context.Context, id int64) (media.Media, e
 	}
 	item.CreatedAtUTC = parsedCreatedAt
 	item.UpdatedAtUTC = parsedUpdatedAt
+	applyPreviewFields(&item, previewVideoPath, previewVideoSizeBytes, previewVideoMIMEType, previewVideoCreatedAt)
 
 	return item, nil
 }
@@ -237,6 +259,42 @@ func (r *MediaRepository) MarkAudioExtracted(ctx context.Context, id int64, extr
 	}
 	if rowsAffected == 0 {
 		return fmt.Errorf("mark media audio extracted: media %d not found", id)
+	}
+
+	return nil
+}
+
+func (r *MediaRepository) MarkPreviewReady(
+	ctx context.Context,
+	id int64,
+	previewVideoPath string,
+	previewVideoSizeBytes int64,
+	previewVideoMIMEType string,
+	previewVideoCreatedAtUTC time.Time,
+	nowUTC time.Time,
+) error {
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE media
+		 SET preview_video_path = ?, preview_video_size_bytes = ?, preview_video_mime_type = ?, preview_video_created_at = ?, updated_at = ?
+		 WHERE id = ?`,
+		previewVideoPath,
+		previewVideoSizeBytes,
+		previewVideoMIMEType,
+		previewVideoCreatedAtUTC.Format(time.RFC3339),
+		nowUTC.Format(time.RFC3339),
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("mark media preview ready: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("media preview ready rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("mark media preview ready: media %d not found", id)
 	}
 
 	return nil
@@ -330,4 +388,48 @@ func (r *MediaRepository) updateStatusOnly(
 	}
 
 	return nil
+}
+
+func applyPreviewFields(
+	item *media.Media,
+	previewVideoPath sql.NullString,
+	previewVideoSizeBytes sql.NullInt64,
+	previewVideoMIMEType sql.NullString,
+	previewVideoCreatedAt sql.NullString,
+) {
+	if previewVideoPath.Valid {
+		item.PreviewVideoPath = previewVideoPath.String
+	}
+	if previewVideoSizeBytes.Valid {
+		item.PreviewVideoSizeBytes = previewVideoSizeBytes.Int64
+	}
+	if previewVideoMIMEType.Valid {
+		item.PreviewVideoMIMEType = previewVideoMIMEType.String
+	}
+	if previewVideoCreatedAt.Valid {
+		if parsed, err := time.Parse(time.RFC3339, previewVideoCreatedAt.String); err == nil {
+			item.PreviewVideoCreatedAtUTC = &parsed
+		}
+	}
+}
+
+func nullIfEmpty(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func nullIfZero(value int64) any {
+	if value == 0 {
+		return nil
+	}
+	return value
+}
+
+func formatOptionalTime(value *time.Time) any {
+	if value == nil || value.IsZero() {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339)
 }

@@ -32,6 +32,7 @@ type DeleteMediaUseCase struct {
 	screenshots       ScreenshotPathReader
 	uploadStorage     ports.FileStorage
 	audioStorage      ports.FileStorage
+	previewStorage    ports.FileStorage
 	screenshotStorage ports.FileStorage
 	logger            *slog.Logger
 }
@@ -41,6 +42,7 @@ func NewDeleteMediaUseCase(
 	screenshots ScreenshotPathReader,
 	uploadStorage ports.FileStorage,
 	audioStorage ports.FileStorage,
+	previewStorage ports.FileStorage,
 	screenshotStorage ports.FileStorage,
 	logger *slog.Logger,
 ) *DeleteMediaUseCase {
@@ -53,6 +55,7 @@ func NewDeleteMediaUseCase(
 		screenshots:       screenshots,
 		uploadStorage:     uploadStorage,
 		audioStorage:      audioStorage,
+		previewStorage:    previewStorage,
 		screenshotStorage: screenshotStorage,
 		logger:            logger,
 	}
@@ -82,6 +85,7 @@ func (u *DeleteMediaUseCase) Delete(ctx context.Context, mediaID int64) (DeleteM
 	result := DeleteMediaResult{MediaID: mediaID}
 	result.CleanupWarnings = append(result.CleanupWarnings, u.cleanupFile(mediaID, "uploaded media", mediaItem.StoragePath, u.uploadStorage)...)
 	result.CleanupWarnings = append(result.CleanupWarnings, u.cleanupFile(mediaID, "extracted audio", mediaItem.ExtractedAudioPath, u.audioStorage)...)
+	result.CleanupWarnings = append(result.CleanupWarnings, u.cleanupFile(mediaID, "preview video", mediaItem.PreviewVideoPath, u.previewStorage)...)
 	for _, screenshotPath := range screenshotPaths {
 		result.CleanupWarnings = append(result.CleanupWarnings, u.cleanupFile(mediaID, "trigger screenshot", screenshotPath, u.screenshotStorage)...)
 	}

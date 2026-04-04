@@ -144,24 +144,45 @@ func (u *UploadMediaUseCase) Upload(ctx context.Context, in UploadMediaInput) (U
 		return UploadMediaResult{}, fmt.Errorf("create upload job record: %w", err)
 	}
 
-	_, err = u.jobRepo.Create(ctx, job.Job{
-		MediaID:      mediaID,
-		Type:         job.TypeExtractAudio,
-		Status:       job.StatusPending,
-		Attempts:     0,
-		ErrorMessage: "",
-		CreatedAtUTC: nowUTC,
-		UpdatedAtUTC: nowUTC,
-	})
-	if err != nil {
-		logger.Error("create job record failed",
-			slog.Any("error", err),
-			slog.Int64("media_id", mediaID),
-			slog.String("storage_path", storedFile.RelativePath),
-		)
-		u.cleanupMediaRecord(ctx, mediaID)
-		u.cleanupStoredFile(ctx, storedFile.RelativePath, "job create failure")
-		return UploadMediaResult{}, fmt.Errorf("create job record: %w", err)
+	initialJobs := []job.Job{
+		{
+			MediaID:      mediaID,
+			Type:         job.TypeExtractAudio,
+			Status:       job.StatusPending,
+			Attempts:     0,
+			ErrorMessage: "",
+			CreatedAtUTC: nowUTC,
+			UpdatedAtUTC: nowUTC,
+		},
+	}
+	mediaItem := media.Media{
+		Extension: ext,
+		MIMEType:  firstNonEmpty(detectedMIMEType, in.MIMEType),
+	}
+	if !mediaItem.IsAudioOnly() {
+		initialJobs = append(initialJobs, job.Job{
+			MediaID:      mediaID,
+			Type:         job.TypePreparePreviewVideo,
+			Status:       job.StatusPending,
+			Attempts:     0,
+			ErrorMessage: "",
+			CreatedAtUTC: nowUTC,
+			UpdatedAtUTC: nowUTC,
+		})
+	}
+
+	for _, currentJob := range initialJobs {
+		if _, err = u.jobRepo.Create(ctx, currentJob); err != nil {
+			logger.Error("create job record failed",
+				slog.Any("error", err),
+				slog.Int64("media_id", mediaID),
+				slog.String("job_type", string(currentJob.Type)),
+				slog.String("storage_path", storedFile.RelativePath),
+			)
+			u.cleanupMediaRecord(ctx, mediaID)
+			u.cleanupStoredFile(ctx, storedFile.RelativePath, "job create failure")
+			return UploadMediaResult{}, fmt.Errorf("create job record: %w", err)
+		}
 	}
 
 	logger.Info("upload completed",

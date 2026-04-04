@@ -34,6 +34,7 @@ type MediaRepository interface {
 	GetByID(ctx context.Context, id int64) (media.Media, error)
 	MarkProcessing(ctx context.Context, id int64, nowUTC time.Time) error
 	MarkAudioExtracted(ctx context.Context, id int64, extractedAudioPath string, nowUTC time.Time) error
+	MarkPreviewReady(ctx context.Context, id int64, previewVideoPath string, previewVideoSizeBytes int64, previewVideoMIMEType string, previewVideoCreatedAtUTC time.Time, nowUTC time.Time) error
 	MarkAudioReady(ctx context.Context, id int64, nowUTC time.Time) error
 	MarkTranscribing(ctx context.Context, id int64, nowUTC time.Time) error
 	MarkTranscribed(ctx context.Context, id int64, transcriptText string, nowUTC time.Time) error
@@ -78,6 +79,7 @@ type Processor struct {
 	triggerScreenshots    TriggerScreenshotRepository
 	summaries             SummaryRepository
 	audioExtractor        ports.AudioExtractor
+	previewGenerator      ports.PreviewVideoGenerator
 	audioDurations        ports.AudioDurationReader
 	screenshotExtractor   ports.ScreenshotExtractor
 	transcriber           ports.Transcriber
@@ -86,8 +88,10 @@ type Processor struct {
 	logger                *slog.Logger
 	uploadDir             string
 	audioDir              string
+	previewDir            string
 	screenshotsDir        string
 	ffmpegTimeout         time.Duration
+	previewTimeout        time.Duration
 	screenshotTimeout     time.Duration
 	transcribeBaseTimeout time.Duration
 }
@@ -101,6 +105,7 @@ func NewProcessor(
 	triggerScreenshotRepo TriggerScreenshotRepository,
 	summaryRepo SummaryRepository,
 	audioExtractor ports.AudioExtractor,
+	previewGenerator ports.PreviewVideoGenerator,
 	audioDurationReader ports.AudioDurationReader,
 	screenshotExtractor ports.ScreenshotExtractor,
 	transcriber ports.Transcriber,
@@ -108,8 +113,10 @@ func NewProcessor(
 	profiles TranscriptionProfileProvider,
 	uploadDir string,
 	audioDir string,
+	previewDir string,
 	screenshotsDir string,
 	ffmpegTimeout time.Duration,
+	previewTimeout time.Duration,
 	screenshotTimeout time.Duration,
 	transcribeTimeout time.Duration,
 	logger *slog.Logger,
@@ -123,6 +130,7 @@ func NewProcessor(
 		triggerScreenshots:    triggerScreenshotRepo,
 		summaries:             summaryRepo,
 		audioExtractor:        audioExtractor,
+		previewGenerator:      previewGenerator,
 		audioDurations:        audioDurationReader,
 		screenshotExtractor:   screenshotExtractor,
 		transcriber:           transcriber,
@@ -131,8 +139,10 @@ func NewProcessor(
 		logger:                logger,
 		uploadDir:             uploadDir,
 		audioDir:              audioDir,
+		previewDir:            previewDir,
 		screenshotsDir:        screenshotsDir,
 		ffmpegTimeout:         ffmpegTimeout,
+		previewTimeout:        previewTimeout,
 		screenshotTimeout:     screenshotTimeout,
 		transcribeBaseTimeout: transcribeTimeout,
 	}
@@ -144,6 +154,7 @@ func (p *Processor) ProcessNext(ctx context.Context) (bool, error) {
 		job.TypeTranscribe,
 		job.TypeAnalyzeTriggers,
 		job.TypeExtractScreenshots,
+		job.TypePreparePreviewVideo,
 		job.TypeGenerateSummary,
 	} {
 		processed, err := p.processNextByType(ctx, jobType)
@@ -184,6 +195,8 @@ func (p *Processor) processNextByType(ctx context.Context, jobType job.Type) (bo
 		p.processAnalyzeTriggersJob(ctx, claimedJob, logger)
 	case job.TypeExtractScreenshots:
 		p.processExtractScreenshotsJob(ctx, claimedJob, logger)
+	case job.TypePreparePreviewVideo:
+		p.processPreparePreviewVideoJob(ctx, claimedJob, logger)
 	case job.TypeGenerateSummary:
 		p.processGenerateSummaryJob(ctx, claimedJob, logger)
 	default:
@@ -618,6 +631,88 @@ func (p *Processor) processExtractScreenshotsJob(ctx context.Context, claimedJob
 	jobLog.Success(slog.Int("screenshots", len(screenshots)))
 }
 
+func (p *Processor) processPreparePreviewVideoJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
+	jobLog := newJobExecutionLog(logger)
+
+	mediaItem, err := p.media.GetByID(ctx, claimedJob.MediaID)
+	if err != nil {
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить медиа для browser-safe preview", err), false, jobLog, slog.Any("error", err))
+		return
+	}
+
+	if mediaItem.IsAudioOnly() {
+		if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
+			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось завершить задачу preview для audio-only media", err), false, jobLog, slog.Any("error", err))
+			return
+		}
+		jobLog.Success(slog.String("result", "skipped for audio-only media"))
+		return
+	}
+
+	inputPath, err := safeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
+	if err != nil {
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось подготовить путь к исходному видео для preview", err), false, jobLog, slog.Any("error", err))
+		return
+	}
+
+	previewCtx, cancel := context.WithTimeout(ctx, p.previewTimeout)
+	defer cancel()
+
+	jobLog.logger.Info("starting preview generation",
+		slog.String("input_path", inputPath),
+		slog.String("preview_dir", p.previewDir),
+		slog.Duration("timeout", p.previewTimeout),
+	)
+
+	result, err := p.previewGenerator.Generate(previewCtx, ports.GeneratePreviewVideoInput{
+		MediaID:     mediaItem.ID,
+		InputPath:   inputPath,
+		StoredName:  mediaItem.StoredName,
+		OutputDir:   p.previewDir,
+		ProcessedAt: time.Now().UTC().Format("2006-01-02"),
+	})
+	if err != nil {
+		failureMessage := buildPreviewFailureMessage(err, result.Stderr)
+		p.failJob(
+			ctx,
+			claimedJob,
+			mediaItem.ID,
+			failureMessage,
+			false,
+			jobLog,
+			slog.Any("error", err),
+			slog.String("stderr_excerpt", compactDiagnostic(result.Stderr, 500)),
+		)
+		return
+	}
+
+	nowUTC := time.Now().UTC()
+	if err := p.media.MarkPreviewReady(
+		ctx,
+		mediaItem.ID,
+		result.OutputPath,
+		result.SizeBytes,
+		result.MIMEType,
+		nowUTC,
+		nowUTC,
+	); err != nil {
+		_ = cleanupOutputFile(p.previewDir, result.OutputPath)
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось сохранить preview video metadata", err), false, jobLog, slog.Any("error", err))
+		return
+	}
+
+	if err := p.jobs.MarkDone(ctx, claimedJob.ID, nowUTC); err != nil {
+		_ = cleanupOutputFile(p.previewDir, result.OutputPath)
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось завершить задачу подготовки preview video", err), false, jobLog, slog.Any("error", err))
+		return
+	}
+
+	jobLog.Success(
+		slog.String("preview_path", result.OutputPath),
+		slog.Int64("preview_size_bytes", result.SizeBytes),
+	)
+}
+
 func (p *Processor) processGenerateSummaryJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
 	jobLog := newJobExecutionLog(logger)
 
@@ -693,6 +788,7 @@ func (p *Processor) RecoverInterruptedJobs(ctx context.Context) error {
 		{jobType: job.TypeTranscribe, restoreState: p.media.MarkAudioReady},
 		{jobType: job.TypeAnalyzeTriggers},
 		{jobType: job.TypeExtractScreenshots},
+		{jobType: job.TypePreparePreviewVideo},
 		{jobType: job.TypeGenerateSummary},
 	} {
 		if err := p.recoverInterruptedJobType(ctx, recovery.jobType, recovery.restoreState); err != nil {
@@ -959,6 +1055,25 @@ func attrsToAnySlice(attrs []slog.Attr) []any {
 	}
 
 	return values
+}
+
+func buildPreviewFailureMessage(err error, diagnostics string) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "Истекло время ожидания подготовки browser-safe preview видео."
+	}
+
+	reason := compactDiagnostic(diagnostics, 240)
+	if reason == "" {
+		reason = compactDiagnostic(err.Error(), 240)
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "не удалось определить причину"
+	} else if strings.Contains(strings.ToLower(reason), "exit status") {
+		reason = "ffmpeg завершился с ошибкой"
+	}
+
+	return "Не удалось подготовить browser-safe preview видео: " + reason
 }
 
 func buildUserFacingStageError(jobType job.Type, err error, diagnostics string) string {

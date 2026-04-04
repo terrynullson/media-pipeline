@@ -60,6 +60,7 @@ func TestTranscriptViewUseCase_LoadIncludesTranscriptAndSettings(t *testing.T) {
 		t.TempDir(),
 		stubTranscriptAudioDurationReader{},
 		t.TempDir(),
+		t.TempDir(),
 		5*time.Minute,
 	)
 
@@ -93,6 +94,7 @@ func TestTranscriptViewUseCase_LoadKeepsWorkingWhenPayloadInvalid(t *testing.T) 
 		stubTranscriptJobReader{item: job.Job{MediaID: 11, Type: job.TypeTranscribe, Payload: `{"broken":true}`}, ok: true},
 		t.TempDir(),
 		stubTranscriptAudioDurationReader{},
+		t.TempDir(),
 		t.TempDir(),
 		5*time.Minute,
 	)
@@ -139,6 +141,7 @@ func TestTranscriptViewUseCase_LoadBuildsRuntimePolicyFromAudioDuration(t *testi
 		t.TempDir(),
 		stubTranscriptAudioDurationReader{duration: 60 * time.Minute},
 		audioDir,
+		t.TempDir(),
 		5*time.Minute,
 	)
 
@@ -181,6 +184,7 @@ func TestTranscriptViewUseCase_LoadResolvesAudioFallbackSource(t *testing.T) {
 		t.TempDir(),
 		stubTranscriptAudioDurationReader{},
 		audioDir,
+		t.TempDir(),
 		5*time.Minute,
 	)
 
@@ -320,6 +324,7 @@ func TestTranscriptViewUseCase_LoadPropagatesMediaError(t *testing.T) {
 		stubTranscriptJobReader{},
 		t.TempDir(),
 		stubTranscriptAudioDurationReader{},
+		t.TempDir(),
 		t.TempDir(),
 		5*time.Minute,
 	)

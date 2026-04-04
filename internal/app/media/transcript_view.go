@@ -55,6 +55,7 @@ type TranscriptViewUseCase struct {
 	uploadDir      string
 	audioDurations TranscriptAudioDurationReader
 	audioDir       string
+	previewDir     string
 	baseTimeout    time.Duration
 }
 
@@ -68,6 +69,7 @@ type TranscriptViewResult struct {
 	TranscribeJob       *job.Job
 	AnalyzeJob          *job.Job
 	ScreenshotJob       *job.Job
+	PreviewJob          *job.Job
 	Summary             domainsummary.Summary
 	HasSummary          bool
 	SummaryJob          *job.Job
@@ -80,6 +82,8 @@ type TranscriptViewResult struct {
 	MediaSourceReady    bool
 	AudioSourcePath     string
 	AudioSourceReady    bool
+	PreviewSourcePath   string
+	PreviewSourceReady  bool
 }
 
 func NewTranscriptViewUseCase(
@@ -92,6 +96,7 @@ func NewTranscriptViewUseCase(
 	uploadDir string,
 	audioDurationReader TranscriptAudioDurationReader,
 	audioDir string,
+	previewDir string,
 	baseTimeout time.Duration,
 ) *TranscriptViewUseCase {
 	return &TranscriptViewUseCase{
@@ -104,6 +109,7 @@ func NewTranscriptViewUseCase(
 		uploadDir:      uploadDir,
 		audioDurations: audioDurationReader,
 		audioDir:       audioDir,
+		previewDir:     previewDir,
 		baseTimeout:    baseTimeout,
 	}
 }
@@ -161,6 +167,9 @@ func (u *TranscriptViewUseCase) Load(ctx context.Context, mediaID int64) (Transc
 	if currentJob, ok := jobsByType[job.TypeExtractScreenshots]; ok {
 		result.ScreenshotJob = &currentJob
 	}
+	if currentJob, ok := jobsByType[job.TypePreparePreviewVideo]; ok {
+		result.PreviewJob = &currentJob
+	}
 	if currentJob, ok := jobsByType[job.TypeGenerateSummary]; ok {
 		result.SummaryJob = &currentJob
 	}
@@ -176,6 +185,7 @@ func (u *TranscriptViewUseCase) Load(ctx context.Context, mediaID int64) (Transc
 
 	result.MediaSourcePath, result.MediaSourceReady = u.resolvePlayableMediaSource(mediaItem)
 	result.AudioSourcePath, result.AudioSourceReady = u.resolvePlayableAudioSource(mediaItem)
+	result.PreviewSourcePath, result.PreviewSourceReady = u.resolvePlayablePreviewSource(mediaItem)
 
 	if result.TranscribeJob == nil || strings.TrimSpace(result.TranscribeJob.Payload) == "" {
 		return result, nil
@@ -252,6 +262,22 @@ func (u *TranscriptViewUseCase) resolvePlayableAudioSource(mediaItem domainmedia
 	}
 
 	return filepath.ToSlash(filepath.Clean(mediaItem.ExtractedAudioPath)), true
+}
+
+func (u *TranscriptViewUseCase) resolvePlayablePreviewSource(mediaItem domainmedia.Media) (string, bool) {
+	if strings.TrimSpace(u.previewDir) == "" || strings.TrimSpace(mediaItem.PreviewVideoPath) == "" {
+		return "", false
+	}
+
+	previewPath, err := safeJoinBasePath(u.previewDir, mediaItem.PreviewVideoPath)
+	if err != nil {
+		return "", false
+	}
+	if _, err := os.Stat(previewPath); err != nil {
+		return "", false
+	}
+
+	return filepath.ToSlash(filepath.Clean(mediaItem.PreviewVideoPath)), true
 }
 
 func safeJoinBasePath(baseDir string, relativePath string) (string, error) {

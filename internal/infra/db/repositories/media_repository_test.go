@@ -136,3 +136,45 @@ func TestMediaRepository_PersistsRuntimeSnapshot(t *testing.T) {
 		t.Fatal("RuntimeSnapshotJSON = empty, want persisted value")
 	}
 }
+
+func TestMediaRepository_MarkPreviewReadyPersistsPreviewMetadata(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
+
+	mediaRepo := NewMediaRepository(sqlDB)
+	mediaID := createTestMedia(t, ctx, mediaRepo)
+	nowUTC := time.Date(2026, 4, 3, 14, 0, 0, 0, time.UTC)
+	previewCreatedAtUTC := nowUTC.Add(-time.Minute)
+
+	if err := mediaRepo.MarkPreviewReady(
+		ctx,
+		mediaID,
+		"2026-04-03/media_1_preview.mp4",
+		987654,
+		"video/mp4",
+		previewCreatedAtUTC,
+		nowUTC,
+	); err != nil {
+		t.Fatalf("MarkPreviewReady() error = %v", err)
+	}
+
+	item, err := mediaRepo.GetByID(ctx, mediaID)
+	if err != nil {
+		t.Fatalf("GetByID() error = %v", err)
+	}
+	if item.PreviewVideoPath != "2026-04-03/media_1_preview.mp4" {
+		t.Fatalf("PreviewVideoPath = %q, want persisted value", item.PreviewVideoPath)
+	}
+	if item.PreviewVideoSizeBytes != 987654 {
+		t.Fatalf("PreviewVideoSizeBytes = %d, want 987654", item.PreviewVideoSizeBytes)
+	}
+	if item.PreviewVideoMIMEType != "video/mp4" {
+		t.Fatalf("PreviewVideoMIMEType = %q, want video/mp4", item.PreviewVideoMIMEType)
+	}
+	if item.PreviewVideoCreatedAtUTC == nil || !item.PreviewVideoCreatedAtUTC.Equal(previewCreatedAtUTC) {
+		t.Fatalf("PreviewVideoCreatedAtUTC = %#v, want %s", item.PreviewVideoCreatedAtUTC, previewCreatedAtUTC)
+	}
+}

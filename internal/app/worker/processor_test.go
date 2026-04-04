@@ -100,6 +100,7 @@ func TestProcessor_ProcessNextExtractAudioEnqueuesTranscribe(t *testing.T) {
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		audioExtractor,
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: time.Minute},
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
@@ -108,6 +109,8 @@ func TestProcessor_ProcessNextExtractAudioEnqueuesTranscribe(t *testing.T) {
 		uploadDir,
 		audioDir,
 		t.TempDir(),
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		10*time.Second,
@@ -207,6 +210,7 @@ func TestProcessor_ProcessNextTranscribePersistsTranscript(t *testing.T) {
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: 3 * time.Second},
 		&stubScreenshotExtractor{},
 		transcriber,
@@ -215,6 +219,8 @@ func TestProcessor_ProcessNextTranscribePersistsTranscript(t *testing.T) {
 		t.TempDir(),
 		audioDir,
 		t.TempDir(),
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		10*time.Second,
@@ -322,6 +328,7 @@ func TestProcessor_ProcessNextTranscribePersistsEstimatedProgress(t *testing.T) 
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: time.Minute},
 		&stubScreenshotExtractor{},
 		transcriber,
@@ -330,6 +337,8 @@ func TestProcessor_ProcessNextTranscribePersistsEstimatedProgress(t *testing.T) 
 		t.TempDir(),
 		audioDir,
 		t.TempDir(),
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		10*time.Second,
@@ -404,6 +413,7 @@ func TestProcessor_ProcessNextExtractAudioDoesNotDuplicateTranscribeJob(t *testi
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		audioExtractor,
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: time.Minute},
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
@@ -412,6 +422,8 @@ func TestProcessor_ProcessNextExtractAudioDoesNotDuplicateTranscribeJob(t *testi
 		uploadDir,
 		audioDir,
 		t.TempDir(),
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		10*time.Second,
@@ -492,6 +504,7 @@ func TestProcessor_ProcessNextTranscribeFailureStoresReadableError(t *testing.T)
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: 2 * time.Minute},
 		&stubScreenshotExtractor{},
 		transcriber,
@@ -500,6 +513,8 @@ func TestProcessor_ProcessNextTranscribeFailureStoresReadableError(t *testing.T)
 		t.TempDir(),
 		audioDir,
 		t.TempDir(),
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		10*time.Second,
@@ -586,6 +601,7 @@ func TestProcessor_ProcessNextTranscribeFailureDoesNotExposeBarePythonReason(t *
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: 2 * time.Minute},
 		&stubScreenshotExtractor{},
 		transcriber,
@@ -594,6 +610,8 @@ func TestProcessor_ProcessNextTranscribeFailureDoesNotExposeBarePythonReason(t *
 		t.TempDir(),
 		audioDir,
 		t.TempDir(),
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		10*time.Second,
@@ -680,6 +698,7 @@ func TestProcessor_ProcessNextTranscribeLongSmallCPUUsesAdaptiveTimeout(t *testi
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: 60 * time.Minute},
 		&stubScreenshotExtractor{},
 		transcriber,
@@ -688,9 +707,11 @@ func TestProcessor_ProcessNextTranscribeLongSmallCPUUsesAdaptiveTimeout(t *testi
 		t.TempDir(),
 		audioDir,
 		t.TempDir(),
+		t.TempDir(),
 		10*time.Second,
 		10*time.Second,
 		5*time.Minute,
+		10*time.Second,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
@@ -766,6 +787,7 @@ func TestProcessor_ProcessNextTranscribeBlocksUnrealisticPolicy(t *testing.T) {
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: 2 * time.Hour},
 		&stubScreenshotExtractor{},
 		transcriber,
@@ -774,9 +796,11 @@ func TestProcessor_ProcessNextTranscribeBlocksUnrealisticPolicy(t *testing.T) {
 		t.TempDir(),
 		audioDir,
 		t.TempDir(),
+		t.TempDir(),
 		10*time.Second,
 		10*time.Second,
 		5*time.Minute,
+		10*time.Second,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
@@ -860,6 +884,7 @@ func TestProcessor_ProcessNextTranscribeTimeoutFailureIncludesPolicyContext(t *t
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: 60 * time.Minute},
 		&stubScreenshotExtractor{},
 		transcriber,
@@ -868,9 +893,11 @@ func TestProcessor_ProcessNextTranscribeTimeoutFailureIncludesPolicyContext(t *t
 		t.TempDir(),
 		audioDir,
 		t.TempDir(),
+		t.TempDir(),
 		10*time.Second,
 		10*time.Second,
 		5*time.Minute,
+		10*time.Second,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
@@ -929,6 +956,7 @@ func TestProcessor_ProcessNextAnalyzeTriggersPersistsEvents(t *testing.T) {
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: time.Minute},
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
@@ -937,6 +965,8 @@ func TestProcessor_ProcessNextAnalyzeTriggersPersistsEvents(t *testing.T) {
 		t.TempDir(),
 		t.TempDir(),
 		t.TempDir(),
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		10*time.Second,
@@ -1027,6 +1057,7 @@ func TestProcessor_ProcessNextExtractScreenshotsPersistsRows(t *testing.T) {
 		triggerScreenshotRepo,
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: time.Minute},
 		screenshotExtractor,
 		&stubTranscriber{},
@@ -1035,6 +1066,8 @@ func TestProcessor_ProcessNextExtractScreenshotsPersistsRows(t *testing.T) {
 		uploadDir,
 		t.TempDir(),
 		screenshotsDir,
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		10*time.Second,
@@ -1089,6 +1122,7 @@ func TestProcessor_ProcessNextExtractScreenshotsSkipsAudioOnlyMedia(t *testing.T
 		triggerScreenshotRepo,
 		&stubSummaryRepository{},
 		&stubAudioExtractor{},
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: time.Minute},
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
@@ -1097,6 +1131,8 @@ func TestProcessor_ProcessNextExtractScreenshotsSkipsAudioOnlyMedia(t *testing.T
 		t.TempDir(),
 		t.TempDir(),
 		t.TempDir(),
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		10*time.Second,
@@ -1169,6 +1205,7 @@ func TestProcessor_ProcessNextGenerateSummaryPersistsSummary(t *testing.T) {
 		triggerScreenshotRepo,
 		summaryRepo,
 		&stubAudioExtractor{},
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: time.Minute},
 		&stubScreenshotExtractor{},
 		&stubTranscriber{},
@@ -1177,6 +1214,8 @@ func TestProcessor_ProcessNextGenerateSummaryPersistsSummary(t *testing.T) {
 		t.TempDir(),
 		t.TempDir(),
 		t.TempDir(),
+		t.TempDir(),
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		10*time.Second,
@@ -1220,6 +1259,7 @@ func newTestProcessor(
 		&stubTriggerScreenshotRepository{},
 		&stubSummaryRepository{},
 		audioExtractor,
+		&stubPreviewVideoGenerator{},
 		&stubAudioDurationReader{duration: time.Minute},
 		&stubScreenshotExtractor{},
 		transcriber,
@@ -1227,7 +1267,9 @@ func newTestProcessor(
 		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
 		"./data/uploads",
 		"./data/audio",
+		"./data/previews",
 		"./data/screenshots",
+		10*time.Second,
 		10*time.Second,
 		10*time.Second,
 		10*time.Second,
@@ -1321,6 +1363,7 @@ type stubMediaRepository struct {
 	markAudioReadyIDs       []int64
 	markTranscribingIDs     []int64
 	markAudioExtractedCalls []markAudioExtractedCall
+	markPreviewReadyCalls   []markPreviewReadyCall
 	markTranscribedCalls    []markTranscribedCall
 	markFailedIDs           []int64
 }
@@ -1328,6 +1371,13 @@ type stubMediaRepository struct {
 type markAudioExtractedCall struct {
 	id   int64
 	path string
+}
+
+type markPreviewReadyCall struct {
+	id       int64
+	path     string
+	size     int64
+	mimeType string
 }
 
 type markTranscribedCall struct {
@@ -1345,6 +1395,11 @@ func (s *stubMediaRepository) MarkProcessing(context.Context, int64, time.Time) 
 
 func (s *stubMediaRepository) MarkAudioExtracted(_ context.Context, id int64, path string, _ time.Time) error {
 	s.markAudioExtractedCalls = append(s.markAudioExtractedCalls, markAudioExtractedCall{id: id, path: path})
+	return nil
+}
+
+func (s *stubMediaRepository) MarkPreviewReady(_ context.Context, id int64, path string, sizeBytes int64, mimeType string, _ time.Time, _ time.Time) error {
+	s.markPreviewReadyCalls = append(s.markPreviewReadyCalls, markPreviewReadyCall{id: id, path: path, size: sizeBytes, mimeType: mimeType})
 	return nil
 }
 
@@ -1497,6 +1552,15 @@ type stubAudioExtractor struct {
 }
 
 func (s *stubAudioExtractor) Extract(context.Context, ports.ExtractAudioInput) (ports.ExtractAudioOutput, error) {
+	return s.output, s.err
+}
+
+type stubPreviewVideoGenerator struct {
+	output ports.GeneratePreviewVideoOutput
+	err    error
+}
+
+func (s *stubPreviewVideoGenerator) Generate(context.Context, ports.GeneratePreviewVideoInput) (ports.GeneratePreviewVideoOutput, error) {
 	return s.output, s.err
 }
 
