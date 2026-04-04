@@ -1001,6 +1001,9 @@ func humanizeUserReason(jobType job.Type, reason string) string {
 	if trimmed == "" {
 		return ""
 	}
+	if isUnhelpfulTranscriptionReason(trimmed) {
+		return ""
+	}
 
 	lower := strings.ToLower(trimmed)
 	if jobType == job.TypeTranscribe {
@@ -1023,6 +1026,16 @@ func humanizeUserReason(jobType job.Type, reason string) string {
 	}
 
 	return trimmed
+}
+
+func isUnhelpfulTranscriptionReason(reason string) bool {
+	normalized := strings.TrimSpace(strings.ToLower(reason))
+	switch normalized {
+	case "python", "runtimeerror: python", "error: python":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildInternalFailureMessage(prefix string, err error) string {

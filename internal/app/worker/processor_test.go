@@ -524,6 +524,98 @@ func TestProcessor_ProcessNextTranscribeFailureStoresReadableError(t *testing.T)
 	}
 }
 
+func TestProcessor_ProcessNextTranscribeFailureDoesNotExposeBarePythonReason(t *testing.T) {
+	t.Parallel()
+
+	audioDir := t.TempDir()
+	audioRelativePath := filepath.ToSlash(filepath.Join("2026-04-03", "media_51_audio.wav"))
+	audioPath := filepath.Join(audioDir, filepath.FromSlash(audioRelativePath))
+	if err := os.MkdirAll(filepath.Dir(audioPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(audioPath, []byte("audio"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	jobRepo := &stubJobRepository{
+		claimByType: map[job.Type]claimResult{
+			job.TypeTranscribe: {
+				job: job.Job{
+					ID:      42,
+					MediaID: 52,
+					Type:    job.TypeTranscribe,
+					Payload: mustEncodeTranscribePayload(t, job.TranscribePayload{
+						Settings: transcription.Settings{
+							Backend:     transcription.BackendFasterWhisper,
+							ModelName:   "small",
+							Device:      "cuda",
+							ComputeType: "int8_float32",
+							Language:    "ru",
+							BeamSize:    5,
+							VADEnabled:  true,
+						},
+					}),
+					Status: job.StatusRunning,
+				},
+				ok: true,
+			},
+		},
+	}
+	mediaRepo := &stubMediaRepository{
+		mediaByID: map[int64]media.Media{
+			52: {
+				ID:                 52,
+				ExtractedAudioPath: audioRelativePath,
+				Status:             media.StatusAudioExtracted,
+			},
+		},
+	}
+	transcriber := &stubTranscriber{
+		err: &ports.TranscriptionError{
+			Cause:       errors.New("run python transcription: exit status 9009"),
+			Diagnostics: "Python",
+		},
+	}
+
+	processor := NewProcessor(
+		jobRepo,
+		mediaRepo,
+		&stubTranscriptRepository{},
+		&stubTriggerRuleRepository{},
+		&stubTriggerEventRepository{},
+		&stubTriggerScreenshotRepository{},
+		&stubSummaryRepository{},
+		&stubAudioExtractor{},
+		&stubAudioDurationReader{duration: 2 * time.Minute},
+		&stubScreenshotExtractor{},
+		transcriber,
+		&stubSummarizer{},
+		&stubTranscriptionProfileProvider{profile: transcription.DefaultProfile("")},
+		t.TempDir(),
+		audioDir,
+		t.TempDir(),
+		10*time.Second,
+		10*time.Second,
+		10*time.Second,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	processed, err := processor.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessNext() error = %v", err)
+	}
+	if !processed {
+		t.Fatal("ProcessNext() processed = false, want true")
+	}
+	if len(jobRepo.markFailedCalls) != 1 {
+		t.Fatalf("mark failed calls = %d, want 1", len(jobRepo.markFailedCalls))
+	}
+	got := jobRepo.markFailedCalls[0].errorMessage
+	if strings.Contains(strings.ToLower(got), "python") {
+		t.Fatalf("errorMessage = %q, want user-facing message without bare Python", got)
+	}
+}
+
 func TestProcessor_ProcessNextTranscribeLongSmallCPUUsesAdaptiveTimeout(t *testing.T) {
 	t.Parallel()
 
