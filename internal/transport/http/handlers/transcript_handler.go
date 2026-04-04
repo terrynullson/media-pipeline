@@ -71,67 +71,67 @@ type TranscriptPageViewData struct {
 }
 
 type TranscriptPlayerView struct {
-	HasMediaPlayer            bool
-	IsAudioOnly               bool
-	HasVideoPlayer            bool
-	VideoSourceURL            string
-	VideoSourceType           string
-	HasAudioPlayer            bool
-	AudioPlayerURL            string
-	AudioPlayerType           string
-	HasSecondaryAudioFallback bool
-	AudioFallbackURL          string
-	AudioFallbackType         string
-	UseAudioFallbackAsPrimary bool
-	PreviewStatusLabel        string
-	PreviewStatusTone         string
-	PreviewNotice             string
-	PreviewNoticeTone         string
-	PlayerFallbackText        string
+	HasMediaPlayer            bool   `json:"hasMediaPlayer"`
+	IsAudioOnly               bool   `json:"isAudioOnly"`
+	HasVideoPlayer            bool   `json:"hasVideoPlayer"`
+	VideoSourceURL            string `json:"videoSourceURL"`
+	VideoSourceType           string `json:"videoSourceType"`
+	HasAudioPlayer            bool   `json:"hasAudioPlayer"`
+	AudioPlayerURL            string `json:"audioPlayerURL"`
+	AudioPlayerType           string `json:"audioPlayerType"`
+	HasSecondaryAudioFallback bool   `json:"hasSecondaryAudioFallback"`
+	AudioFallbackURL          string `json:"audioFallbackURL"`
+	AudioFallbackType         string `json:"audioFallbackType"`
+	UseAudioFallbackAsPrimary bool   `json:"useAudioFallbackAsPrimary"`
+	PreviewStatusLabel        string `json:"previewStatusLabel"`
+	PreviewStatusTone         string `json:"previewStatusTone"`
+	PreviewNotice             string `json:"previewNotice"`
+	PreviewNoticeTone         string `json:"previewNoticeTone"`
+	PlayerFallbackText        string `json:"playerFallbackText"`
 }
 
 type TranscriptSettingItem struct {
-	Label string
-	Value string
+	Label string `json:"label"`
+	Value string `json:"value"`
 }
 
 type TranscriptRuntimePolicyView struct {
-	Visible          bool
-	Title            string
-	Tone             string
-	Summary          string
-	DurationLabel    string
-	DurationClass    string
-	EffectiveTimeout string
-	Warnings         []string
+	Visible          bool     `json:"visible"`
+	Title            string   `json:"title"`
+	Tone             string   `json:"tone"`
+	Summary          string   `json:"summary"`
+	DurationLabel    string   `json:"durationLabel"`
+	DurationClass    string   `json:"durationClass"`
+	EffectiveTimeout string   `json:"effectiveTimeout"`
+	Warnings         []string `json:"warnings"`
 }
 
 type TranscriptSegmentView struct {
-	Index         int
-	StartSec      float64
-	EndSec        float64
-	StartLabel    string
-	EndLabel      string
-	Text          string
-	Confidence    string
-	HasConfidence bool
+	Index         int     `json:"index"`
+	StartSec      float64 `json:"startSec"`
+	EndSec        float64 `json:"endSec"`
+	StartLabel    string  `json:"startLabel"`
+	EndLabel      string  `json:"endLabel"`
+	Text          string  `json:"text"`
+	Confidence    string  `json:"confidence"`
+	HasConfidence bool    `json:"hasConfidence"`
 }
 
 type TriggerEventView struct {
-	Category          string
-	RuleName          string
-	MatchedPhrase     string
-	SeekSec           float64
-	Timestamp         string
-	SegmentText       string
-	ContextText       string
-	HasScreenshot     bool
-	ScreenshotSeekSec float64
-	ScreenshotURL     string
-	ScreenshotAlt     string
-	ScreenshotW       int
-	ScreenshotH       int
-	Placeholder       string
+	Category          string  `json:"category"`
+	RuleName          string  `json:"ruleName"`
+	MatchedPhrase     string  `json:"matchedPhrase"`
+	SeekSec           float64 `json:"seekSec"`
+	Timestamp         string  `json:"timestamp"`
+	SegmentText       string  `json:"segmentText"`
+	ContextText       string  `json:"contextText"`
+	HasScreenshot     bool    `json:"hasScreenshot"`
+	ScreenshotSeekSec float64 `json:"screenshotSeekSec"`
+	ScreenshotURL     string  `json:"screenshotURL"`
+	ScreenshotAlt     string  `json:"screenshotAlt"`
+	ScreenshotW       int     `json:"screenshotW"`
+	ScreenshotH       int     `json:"screenshotH"`
+	Placeholder       string  `json:"placeholder"`
 }
 
 func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {

@@ -126,13 +126,13 @@ type IndexViewData struct {
 }
 
 type TranscriptionSettingsForm struct {
-	Backend     string
-	ModelName   string
-	Device      string
-	ComputeType string
-	Language    string
-	BeamSize    int
-	VADEnabled  bool
+	Backend     string `json:"backend"`
+	ModelName   string `json:"modelName"`
+	Device      string `json:"device"`
+	ComputeType string `json:"computeType"`
+	Language    string `json:"language"`
+	BeamSize    int    `json:"beamSize"`
+	VADEnabled  bool   `json:"vadEnabled"`
 }
 
 type TriggerRuleForm struct {
@@ -143,17 +143,17 @@ type TriggerRuleForm struct {
 }
 
 type TriggerRuleView struct {
-	ID           int64
-	Name         string
-	Category     string
-	Pattern      string
-	MatchMode    string
-	Enabled      bool
-	ToggleURL    string
-	DeleteURL    string
-	ToggleLabel  string
-	EnabledLabel string
-	EnabledTone  string
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Category     string `json:"category"`
+	Pattern      string `json:"pattern"`
+	MatchMode    string `json:"matchMode"`
+	Enabled      bool   `json:"enabled"`
+	ToggleURL    string `json:"toggleUrl"`
+	DeleteURL    string `json:"deleteUrl"`
+	ToggleLabel  string `json:"toggleLabel"`
+	EnabledLabel string `json:"enabledLabel"`
+	EnabledTone  string `json:"enabledTone"`
 }
 
 func NewUploadHandler(

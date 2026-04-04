@@ -15,34 +15,34 @@ const (
 )
 
 type PipelineStepView struct {
-	Label           string
-	StatusLabel     string
-	Tone            string
-	IsCurrent       bool
-	IsFailed        bool
-	TimingText      string
-	StartedAtLabel  string
-	FinishedAtLabel string
-	DurationLabel   string
-	ProgressLabel   string
-	ProgressPercent int
-	ProgressVisible bool
+	Label           string `json:"label"`
+	StatusLabel     string `json:"statusLabel"`
+	Tone            string `json:"tone"`
+	IsCurrent       bool   `json:"isCurrent"`
+	IsFailed        bool   `json:"isFailed"`
+	TimingText      string `json:"timingText"`
+	StartedAtLabel  string `json:"startedAtLabel"`
+	FinishedAtLabel string `json:"finishedAtLabel"`
+	DurationLabel   string `json:"durationLabel"`
+	ProgressLabel   string `json:"progressLabel"`
+	ProgressPercent int    `json:"progressPercent"`
+	ProgressVisible bool   `json:"progressVisible"`
 }
 
 type MediaPipelineView struct {
-	StatusLabel       string
-	StatusTone        string
-	StageLabel        string
-	StageValue        int
-	StageTotal        int
-	IsActive          bool
-	CurrentStage      string
-	FailedStage       string
-	ErrorSummary      string
-	ErrorLocation     string
-	Steps             []PipelineStepView
-	AutomaticJobFail  *job.Job
-	CurrentTimingText string
+	StatusLabel       string             `json:"statusLabel"`
+	StatusTone        string             `json:"statusTone"`
+	StageLabel        string             `json:"stageLabel"`
+	StageValue        int                `json:"stageValue"`
+	StageTotal        int                `json:"stageTotal"`
+	IsActive          bool               `json:"isActive"`
+	CurrentStage      string             `json:"currentStage"`
+	FailedStage       string             `json:"failedStage"`
+	ErrorSummary      string             `json:"errorSummary"`
+	ErrorLocation     string             `json:"errorLocation"`
+	Steps             []PipelineStepView `json:"steps"`
+	AutomaticJobFail  *job.Job           `json:"automaticJobFail,omitempty"`
+	CurrentTimingText string             `json:"currentTimingText"`
 }
 
 type pipelineStepState struct {

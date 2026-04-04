@@ -109,7 +109,11 @@ func main() {
 		logger.Error("resolve static path", slog.Any("error", err))
 		os.Exit(1)
 	}
-	router := httptransport.NewRouter(logger, uploadHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir)
+	frontendDistPath, frontendErr := infraRuntime.ResolvePath("frontend/dist")
+	if frontendErr != nil {
+		frontendDistPath = ""
+	}
+	router := httptransport.NewRouter(logger, uploadHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir, frontendDistPath)
 
 	addr := ":" + cfg.AppPort
 	logger.Info("starting web server",

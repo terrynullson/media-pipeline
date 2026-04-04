@@ -4,17 +4,31 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"media-pipeline/internal/transport/http/handlers"
 )
 
-func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, staticDir string, uploadsDir string, audioDir string, previewDir string, screenshotsDir string) http.Handler {
+func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, staticDir string, uploadsDir string, audioDir string, previewDir string, screenshotsDir string, frontendDir ...string) http.Handler {
 	r := chi.NewRouter()
 	r.Use(RequestIDMiddleware(logger))
 	r.Use(AccessLogMiddleware(logger))
 	r.Use(RecoverMiddleware(logger))
+
+	r.Get("/api/dashboard", uploadHandler.APIDashboard)
+	r.Get("/api/media", uploadHandler.APIMediaList)
+	r.Get("/api/jobs", uploadHandler.APIJobsList)
+	r.Get("/api/media/{mediaID}", uploadHandler.APIMediaDetail)
+	r.Get("/api/settings/transcription", uploadHandler.APITranscriptionSettings)
+	r.Put("/api/settings/transcription", uploadHandler.APIUpdateTranscriptionSettings)
+	r.Get("/api/trigger-rules", uploadHandler.APITriggerRules)
+	r.Post("/api/trigger-rules", uploadHandler.APICreateTriggerRule)
+	r.Patch("/api/trigger-rules/{ruleID}", uploadHandler.APIUpdateTriggerRule)
+	r.Delete("/api/trigger-rules/{ruleID}", uploadHandler.APIDeleteTriggerRule)
 
 	r.Get("/", uploadHandler.Index)
 	r.Post("/upload", uploadHandler.Upload)
@@ -47,5 +61,36 @@ func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, stati
 	screenshotFS := http.FileServer(http.Dir(screenshotsDir))
 	r.Handle("/media-screenshots/*", http.StripPrefix("/media-screenshots/", screenshotFS))
 
+	currentFrontendDir := ""
+	if len(frontendDir) > 0 {
+		currentFrontendDir = frontendDir[0]
+	}
+	if strings.TrimSpace(currentFrontendDir) != "" {
+		spaHandler := newSPAHandler(currentFrontendDir)
+		r.Get("/app", spaHandler)
+		r.Get("/app/*", spaHandler)
+	}
+
 	return r
+}
+
+func newSPAHandler(frontendDir string) http.HandlerFunc {
+	indexPath := filepath.Join(frontendDir, "index.html")
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		requestPath := strings.TrimPrefix(r.URL.Path, "/app")
+		requestPath = strings.TrimPrefix(requestPath, "/")
+		if requestPath == "" {
+			http.ServeFile(w, r, indexPath)
+			return
+		}
+
+		candidate := filepath.Join(frontendDir, filepath.FromSlash(requestPath))
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			http.ServeFile(w, r, candidate)
+			return
+		}
+
+		http.ServeFile(w, r, indexPath)
+	}
 }
