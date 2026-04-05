@@ -34,6 +34,7 @@ type Profile struct {
 	Language     string
 	BeamSize     int
 	VADEnabled   bool
+	UITheme      string
 	IsDefault    bool
 	CreatedAtUTC time.Time
 	UpdatedAtUTC time.Time
@@ -48,6 +49,7 @@ func DefaultProfile(language string) Profile {
 		Language:    normalizeLanguage(language),
 		BeamSize:    5,
 		VADEnabled:  true,
+		UITheme:     "old",
 		IsDefault:   true,
 	}
 }

@@ -133,6 +133,7 @@ type TranscriptionSettingsForm struct {
 	Language    string `json:"language"`
 	BeamSize    int    `json:"beamSize"`
 	VADEnabled  bool   `json:"vadEnabled"`
+	UITheme     string `json:"uiTheme"`
 }
 
 type TriggerRuleForm struct {
@@ -216,6 +217,17 @@ func (h *UploadHandler) Index(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.renderIndex(w, r, "", successMessage, "", settingsSuccess, "", triggerRuleSuccess, nil, nil)
+}
+
+func (h *UploadHandler) Workspace(w http.ResponseWriter, r *http.Request) {
+	profile, err := h.transcriptionSvc.GetCurrent(r.Context())
+	if err != nil {
+		observability.LoggerFromContext(r.Context(), h.logger).Error("load workspace preference failed", slog.Any("error", err))
+		http.Redirect(w, r, "/app", http.StatusSeeOther)
+		return
+	}
+
+	http.Redirect(w, r, preferredAppURL(profile.UITheme), http.StatusSeeOther)
 }
 
 func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
@@ -649,6 +661,7 @@ func parseTranscriptionProfileForm(r *http.Request) (transcription.Profile, Tran
 		Language:    strings.TrimSpace(r.FormValue("language")),
 		BeamSize:    beamSize,
 		VADEnabled:  r.FormValue("vad_enabled") == "on",
+		UITheme:     strings.TrimSpace(r.FormValue("ui_theme")),
 		IsDefault:   true,
 	}
 	profile = transcription.NormalizeProfile(profile)
@@ -670,6 +683,7 @@ func buildSettingsForm(profile transcription.Profile) TranscriptionSettingsForm 
 		Language:    profile.Language,
 		BeamSize:    profile.BeamSize,
 		VADEnabled:  profile.VADEnabled,
+		UITheme:     profile.UITheme,
 	}
 }
 
@@ -683,6 +697,7 @@ func buildSettingsFormFromRequest(r *http.Request) *TranscriptionSettingsForm {
 		Language:    strings.TrimSpace(r.FormValue("language")),
 		BeamSize:    beamSize,
 		VADEnabled:  r.FormValue("vad_enabled") == "on",
+		UITheme:     strings.TrimSpace(r.FormValue("ui_theme")),
 	}
 }
 

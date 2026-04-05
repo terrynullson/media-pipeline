@@ -235,7 +235,7 @@ func (r *MediaRepository) MarkProcessing(ctx context.Context, id int64, nowUTC t
 }
 
 func (r *MediaRepository) MarkUploaded(ctx context.Context, id int64, nowUTC time.Time) error {
-	return r.updateStatusOnly(ctx, id, media.StatusUploaded, nowUTC, "mark media uploaded")
+	return r.updateStatusOnly(ctx, id, media.StatusQueued, nowUTC, "mark media uploaded")
 }
 
 func (r *MediaRepository) MarkAudioExtracted(ctx context.Context, id int64, extractedAudioPath string, nowUTC time.Time) error {

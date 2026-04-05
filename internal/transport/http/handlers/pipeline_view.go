@@ -128,12 +128,12 @@ func buildMediaPipelineView(mediaItem media.Media, jobs []job.Job) MediaPipeline
 		view.CurrentStage = "Завершено"
 		view.CurrentTimingText = steps[len(steps)-1].timingText
 	case lastCompletedIndex == 0:
-		view.StatusLabel = "Загружен"
-		view.StatusTone = "uploaded"
+		view.StatusLabel = "В очереди"
+		view.StatusTone = "queued"
 		view.StageValue = 1
-		view.StageLabel = "Дальше: извлечение аудио"
+		view.StageLabel = "Ждёт запуска основной обработки"
 		view.CurrentStage = "Извлечение аудио"
-		view.CurrentTimingText = steps[0].timingText
+		view.CurrentTimingText = "Файл загружен и ждёт своей очереди"
 	default:
 		view.StatusLabel = "Ожидает следующий шаг"
 		view.StatusTone = "ready"

@@ -89,6 +89,11 @@ type transcriptionSettingsPayload struct {
 	Language    string `json:"language"`
 	BeamSize    int    `json:"beamSize"`
 	VADEnabled  bool   `json:"vadEnabled"`
+	UITheme     string `json:"uiTheme"`
+}
+
+type uiPreferencePayload struct {
+	UITheme string `json:"uiTheme"`
 }
 
 type triggerRulePayload struct {
@@ -321,12 +326,20 @@ func (h *UploadHandler) APITranscriptionSettings(w http.ResponseWriter, r *http.
 	h.writeJSON(w, http.StatusOK, map[string]any{
 		"profile":  form,
 		"warnings": buildSettingsWarnings(form),
+		"ui": map[string]any{
+			"theme":           form.UITheme,
+			"legacyAppURL":    "/app",
+			"modernAppURL":    "/app-v1",
+			"preferredAppURL": preferredAppURL(form.UITheme),
+			"workspaceURL":    "/workspace",
+		},
 		"options": map[string]any{
 			"backends": backendOptions(),
 			"models":   transcription.SupportedModels(),
 			"devices":  transcription.SupportedDevices(),
 			"cpu":      transcription.SupportedComputeTypes("cpu"),
 			"cuda":     transcription.SupportedComputeTypes("cuda"),
+			"themes":   []string{"old", "new"},
 		},
 	})
 }
@@ -346,6 +359,7 @@ func (h *UploadHandler) APIUpdateTranscriptionSettings(w http.ResponseWriter, r 
 		Language:    payload.Language,
 		BeamSize:    payload.BeamSize,
 		VADEnabled:  payload.VADEnabled,
+		UITheme:     payload.UITheme,
 		IsDefault:   true,
 	})
 	if err := transcription.ValidateProfile(profile); err != nil {
@@ -365,6 +379,62 @@ func (h *UploadHandler) APIUpdateTranscriptionSettings(w http.ResponseWriter, r 
 		"status":   "saved",
 		"profile":  form,
 		"warnings": buildSettingsWarnings(form),
+		"ui": map[string]any{
+			"theme":           form.UITheme,
+			"legacyAppURL":    "/app",
+			"modernAppURL":    "/app-v1",
+			"preferredAppURL": preferredAppURL(form.UITheme),
+			"workspaceURL":    "/workspace",
+		},
+	})
+}
+
+func (h *UploadHandler) APIUIConfig(w http.ResponseWriter, r *http.Request) {
+	profile, err := h.transcriptionSvc.GetCurrent(r.Context())
+	if err != nil {
+		observability.LoggerFromContext(r.Context(), h.logger).Error("load api ui config failed", slog.Any("error", err))
+		http.Error(w, "не удалось загрузить UI config", http.StatusInternalServerError)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"maxUploadBytes":  h.maxUploadSizeB,
+		"maxUploadHuman":  HumanSize(h.maxUploadSizeB),
+		"acceptedFormats": []string{".mp4", ".mov", ".mkv", ".avi", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".flac"},
+		"uiTheme":         normalizeUITheme(profile.UITheme),
+		"legacyAppURL":    "/app",
+		"modernAppURL":    "/app-v1",
+		"preferredAppURL": preferredAppURL(profile.UITheme),
+		"workspaceURL":    "/workspace",
+	})
+}
+
+func (h *UploadHandler) APIUpdateUITheme(w http.ResponseWriter, r *http.Request) {
+	var payload uiPreferencePayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "не удалось прочитать JSON UI preference", http.StatusBadRequest)
+		return
+	}
+
+	profile, err := h.transcriptionSvc.GetCurrent(r.Context())
+	if err != nil {
+		observability.LoggerFromContext(r.Context(), h.logger).Error("load profile for ui preference failed", slog.Any("error", err))
+		http.Error(w, "не удалось загрузить настройки", http.StatusInternalServerError)
+		return
+	}
+
+	profile.UITheme = normalizeUITheme(payload.UITheme)
+	saved, err := h.transcriptionSvc.SaveCurrent(r.Context(), profile)
+	if err != nil {
+		observability.LoggerFromContext(r.Context(), h.logger).Error("save ui preference failed", slog.Any("error", err))
+		http.Error(w, "не удалось сохранить UI preference", http.StatusInternalServerError)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"status":          "saved",
+		"uiTheme":         normalizeUITheme(saved.UITheme),
+		"preferredAppURL": preferredAppURL(saved.UITheme),
 	})
 }
 
@@ -571,4 +641,20 @@ func minInt(a int, b int) int {
 		return a
 	}
 	return b
+}
+
+func normalizeUITheme(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "new", "v1", "modern":
+		return "new"
+	default:
+		return "old"
+	}
+}
+
+func preferredAppURL(theme string) string {
+	if normalizeUITheme(theme) == "new" {
+		return "/app-v1"
+	}
+	return "/app"
 }

@@ -12,6 +12,7 @@ import (
 type Status string
 
 const (
+	StatusQueued         Status = "queued"
 	StatusUploaded       Status = "uploaded"
 	StatusProcessing     Status = "processing"
 	StatusAudioExtracted Status = "audio_extracted"

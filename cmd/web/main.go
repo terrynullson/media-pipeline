@@ -113,7 +113,11 @@ func main() {
 	if frontendErr != nil {
 		frontendDistPath = ""
 	}
-	router := httptransport.NewRouter(logger, uploadHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir, frontendDistPath)
+	frontendV1DistPath, frontendV1Err := infraRuntime.ResolvePath("frontend_v1/dist")
+	if frontendV1Err != nil {
+		frontendV1DistPath = ""
+	}
+	router := httptransport.NewRouter(logger, uploadHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir, frontendDistPath, frontendV1DistPath)
 
 	addr := ":" + cfg.AppPort
 	logger.Info("starting web server",

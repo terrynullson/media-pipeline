@@ -252,14 +252,14 @@ func TestUploadHandler_MediaStatuses(t *testing.T) {
 	if len(payload.Items) != 1 {
 		t.Fatalf("items = %d, want 1", len(payload.Items))
 	}
-	if payload.Items[0].Status != "uploaded" {
-		t.Fatalf("status = %q, want uploaded", payload.Items[0].Status)
+	if payload.Items[0].Status != "queued" {
+		t.Fatalf("status = %q, want queued", payload.Items[0].Status)
 	}
-	if payload.Items[0].StatusLabel != "Загружен" {
-		t.Fatalf("status label = %q, want Загружен", payload.Items[0].StatusLabel)
+	if payload.Items[0].StatusLabel != "В очереди" {
+		t.Fatalf("status label = %q, want В очереди", payload.Items[0].StatusLabel)
 	}
-	if payload.Items[0].StageLabel != "Дальше: извлечение аудио" {
-		t.Fatalf("stage label = %q, want Дальше: извлечение аудио", payload.Items[0].StageLabel)
+	if payload.Items[0].StageLabel != "Ждёт запуска основной обработки" {
+		t.Fatalf("stage label = %q, want Ждёт запуска основной обработки", payload.Items[0].StageLabel)
 	}
 	if payload.Items[0].FailedStage != "" || payload.Items[0].ErrorSummary != "" {
 		t.Fatalf("unexpected failure details: %#v", payload.Items[0])

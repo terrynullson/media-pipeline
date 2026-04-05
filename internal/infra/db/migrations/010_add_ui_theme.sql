@@ -1,0 +1,1 @@
+ALTER TABLE transcription_profiles ADD COLUMN ui_theme TEXT DEFAULT 'old';

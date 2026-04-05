@@ -20,7 +20,7 @@ func NewTranscriptionProfileRepository(db *sql.DB) *TranscriptionProfileReposito
 func (r *TranscriptionProfileRepository) GetDefault(ctx context.Context) (transcription.Profile, bool, error) {
 	row := r.db.QueryRowContext(
 		ctx,
-		`SELECT id, backend, model_name, device, compute_type, language, beam_size, vad_enabled, is_default, created_at, updated_at
+		`SELECT id, backend, model_name, device, compute_type, language, beam_size, vad_enabled, ui_theme, is_default, created_at, updated_at
 		 FROM transcription_profiles
 		 WHERE is_default = 1
 		 ORDER BY id ASC
@@ -63,8 +63,8 @@ func (r *TranscriptionProfileRepository) Save(ctx context.Context, profile trans
 		result, err := tx.ExecContext(
 			ctx,
 			`INSERT INTO transcription_profiles (
-				backend, model_name, device, compute_type, language, beam_size, vad_enabled, is_default, created_at, updated_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				backend, model_name, device, compute_type, language, beam_size, vad_enabled, ui_theme, is_default, created_at, updated_at
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			profile.Backend,
 			profile.ModelName,
 			profile.Device,
@@ -72,6 +72,7 @@ func (r *TranscriptionProfileRepository) Save(ctx context.Context, profile trans
 			profile.Language,
 			profile.BeamSize,
 			boolToInt(profile.VADEnabled),
+			profile.UITheme,
 			boolToInt(profile.IsDefault),
 			profile.CreatedAtUTC.Format(time.RFC3339),
 			updatedAt,
@@ -90,7 +91,7 @@ func (r *TranscriptionProfileRepository) Save(ctx context.Context, profile trans
 			ctx,
 			`UPDATE transcription_profiles
 			 SET backend = ?, model_name = ?, device = ?, compute_type = ?, language = ?, beam_size = ?,
-			     vad_enabled = ?, is_default = ?, updated_at = ?
+			     vad_enabled = ?, ui_theme = ?, is_default = ?, updated_at = ?
 			 WHERE id = ?`,
 			profile.Backend,
 			profile.ModelName,
@@ -99,6 +100,7 @@ func (r *TranscriptionProfileRepository) Save(ctx context.Context, profile trans
 			profile.Language,
 			profile.BeamSize,
 			boolToInt(profile.VADEnabled),
+			profile.UITheme,
 			boolToInt(profile.IsDefault),
 			updatedAt,
 			profile.ID,
@@ -135,6 +137,7 @@ func scanTranscriptionProfile(scanner interface {
 		&profile.Language,
 		&profile.BeamSize,
 		&vadEnabled,
+		&profile.UITheme,
 		&isDefault,
 		&createdAt,
 		&updatedAt,

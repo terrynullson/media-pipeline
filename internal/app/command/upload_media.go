@@ -106,7 +106,7 @@ func (u *UploadMediaUseCase) Upload(ctx context.Context, in UploadMediaInput) (U
 		SizeBytes:           storedFile.SizeBytes,
 		StoragePath:         storedFile.RelativePath,
 		RuntimeSnapshotJSON: in.RuntimeSnapshotJSON,
-		Status:              media.StatusUploaded,
+		Status:              media.StatusQueued,
 		CreatedAtUTC:        nowUTC,
 		UpdatedAtUTC:        nowUTC,
 	})
