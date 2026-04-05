@@ -270,3 +270,77 @@ func TestPythonTranscriberRetriesInt8Float16FallbackOnUnsupportedBackend(t *test
 		t.Fatalf("segments = %d, want 1", len(output.Segments))
 	}
 }
+
+func TestPythonTranscriberFallsBackToSafeCPUAfterFatalCUDAFailure(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("batch-script subprocess test is only enabled on Windows")
+	}
+
+	tempDir := t.TempDir()
+	binaryPath := filepath.Join(tempDir, "fake-python.cmd")
+	scriptPath := filepath.Join(tempDir, "placeholder.py")
+	audioPath := filepath.Join(tempDir, "audio.wav")
+	if err := os.WriteFile(scriptPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("WriteFile(scriptPath) error = %v", err)
+	}
+	if err := os.WriteFile(audioPath, []byte("wav"), 0o644); err != nil {
+		t.Fatalf("WriteFile(audioPath) error = %v", err)
+	}
+
+	batch := "@echo off\r\n" +
+		"setlocal EnableDelayedExpansion\r\n" +
+		"set OUTPUT=\r\n" +
+		"set DEVICE=\r\n" +
+		"set MODEL=\r\n" +
+		"set COMPUTE=\r\n" +
+		":loop\r\n" +
+		"if \"%~1\"==\"\" goto done\r\n" +
+		"if /I \"%~1\"==\"--output-path\" (\r\n" +
+		"  set OUTPUT=%~2\r\n" +
+		"  shift\r\n" +
+		")\r\n" +
+		"if /I \"%~1\"==\"--device\" (\r\n" +
+		"  set DEVICE=%~2\r\n" +
+		"  shift\r\n" +
+		")\r\n" +
+		"if /I \"%~1\"==\"--model-name\" (\r\n" +
+		"  set MODEL=%~2\r\n" +
+		"  shift\r\n" +
+		")\r\n" +
+		"if /I \"%~1\"==\"--compute-type\" (\r\n" +
+		"  set COMPUTE=%~2\r\n" +
+		"  shift\r\n" +
+		")\r\n" +
+		"shift\r\n" +
+		"goto loop\r\n" +
+		":done\r\n" +
+		"if /I \"%DEVICE%\"==\"cuda\" if /I \"%COMPUTE%\"==\"int8_float32\" exit /b 3221226505\r\n" +
+		"if /I not \"%DEVICE%\"==\"cpu\" exit /b 7\r\n" +
+		"if /I not \"%MODEL%\"==\"tiny\" exit /b 8\r\n" +
+		"if /I not \"%COMPUTE%\"==\"int8\" exit /b 9\r\n" +
+		"if \"%OUTPUT%\"==\"\" exit /b 10\r\n" +
+		"> \"%OUTPUT%\" echo {\"full_text\":\"safe cpu ok\",\"segments\":[{\"start_sec\":0,\"end_sec\":1.0,\"text\":\"safe cpu ok\"}]}\r\n"
+	if err := os.WriteFile(binaryPath, []byte(batch), 0o644); err != nil {
+		t.Fatalf("WriteFile(binaryPath) error = %v", err)
+	}
+
+	transcriber := NewPythonTranscriber(binaryPath, scriptPath, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	output, err := transcriber.Transcribe(context.Background(), ports.TranscribeInput{
+		AudioPath: audioPath,
+		Settings: domaintranscription.Settings{
+			Backend:     domaintranscription.BackendFasterWhisper,
+			ModelName:   "small",
+			Device:      "cuda",
+			ComputeType: "int8_float32",
+			Language:    "ru",
+			BeamSize:    5,
+			VADEnabled:  true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Transcribe() error = %v", err)
+	}
+	if output.FullText != "safe cpu ok" {
+		t.Fatalf("full text = %q, want safe cpu ok", output.FullText)
+	}
+}

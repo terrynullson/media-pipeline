@@ -74,6 +74,23 @@ func TestFFmpegExtractor_Extract_Smoke(t *testing.T) {
 	}
 }
 
+func TestValidateExtractedAudioFileRejectsHeaderOnlyWAV(t *testing.T) {
+	t.Parallel()
+
+	outputPath := filepath.Join(t.TempDir(), "empty.wav")
+	if err := os.WriteFile(outputPath, make([]byte, wavHeaderSizeBytes), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err := validateExtractedAudioFile(outputPath)
+	if err == nil {
+		t.Fatal("validateExtractedAudioFile() error = nil, want validation error")
+	}
+	if err.Error() != "extract audio produced empty output" {
+		t.Fatalf("validateExtractedAudioFile() error = %q, want empty output error", err)
+	}
+}
+
 func wavSampleBytes() []byte {
 	return []byte{
 		'R', 'I', 'F', 'F',

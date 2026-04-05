@@ -55,25 +55,26 @@ func (t *PythonTranscriber) Transcribe(ctx context.Context, in ports.TranscribeI
 		}
 	}
 	defer cleanupTranscriptionResultPath(progressPath)
-	parsed, runErr := t.runTranscriptionAttempt(ctx, in, settings, resultPath, progressPath, startedAt)
-	if runErr == nil {
-		return parsed, nil
-	}
-	if fallback, ok := fallbackTranscriptionSettings(settings, runErr); ok {
-		t.logger.Warn("python transcription retrying with fallback compute type",
-			slog.String("audio_path", in.AudioPath),
-			slog.String("device", settings.Device),
-			slog.String("compute_type", settings.ComputeType),
-			slog.String("fallback_compute_type", fallback.ComputeType),
-		)
-		parsed, retryErr := t.runTranscriptionAttempt(ctx, in, fallback, resultPath, progressPath, startedAt)
-		if retryErr == nil {
+	current := settings
+	for {
+		parsed, runErr := t.runTranscriptionAttempt(ctx, in, current, resultPath, progressPath, startedAt)
+		if runErr == nil {
 			return parsed, nil
 		}
-		return ports.TranscribeOutput{}, retryErr
+		fallback, ok := fallbackTranscriptionSettings(current, runErr)
+		if !ok {
+			return ports.TranscribeOutput{}, runErr
+		}
+		t.logger.Warn("python transcription retrying with fallback compute type",
+			slog.String("audio_path", in.AudioPath),
+			slog.String("device", current.Device),
+			slog.String("compute_type", current.ComputeType),
+			slog.String("fallback_compute_type", fallback.ComputeType),
+			slog.String("fallback_device", fallback.Device),
+			slog.String("fallback_model_name", fallback.ModelName),
+		)
+		current = fallback
 	}
-	return ports.TranscribeOutput{}, runErr
-
 }
 
 func (t *PythonTranscriber) runTranscriptionAttempt(
@@ -237,9 +238,52 @@ func fallbackTranscriptionSettings(
 	case settings.ComputeType == "int8_float16" && strings.Contains(diagnostics, "requested int8_float16 compute type"):
 		fallback.ComputeType = "int8_float32"
 		return fallback, true
+	case shouldFallbackToSafeCPU(settings, transcriptionErr):
+		fallback.Device = "cpu"
+		fallback.ComputeType = "int8"
+		if settings.ModelName != "tiny" {
+			fallback.ModelName = "tiny"
+		}
+		return fallback, true
 	default:
 		return transcription.Settings{}, false
 	}
+}
+
+func shouldFallbackToSafeCPU(settings transcription.Settings, err *ports.TranscriptionError) bool {
+	if settings.Device != "cuda" || err == nil {
+		return false
+	}
+
+	diagnostics := strings.ToLower(strings.TrimSpace(err.Diagnostics))
+	causeText := strings.ToLower(strings.TrimSpace(err.Error()))
+
+	if diagnostics != "" {
+		for _, marker := range []string{
+			"requested int8_float32 compute type",
+			"segmentation fault",
+			"access violation",
+			"stack buffer overrun",
+			"illegal instruction",
+		} {
+			if strings.Contains(diagnostics, marker) {
+				return true
+			}
+		}
+	}
+
+	for _, marker := range []string{
+		"exit status 3221226505",
+		"exit status -1073740791",
+		"exit status 3221225477",
+		"exit status -1073741819",
+	} {
+		if strings.Contains(causeText, marker) {
+			return true
+		}
+	}
+
+	return diagnostics == ""
 }
 
 type transcriptionProgressFile struct {

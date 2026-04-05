@@ -12,6 +12,8 @@ import (
 	"media-pipeline/internal/domain/ports"
 )
 
+const wavHeaderSizeBytes int64 = 44
+
 type FFmpegExtractor struct {
 	binary string
 }
@@ -46,10 +48,30 @@ func (e *FFmpegExtractor) Extract(ctx context.Context, in ports.ExtractAudioInpu
 		}, fmt.Errorf("run ffmpeg: %w", err)
 	}
 
+	if err := validateExtractedAudioFile(fullOutputPath); err != nil {
+		_ = os.Remove(fullOutputPath)
+		return ports.ExtractAudioOutput{
+			OutputPath: relativeOutputPath,
+			Stderr:     stderr.String(),
+		}, err
+	}
+
 	return ports.ExtractAudioOutput{
 		OutputPath: relativeOutputPath,
 		Stderr:     stderr.String(),
 	}, nil
+}
+
+func validateExtractedAudioFile(fullOutputPath string) error {
+	info, err := os.Stat(fullOutputPath)
+	if err != nil {
+		return fmt.Errorf("inspect extracted audio output: %w", err)
+	}
+	if info.Size() <= wavHeaderSizeBytes {
+		return fmt.Errorf("extract audio produced empty output")
+	}
+
+	return nil
 }
 
 func BuildOutputRelativePath(mediaID int64, storedName string, processedAt string) string {

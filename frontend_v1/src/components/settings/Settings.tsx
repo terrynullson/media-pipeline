@@ -43,10 +43,10 @@ export function Settings() {
     api.rules().then(setRules).catch(() => setRules([]));
   }, []);
 
-  const computeTypes = useMemo(
-    () => (settings.profile.device === "cuda" ? settings.options.cuda : settings.options.cpu),
-    [settings.options.cpu, settings.options.cuda, settings.profile.device]
-  );
+  const computeTypes = useMemo(() => {
+    const options = settings.profile.device === "cuda" ? settings.options.cuda : settings.options.cpu;
+    return Array.isArray(options) && options.length > 0 ? options : ["int8"];
+  }, [settings.options.cpu, settings.options.cuda, settings.profile.device]);
 
   async function saveSettings(event: FormEvent) {
     event.preventDefault();
@@ -129,7 +129,7 @@ export function Settings() {
             </button>
           </div>
           <div className="inline-note">
-            Основной переключаемый маршрут: <strong>{settings.ui.workspaceURL}</strong>. Сейчас он ведёт на <strong>{settings.ui.preferredAppURL}</strong>.
+            Основной переключаемый маршрут: <strong>{settings.ui?.workspaceURL ?? "/workspace"}</strong>. Сейчас он ведёт на <strong>{settings.ui?.preferredAppURL ?? "/app-v1"}</strong>.
           </div>
         </SectionCard>
 

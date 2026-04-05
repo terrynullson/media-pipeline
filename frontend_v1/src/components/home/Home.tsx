@@ -14,12 +14,13 @@ export function Home() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    Promise.all([api.media(), api.uiConfig()])
-      .then(([media, uiConfig]) => {
-        setItems(media);
-        setConfig(uiConfig);
-      })
+    api.media()
+      .then(setItems)
       .catch(() => setError("Не удалось загрузить данные для главной страницы."));
+
+    api.uiConfig()
+      .then(setConfig)
+      .catch(() => undefined);
   }, []);
 
   const processingItem = useMemo(() => items.find((item) => item.statusTone === "running"), [items]);
