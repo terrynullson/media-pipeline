@@ -1,0 +1,86 @@
+:root {
+  /* ── Page backgrounds ── */
+  --bg-page: #151113;
+  --bg-surface: #1c191f;
+  --bg-card: #231f26;
+  --bg-card-hover: #2a2530;
+  --bg-inset: #1a171d;
+  --bg-overlay: rgba(15, 12, 17, 0.72);
+
+  /* ── Borders ── */
+  --border: rgba(232, 209, 197, 0.07);
+  --border-strong: rgba(232, 209, 197, 0.13);
+  --border-accent: rgba(255, 197, 112, 0.24);
+
+  /* ── Text ── */
+  --text: #F3E8DF;
+  --text-secondary: #E8D1C5;
+  --text-muted: rgba(232, 209, 197, 0.42);
+  --text-on-accent: #1a1214;
+
+  /* ── Accent ── */
+  --accent: #FFC570;
+  --accent-hover: #FFD494;
+  --accent-soft: rgba(255, 197, 112, 0.10);
+  --accent-muted: rgba(255, 197, 112, 0.06);
+
+  /* ── Semantic ── */
+  --success: #5cd68f;
+  --success-soft: rgba(92, 214, 143, 0.12);
+  --error: #ff7a7a;
+  --error-soft: rgba(255, 122, 122, 0.12);
+  --warning: #ffba49;
+  --warning-soft: rgba(255, 186, 73, 0.12);
+  --info: #7ab8ff;
+  --info-soft: rgba(122, 184, 255, 0.12);
+
+  /* ── Spacing ── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+
+  /* ── Radii ── */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  /* ── Typography ── */
+  --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Code", "Fira Code", "Consolas", monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.7;
+  --tracking-tight: -0.02em;
+  --tracking-wide: 0.06em;
+
+  /* ── Shadows ── */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.18);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.22);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.3);
+  --shadow-accent: 0 0 0 1px var(--border-accent), 0 4px 12px rgba(255, 197, 112, 0.08);
+
+  /* ── Transitions ── */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-slow: 320ms;
+
+  /* ── Z-index ── */
+  --z-sticky: 10;
+  --z-drawer-overlay: 40;
+  --z-drawer: 50;
+}

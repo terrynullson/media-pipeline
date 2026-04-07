@@ -5,12 +5,13 @@ import type {
   MediaListItem,
   SettingsResponse,
   TriggerRule,
-  UIConfigResponse
+  UIConfigResponse,
+  UploadProgress
 } from "../models/types";
 
 const defaultUIConfig: UIConfigResponse = {
   maxUploadBytes: 0,
-  maxUploadHuman: "не указан",
+  maxUploadHuman: "unknown",
   acceptedFormats: [".mp4", ".mov", ".mkv", ".avi", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".flac"],
   uiTheme: "new",
   legacyAppURL: "/app",
@@ -114,5 +115,39 @@ export const api = {
       method: "POST",
       body: form
     });
-  }
+  },
+  uploadWithProgress: (
+    file: File,
+    onProgress: (p: UploadProgress) => void
+  ): Promise<{ mediaId: number; status: string; message: string }> =>
+    new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const form = new FormData();
+      form.append("media", file);
+
+      xhr.upload.addEventListener("progress", (e) => {
+        if (e.lengthComputable) {
+          onProgress({ loaded: e.loaded, total: e.total, percent: Math.round((e.loaded / e.total) * 100) });
+        }
+      });
+
+      xhr.addEventListener("load", () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            reject(new Error("Invalid response"));
+          }
+        } else {
+          reject(new Error(`HTTP ${xhr.status}`));
+        }
+      });
+
+      xhr.addEventListener("error", () => reject(new Error("Upload failed")));
+      xhr.open("POST", "/upload");
+      xhr.setRequestHeader("Accept", "application/json");
+      xhr.send(form);
+    }),
+  deleteMedia: (mediaId: number) =>
+    requestJSON<{ status: string }>(`/media/${mediaId}/delete`, { method: "POST" })
 };

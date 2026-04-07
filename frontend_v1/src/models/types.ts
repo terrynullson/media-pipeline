@@ -232,3 +232,9 @@ export interface UIConfigResponse {
   preferredAppURL: string;
   workspaceURL: string;
 }
+
+export interface UploadProgress {
+  loaded: number;
+  total: number;
+  percent: number;
+}
