@@ -21,13 +21,15 @@ export function TranscriptViewer({ transcript, currentTime, onSeek }: Transcript
   const activeRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  const activeIndex = transcript.segments.findIndex((seg, i) => {
+  const segments = transcript.segments ?? [];
+  const paragraphs = transcript.fullTextParagraphs ?? [];
+
+  const activeIndex = segments.findIndex((seg, i) => {
     const start = parseTimestamp(seg.startLabel);
     const end = parseTimestamp(seg.endLabel);
     if (currentTime >= start && currentTime < end) return true;
-    // If between segments, attach to the one whose start is closest behind
-    if (i < transcript.segments.length - 1) {
-      const nextStart = parseTimestamp(transcript.segments[i + 1].startLabel);
+    if (i < segments.length - 1) {
+      const nextStart = parseTimestamp(segments[i + 1].startLabel);
       if (currentTime >= end && currentTime < nextStart) return true;
     }
     return false;
@@ -55,7 +57,7 @@ export function TranscriptViewer({ transcript, currentTime, onSeek }: Transcript
             padding: "var(--sp-2) 0",
           }}
         >
-          {transcript.fullTextParagraphs.map((p, i) => (
+          {paragraphs.map((p, i) => (
             <p
               key={i}
               style={{
@@ -80,7 +82,7 @@ export function TranscriptViewer({ transcript, currentTime, onSeek }: Transcript
             overflowY: "auto",
           }}
         >
-          {transcript.segments.map((seg, i) => (
+          {segments.map((seg, i) => (
             <TimelineSegment
               key={seg.index}
               ref={i === activeIndex ? activeRef : undefined}

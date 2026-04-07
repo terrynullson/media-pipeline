@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import type { UIConfigResponse } from "../../models/types";
 import { usePolling } from "../../hooks/usePolling";
@@ -8,16 +7,13 @@ import { ActiveJob } from "./ActiveJob";
 import { MediaList } from "./MediaList";
 
 export function HomePage() {
-  const navigate = useNavigate();
   const [config, setConfig] = useState<UIConfigResponse | null>(null);
 
-  // Load UI config once on mount
   useEffect(() => {
     api.uiConfig().then(setConfig).catch(() => undefined);
   }, []);
 
-  // Determine whether there is an active job to drive polling
-  const { data: items, loading } = usePolling(api.media, 5000, true);
+  const { data: items, loading, refresh } = usePolling(api.media, 5000, true);
 
   const mediaItems = items ?? [];
 
@@ -26,12 +22,9 @@ export function HomePage() {
     [mediaItems],
   );
 
-  const onUploaded = useCallback(
-    (mediaId: number) => {
-      navigate(`/media/${mediaId}`);
-    },
-    [navigate],
-  );
+  const onUploaded = useCallback(() => {
+    refresh();
+  }, [refresh]);
 
   return (
     <div
@@ -45,7 +38,7 @@ export function HomePage() {
 
       {activeItem && <ActiveJob item={activeItem} />}
 
-      {!loading && <MediaList items={mediaItems} />}
+      {!loading && <MediaList items={mediaItems} onDeleted={refresh} />}
     </div>
   );
 }

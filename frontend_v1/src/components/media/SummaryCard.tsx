@@ -24,7 +24,7 @@ export function SummaryCard({ summary, onRequestSummary }: SummaryCardProps) {
           {summary.text}
         </p>
 
-        {summary.highlights.length > 0 && (
+        {(summary.highlights ?? []).length > 0 && (
           <div
             style={{
               display: "flex",
@@ -33,7 +33,7 @@ export function SummaryCard({ summary, onRequestSummary }: SummaryCardProps) {
               marginTop: "var(--sp-3)",
             }}
           >
-            {summary.highlights.map((h) => (
+            {(summary.highlights ?? []).map((h) => (
               <span
                 key={h}
                 style={{

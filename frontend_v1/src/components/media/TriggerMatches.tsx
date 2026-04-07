@@ -16,20 +16,20 @@ export function TriggerMatches({ triggers, onSeek }: TriggerMatchesProps) {
       title="Triggers"
       action={<StatusChip label={triggers.statusLabel} tone={triggers.statusTone} />}
     >
-      {triggers.items.length === 0 ? (
+      {(triggers.items ?? []).length === 0 ? (
         <EmptyState
           text={triggers.notice || "No trigger matches found."}
           icon={<AlertCircle size={18} />}
         />
       ) : (
         <div>
-          {triggers.items.map((item, i) => (
+          {(triggers.items ?? []).map((item, i) => (
             <div
               key={`${item.ruleName}-${item.timestamp}-${i}`}
               style={{
                 padding: "var(--sp-3) 0",
                 borderBottom:
-                  i < triggers.items.length - 1
+                  i < (triggers.items ?? []).length - 1
                     ? "1px solid var(--border)"
                     : "none",
               }}

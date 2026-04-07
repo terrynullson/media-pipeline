@@ -32,7 +32,9 @@ func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, stati
 	r.Patch("/api/trigger-rules/{ruleID}", uploadHandler.APIUpdateTriggerRule)
 	r.Delete("/api/trigger-rules/{ruleID}", uploadHandler.APIDeleteTriggerRule)
 
-	r.Get("/", uploadHandler.Index)
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/app-v1", http.StatusSeeOther)
+	})
 	r.Get("/workspace", uploadHandler.Workspace)
 	r.Post("/upload", uploadHandler.Upload)
 	r.Get("/media/statuses", uploadHandler.MediaStatuses)
@@ -64,24 +66,13 @@ func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, stati
 	screenshotFS := http.FileServer(http.Dir(screenshotsDir))
 	r.Handle("/media-screenshots/*", http.StripPrefix("/media-screenshots/", screenshotFS))
 
-	// Frontend v0 (old) - /app
-	oldFrontendDir := ""
+	// Frontend v1 - /app-v1
+	frontendDir := ""
 	if len(frontendDirs) > 0 {
-		oldFrontendDir = frontendDirs[0]
+		frontendDir = frontendDirs[0]
 	}
-	if strings.TrimSpace(oldFrontendDir) != "" {
-		spaHandler := newSPAHandler(oldFrontendDir, "/app")
-		r.Get("/app", spaHandler)
-		r.Get("/app/*", spaHandler)
-	}
-
-	// Frontend v1 (new) - /app-v1
-	newFrontendDir := ""
-	if len(frontendDirs) > 1 {
-		newFrontendDir = frontendDirs[1]
-	}
-	if strings.TrimSpace(newFrontendDir) != "" {
-		spaHandler := newSPAHandler(newFrontendDir, "/app-v1")
+	if strings.TrimSpace(frontendDir) != "" {
+		spaHandler := newSPAHandler(frontendDir, "/app-v1")
 		r.Get("/app-v1", spaHandler)
 		r.Get("/app-v1/*", spaHandler)
 	}

@@ -7,7 +7,7 @@ import { Progress } from "../ui/Progress";
 
 interface UploadZoneProps {
   config: UIConfigResponse | null;
-  onUploaded: (mediaId: number) => void;
+  onUploaded: () => void;
 }
 
 const DEFAULT_ACCEPT = ".mp4,.mov,.mkv,.avi,.webm,.mp3,.wav,.m4a,.aac,.flac";
@@ -53,7 +53,8 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
       setFileName(file.name);
       const result = await upload(file);
       if (result) {
-        onUploaded(result.mediaId);
+        setFileName("");
+        onUploaded();
       }
     },
     [uploading, upload, reset, onUploaded],

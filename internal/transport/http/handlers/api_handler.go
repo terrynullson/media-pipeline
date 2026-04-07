@@ -327,11 +327,9 @@ func (h *UploadHandler) APITranscriptionSettings(w http.ResponseWriter, r *http.
 		"profile":  form,
 		"warnings": buildSettingsWarnings(form),
 		"ui": map[string]any{
-			"theme":           form.UITheme,
-			"legacyAppURL":    "/app",
-			"modernAppURL":    "/app-v1",
-			"preferredAppURL": preferredAppURL(form.UITheme),
-			"workspaceURL":    "/workspace",
+			"theme":        form.UITheme,
+			"appURL":       "/app-v1",
+			"workspaceURL": "/workspace",
 		},
 		"options": map[string]any{
 			"backends": backendOptions(),
@@ -380,11 +378,9 @@ func (h *UploadHandler) APIUpdateTranscriptionSettings(w http.ResponseWriter, r 
 		"profile":  form,
 		"warnings": buildSettingsWarnings(form),
 		"ui": map[string]any{
-			"theme":           form.UITheme,
-			"legacyAppURL":    "/app",
-			"modernAppURL":    "/app-v1",
-			"preferredAppURL": preferredAppURL(form.UITheme),
-			"workspaceURL":    "/workspace",
+			"theme":        form.UITheme,
+			"appURL":       "/app-v1",
+			"workspaceURL": "/workspace",
 		},
 	})
 }
@@ -402,9 +398,7 @@ func (h *UploadHandler) APIUIConfig(w http.ResponseWriter, r *http.Request) {
 		"maxUploadHuman":  HumanSize(h.maxUploadSizeB),
 		"acceptedFormats": []string{".mp4", ".mov", ".mkv", ".avi", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".flac"},
 		"uiTheme":         normalizeUITheme(profile.UITheme),
-		"legacyAppURL":    "/app",
-		"modernAppURL":    "/app-v1",
-		"preferredAppURL": preferredAppURL(profile.UITheme),
+		"appURL":          "/app-v1",
 		"workspaceURL":    "/workspace",
 	})
 }
@@ -652,9 +646,6 @@ func normalizeUITheme(value string) string {
 	}
 }
 
-func preferredAppURL(theme string) string {
-	if normalizeUITheme(theme) == "new" {
-		return "/app-v1"
-	}
-	return "/app"
+func preferredAppURL(_ string) string {
+	return "/app-v1"
 }

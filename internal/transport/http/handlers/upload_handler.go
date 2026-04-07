@@ -223,7 +223,7 @@ func (h *UploadHandler) Workspace(w http.ResponseWriter, r *http.Request) {
 	profile, err := h.transcriptionSvc.GetCurrent(r.Context())
 	if err != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("load workspace preference failed", slog.Any("error", err))
-		http.Redirect(w, r, "/app", http.StatusSeeOther)
+		http.Redirect(w, r, "/app-v1", http.StatusSeeOther)
 		return
 	}
 

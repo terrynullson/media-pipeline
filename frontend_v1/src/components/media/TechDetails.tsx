@@ -85,7 +85,7 @@ export function TechDetails({ pipeline, settingsSnapshot }: TechDetailsProps) {
       ))}
 
       {/* Settings snapshot */}
-      {!settingsSnapshot.settingsUnavailable && settingsSnapshot.settings.length > 0 && (
+      {!settingsSnapshot.settingsUnavailable && (settingsSnapshot.settings ?? []).length > 0 && (
         <>
           <SectionTitle>Settings Snapshot</SectionTitle>
           <div
@@ -95,7 +95,7 @@ export function TechDetails({ pipeline, settingsSnapshot }: TechDetailsProps) {
               gap: "0 var(--sp-5)",
             }}
           >
-            {settingsSnapshot.settings.map((kv) => (
+            {(settingsSnapshot.settings ?? []).map((kv) => (
               <div key={kv.label} style={kvRowStyle}>
                 <span style={labelStyle}>{kv.label}</span>
                 <span style={valueStyle}>{kv.value}</span>
@@ -106,7 +106,7 @@ export function TechDetails({ pipeline, settingsSnapshot }: TechDetailsProps) {
       )}
 
       {/* Runtime snapshot */}
-      {settingsSnapshot.runtimeSnapshot.length > 0 && (
+      {(settingsSnapshot.runtimeSnapshot ?? []).length > 0 && (
         <>
           <SectionTitle>Runtime Snapshot</SectionTitle>
           <div
@@ -116,7 +116,7 @@ export function TechDetails({ pipeline, settingsSnapshot }: TechDetailsProps) {
               gap: "0 var(--sp-5)",
             }}
           >
-            {settingsSnapshot.runtimeSnapshot.map((kv) => (
+            {(settingsSnapshot.runtimeSnapshot ?? []).map((kv) => (
               <div key={kv.label} style={kvRowStyle}>
                 <span style={labelStyle}>{kv.label}</span>
                 <span style={valueStyle}>{kv.value}</span>
@@ -165,10 +165,10 @@ export function TechDetails({ pipeline, settingsSnapshot }: TechDetailsProps) {
       )}
 
       {/* Settings warnings */}
-      {settingsSnapshot.settingsWarnings.length > 0 && (
+      {(settingsSnapshot.settingsWarnings ?? []).length > 0 && (
         <>
           <SectionTitle>Warnings</SectionTitle>
-          {settingsSnapshot.settingsWarnings.map((w, i) => (
+          {(settingsSnapshot.settingsWarnings ?? []).map((w, i) => (
             <div
               key={i}
               style={{
