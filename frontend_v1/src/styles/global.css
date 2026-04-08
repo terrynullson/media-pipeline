@@ -7,6 +7,13 @@ body {
   line-height: var(--leading-normal);
   color: var(--text);
   background: var(--bg-page);
+  transition: background var(--duration-slow) var(--ease), color var(--duration-slow) var(--ease);
+}
+
+*, *::before, *::after {
+  transition-property: background-color, border-color, color, box-shadow;
+  transition-duration: var(--duration-normal);
+  transition-timing-function: var(--ease);
 }
 
 ::selection {
@@ -75,3 +82,25 @@ body {
   from { transform: translateX(-100%); }
   to { transform: translateX(200%); }
 }
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes expand-down {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 600px; }
+}
+
+/* -- Entry animations for page content -- */
+main > * {
+  animation: slide-up var(--duration-normal) var(--ease) both;
+}
+
+/* Stagger children in main content */
+main > *:nth-child(1) { animation-delay: 0ms; }
+main > *:nth-child(2) { animation-delay: 40ms; }
+main > *:nth-child(3) { animation-delay: 80ms; }
+main > *:nth-child(4) { animation-delay: 120ms; }
+main > *:nth-child(5) { animation-delay: 160ms; }

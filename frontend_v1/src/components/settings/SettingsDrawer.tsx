@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { api } from "../../api/client";
 import type { SettingsResponse } from "../../models/types";
+import { useTranslation } from "../../i18n";
 import { Button } from "../ui/Button";
 import { TriggerRules } from "./TriggerRules";
 
@@ -11,6 +12,7 @@ interface SettingsDrawerProps {
 }
 
 export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
+  const { t } = useTranslation();
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -123,10 +125,10 @@ export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
             borderBottom: "1px solid var(--border)",
           }}
         >
-          <h2 style={{ fontSize: "var(--text-md)", fontWeight: 700 }}>Settings</h2>
+          <h2 style={{ fontSize: "var(--text-md)", fontWeight: 700 }}>{t("settings.title")}</h2>
           <button
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t("settings.close")}
             style={{
               width: 28,
               height: 28,
@@ -146,47 +148,47 @@ export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)" }}>
               <div>
                 <h3 style={{ fontSize: "var(--text-sm)", fontWeight: 600, color: "var(--text-secondary)", letterSpacing: "var(--tracking-wide)", textTransform: "uppercase", marginBottom: "var(--sp-3)" }}>
-                  Transcription
+                  {t("settings.transcription")}
                 </h3>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--sp-3)" }}>
                   <label style={labelStyle}>
-                    Backend
+                    {t("settings.backend")}
                     <select style={inputStyle} value={form.backend} onChange={(e) => setForm({ ...form, backend: e.target.value })}>
                       {settings.options.backends.map((b) => <option key={b} value={b}>{b}</option>)}
                     </select>
                   </label>
                   <label style={labelStyle}>
-                    Model
+                    {t("settings.model")}
                     <select style={inputStyle} value={form.modelName} onChange={(e) => setForm({ ...form, modelName: e.target.value })}>
                       {settings.options.models.map((m) => <option key={m} value={m}>{m}</option>)}
                     </select>
                   </label>
                   <label style={labelStyle}>
-                    Device
+                    {t("settings.device")}
                     <select style={inputStyle} value={form.device} onChange={(e) => setForm({ ...form, device: e.target.value, computeType: e.target.value === "cuda" ? "float16" : "int8" })}>
                       {settings.options.devices.map((d) => <option key={d} value={d}>{d}</option>)}
                     </select>
                   </label>
                   <label style={labelStyle}>
-                    Compute type
+                    {t("settings.computeType")}
                     <select style={inputStyle} value={form.computeType} onChange={(e) => setForm({ ...form, computeType: e.target.value })}>
                       {computeOptions.map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </label>
                   <label style={labelStyle}>
-                    Language
-                    <input style={inputStyle} value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value })} placeholder="auto" />
+                    {t("settings.language")}
+                    <input style={inputStyle} value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value })} placeholder={t("settings.auto")} />
                   </label>
                   <label style={labelStyle}>
-                    Beam size
+                    {t("settings.beamSize")}
                     <input style={inputStyle} type="number" min={1} max={10} value={form.beamSize} onChange={(e) => setForm({ ...form, beamSize: Number(e.target.value) })} />
                   </label>
                 </div>
 
                 <label style={{ ...labelStyle, flexDirection: "row", alignItems: "center", gap: 8, marginTop: "var(--sp-3)" }}>
                   <input type="checkbox" checked={form.vadEnabled} onChange={(e) => setForm({ ...form, vadEnabled: e.target.checked })} style={{ accentColor: "var(--accent)" }} />
-                  VAD filter
+                  {t("settings.vadFilter")}
                 </label>
 
                 {settings.warnings.length > 0 && (
@@ -197,7 +199,7 @@ export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
 
                 <div style={{ marginTop: "var(--sp-4)" }}>
                   <Button variant="primary" size="sm" loading={saving} onClick={handleSave}>
-                    Save settings
+                    {t("settings.save")}
                   </Button>
                 </div>
               </div>

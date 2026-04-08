@@ -5,6 +5,7 @@ import { api } from "../../api/client";
 import type { MediaDetailResponse } from "../../models/types";
 import { usePolling } from "../../hooks/usePolling";
 import { useMediaPlayer } from "../../hooks/useMediaPlayer";
+import { useTranslation } from "../../i18n";
 import { StatusChip } from "../ui/StatusChip";
 import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
@@ -32,6 +33,7 @@ export function MediaDetailPage() {
   // and rely on the interval. This is fine — the server call is lightweight.
 
   const { currentTime, seek, mediaRef } = useMediaPlayer();
+  const { t } = useTranslation();
 
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -114,7 +116,7 @@ export function MediaDetailPage() {
           }}
         >
           <ArrowLeft size={14} />
-          Back
+          {t("action.back")}
         </Link>
 
         <div
@@ -191,7 +193,7 @@ export function MediaDetailPage() {
             icon={<Trash2 size={14} />}
             onClick={() => setDeleteConfirm(true)}
           >
-            Delete media
+            {t("action.deleteMedia")}
           </Button>
         ) : (
           <>
@@ -202,21 +204,21 @@ export function MediaDetailPage() {
                 fontWeight: 500,
               }}
             >
-              Are you sure? This cannot be undone.
+              {t("action.confirmDeleteLong")}
             </span>
             <Button
               variant="danger"
               loading={deleting}
               onClick={handleDelete}
             >
-              Confirm delete
+              {t("action.confirmBtn")}
             </Button>
             <Button
               variant="ghost"
               onClick={() => setDeleteConfirm(false)}
               disabled={deleting}
             >
-              Cancel
+              {t("action.cancel")}
             </Button>
           </>
         )}

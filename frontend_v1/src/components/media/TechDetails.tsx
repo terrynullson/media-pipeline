@@ -1,5 +1,6 @@
 import { AlertCircle } from "lucide-react";
 import type { MediaDetailResponse } from "../../models/types";
+import { useTranslation } from "../../i18n";
 import { StatusChip } from "../ui/StatusChip";
 import { Accordion } from "../ui/Accordion";
 
@@ -50,10 +51,11 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 }
 
 export function TechDetails({ pipeline, settingsSnapshot }: TechDetailsProps) {
+  const { t } = useTranslation();
   return (
     <Accordion title="Technical Details">
       {/* Pipeline steps */}
-      <SectionTitle>Pipeline Steps</SectionTitle>
+      <SectionTitle>{t("tech.pipelineSteps")}</SectionTitle>
       {pipeline.steps.map((step) => (
         <div
           key={step.label}
@@ -87,7 +89,7 @@ export function TechDetails({ pipeline, settingsSnapshot }: TechDetailsProps) {
       {/* Settings snapshot */}
       {!settingsSnapshot.settingsUnavailable && (settingsSnapshot.settings ?? []).length > 0 && (
         <>
-          <SectionTitle>Settings Snapshot</SectionTitle>
+          <SectionTitle>{t("tech.settings")}</SectionTitle>
           <div
             style={{
               display: "grid",
@@ -108,7 +110,7 @@ export function TechDetails({ pipeline, settingsSnapshot }: TechDetailsProps) {
       {/* Runtime snapshot */}
       {(settingsSnapshot.runtimeSnapshot ?? []).length > 0 && (
         <>
-          <SectionTitle>Runtime Snapshot</SectionTitle>
+          <SectionTitle>{t("tech.runtime")}</SectionTitle>
           <div
             style={{
               display: "grid",
@@ -129,7 +131,7 @@ export function TechDetails({ pipeline, settingsSnapshot }: TechDetailsProps) {
       {/* Runtime policy */}
       {settingsSnapshot.runtimePolicy?.visible && (
         <>
-          <SectionTitle>{settingsSnapshot.runtimePolicy.title || "Runtime Policy"}</SectionTitle>
+          <SectionTitle>{settingsSnapshot.runtimePolicy.title || t("tech.runtimePolicy")}</SectionTitle>
           <p
             style={{
               color: "var(--text-secondary)",
@@ -167,7 +169,7 @@ export function TechDetails({ pipeline, settingsSnapshot }: TechDetailsProps) {
       {/* Settings warnings */}
       {(settingsSnapshot.settingsWarnings ?? []).length > 0 && (
         <>
-          <SectionTitle>Warnings</SectionTitle>
+          <SectionTitle>{t("tech.warnings")}</SectionTitle>
           {(settingsSnapshot.settingsWarnings ?? []).map((w, i) => (
             <div
               key={i}

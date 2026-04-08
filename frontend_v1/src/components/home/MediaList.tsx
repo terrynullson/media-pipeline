@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Search, ChevronDown, ChevronRight, FileAudio, ExternalLink, Trash2 } from "lucide-react";
 import type { MediaListItem } from "../../models/types";
 import { api } from "../../api/client";
+import { useTranslation } from "../../i18n";
 import { StatusChip } from "../ui/StatusChip";
 import { Progress } from "../ui/Progress";
 import { EmptyState } from "../ui/EmptyState";
@@ -32,13 +33,6 @@ function countTab(items: MediaListItem[], tab: FilterTab): number {
   if (tab === "all") return items.length;
   return items.filter((i) => matchTab(i, tab)).length;
 }
-
-const tabs: { key: FilterTab; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "processing", label: "Processing" },
-  { key: "done", label: "Done" },
-  { key: "failed", label: "Failed" },
-];
 
 const tabBarStyle: React.CSSProperties = {
   display: "flex",
@@ -115,6 +109,7 @@ function isReady(item: MediaListItem): boolean {
 }
 
 function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => void }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [showWait, setShowWait] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -144,14 +139,12 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
           (e.currentTarget as HTMLElement).style.background = "transparent";
         }}
       >
-        {/* Expand icon */}
         {expanded ? (
           <ChevronDown size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
         ) : (
           <ChevronRight size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
         )}
 
-        {/* Name */}
         <span
           style={{
             flex: 1,
@@ -167,7 +160,6 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
           {item.name}
         </span>
 
-        {/* Size */}
         <span
           style={{
             fontSize: "var(--text-sm)",
@@ -180,7 +172,6 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
           {item.sizeHuman}
         </span>
 
-        {/* Date */}
         <span
           style={{
             fontSize: "var(--text-sm)",
@@ -193,7 +184,6 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
           {item.createdAtUtc}
         </span>
 
-        {/* Status */}
         <span style={{ flexShrink: 0, width: 100, display: "flex", justifyContent: "center" }}>
           <StatusChip label={item.statusLabel} tone={item.statusTone} />
         </span>
@@ -209,7 +199,6 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
             borderBottom: "1px solid var(--border)",
           }}
         >
-          {/* Overall progress bar */}
           <div
             style={{
               display: "flex",
@@ -238,7 +227,6 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
             </span>
           </div>
 
-          {/* Step list */}
           {steps.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-1)" }}>
               {steps.map((step) => (
@@ -251,7 +239,6 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
                     padding: "5px 0",
                   }}
                 >
-                  {/* Step dot */}
                   <span
                     style={{
                       width: 7,
@@ -262,8 +249,6 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
                       boxShadow: step.isCurrent ? `0 0 6px ${stepToneColor(step.tone)}` : "none",
                     }}
                   />
-
-                  {/* Step label */}
                   <span
                     style={{
                       fontSize: "var(--text-sm)",
@@ -274,11 +259,7 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
                   >
                     {step.label}
                   </span>
-
-                  {/* Step status chip */}
                   <StatusChip label={step.statusLabel} tone={step.tone} />
-
-                  {/* Timing */}
                   <span
                     style={{
                       fontSize: "var(--text-xs)",
@@ -288,8 +269,6 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
                   >
                     {step.durationLabel || step.timingText}
                   </span>
-
-                  {/* Step progress bar if running */}
                   {step.progressVisible && step.progressPercent != null && (
                     <div style={{ width: 80 }}>
                       <Progress percent={step.progressPercent} height={3} animate />
@@ -300,7 +279,6 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
             </div>
           )}
 
-          {/* Error message */}
           {item.errorSummary && (
             <div
               style={{
@@ -317,9 +295,7 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
             </div>
           )}
 
-          {/* Actions row */}
           <div style={{ marginTop: "var(--sp-3)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            {/* Delete action */}
             <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
               {!confirmDelete ? (
                 <Button
@@ -328,24 +304,23 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
                   icon={<Trash2 size={12} />}
                   onClick={() => setConfirmDelete(true)}
                 >
-                  Delete
+                  {t("action.delete")}
                 </Button>
               ) : (
                 <>
                   <span style={{ fontSize: "var(--text-xs)", color: "var(--error)", fontWeight: 500 }}>
-                    Are you sure?
+                    {t("action.confirmDelete")}
                   </span>
                   <Button variant="danger" size="sm" loading={deleting} onClick={handleDelete}>
-                    Yes, delete
+                    {t("action.yesDelete")}
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)} disabled={deleting}>
-                    Cancel
+                    {t("action.cancel")}
                   </Button>
                 </>
               )}
             </div>
 
-            {/* Open details */}
             <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
               {showWait && !isReady(item) && (
                 <span
@@ -355,7 +330,7 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
                     animation: "fade-in var(--duration-normal) var(--ease)",
                   }}
                 >
-                  Processing in progress...
+                  {t("action.processing")}
                 </span>
               )}
               {isReady(item) ? (
@@ -371,7 +346,7 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
                     textDecoration: "none",
                   }}
                 >
-                  Open details
+                  {t("action.openDetails")}
                   <ExternalLink size={12} />
                 </Link>
               ) : (
@@ -391,7 +366,7 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
                     padding: 0,
                   }}
                 >
-                  Open details
+                  {t("action.openDetails")}
                   <ExternalLink size={12} />
                 </button>
               )}
@@ -404,8 +379,16 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
 }
 
 export function MediaList({ items, onDeleted }: MediaListProps) {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const [query, setQuery] = useState("");
+
+  const tabs: { key: FilterTab; labelKey: "filter.all" | "filter.processing" | "filter.done" | "filter.failed" }[] = [
+    { key: "all", labelKey: "filter.all" },
+    { key: "processing", labelKey: "filter.processing" },
+    { key: "done", labelKey: "filter.done" },
+    { key: "failed", labelKey: "filter.failed" },
+  ];
 
   const sorted = useMemo(
     () =>
@@ -433,7 +416,6 @@ export function MediaList({ items, onDeleted }: MediaListProps) {
         overflow: "hidden",
       }}
     >
-      {/* Tab bar */}
       <div style={tabBarStyle}>
         {tabs.map((tab) => (
           <button
@@ -445,27 +427,25 @@ export function MediaList({ items, onDeleted }: MediaListProps) {
             }}
             onClick={() => setActiveTab(tab.key)}
           >
-            {tab.label} ({countTab(items, tab.key)})
+            {t(tab.labelKey)} ({countTab(items, tab.key)})
           </button>
         ))}
       </div>
 
-      {/* Search */}
       <div style={searchWrap}>
         <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
         <input
           type="text"
-          placeholder="Filter by filename..."
+          placeholder={t("filter.placeholder")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           style={searchInput}
         />
       </div>
 
-      {/* Rows */}
       {filtered.length === 0 ? (
         <div style={{ padding: "var(--sp-4)" }}>
-          <EmptyState text="No items match the current filter." icon={<FileAudio size={20} />} />
+          <EmptyState text={t("filter.empty")} icon={<FileAudio size={20} />} />
         </div>
       ) : (
         <div>

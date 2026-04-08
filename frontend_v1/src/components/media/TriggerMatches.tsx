@@ -1,6 +1,7 @@
 import { AlertCircle } from "lucide-react";
 import type { MediaDetailResponse } from "../../models/types";
 import { parseTimestamp } from "../../utils/time";
+import { useTranslation } from "../../i18n";
 import { StatusChip } from "../ui/StatusChip";
 import { EmptyState } from "../ui/EmptyState";
 import { Card } from "../ui/Card";
@@ -11,14 +12,15 @@ interface TriggerMatchesProps {
 }
 
 export function TriggerMatches({ triggers, onSeek }: TriggerMatchesProps) {
+  const { t } = useTranslation();
   return (
     <Card
-      title="Triggers"
+      title={t("triggers.title")}
       action={<StatusChip label={triggers.statusLabel} tone={triggers.statusTone} />}
     >
       {(triggers.items ?? []).length === 0 ? (
         <EmptyState
-          text={triggers.notice || "No trigger matches found."}
+          text={triggers.notice || t("triggers.empty")}
           icon={<AlertCircle size={18} />}
         />
       ) : (

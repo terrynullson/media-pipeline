@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { api } from "../../api/client";
 import type { TriggerRule } from "../../models/types";
+import { useTranslation } from "../../i18n";
 import { Button } from "../ui/Button";
 import { StatusChip } from "../ui/StatusChip";
 
 export function TriggerRules() {
+  const { t } = useTranslation();
   const [rules, setRules] = useState<TriggerRule[]>([]);
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: "", category: "", pattern: "", matchMode: "contains" });
@@ -48,21 +50,21 @@ export function TriggerRules() {
   return (
     <div>
       <h3 style={{ fontSize: "var(--text-sm)", fontWeight: 600, color: "var(--text-secondary)", letterSpacing: "var(--tracking-wide)", textTransform: "uppercase", marginBottom: "var(--sp-3)" }}>
-        Trigger Rules
+        {t("rules.title")}
       </h3>
 
       {/* Add form */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--sp-2)", marginBottom: "var(--sp-3)" }}>
-        <input style={inputStyle} placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-        <input style={inputStyle} placeholder="Category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
-        <input style={inputStyle} placeholder="Pattern" value={form.pattern} onChange={(e) => setForm({ ...form, pattern: e.target.value })} />
+        <input style={inputStyle} placeholder={t("rules.name")} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        <input style={inputStyle} placeholder={t("rules.category")} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
+        <input style={inputStyle} placeholder={t("rules.pattern")} value={form.pattern} onChange={(e) => setForm({ ...form, pattern: e.target.value })} />
         <select style={inputStyle} value={form.matchMode} onChange={(e) => setForm({ ...form, matchMode: e.target.value })}>
-          <option value="contains">Contains</option>
-          <option value="exact">Exact</option>
+          <option value="contains">{t("rules.contains")}</option>
+          <option value="exact">{t("rules.exact")}</option>
         </select>
       </div>
       <Button variant="primary" size="sm" loading={adding} onClick={handleAdd}>
-        Add rule
+        {t("rules.add")}
       </Button>
 
       {/* List */}
@@ -97,7 +99,7 @@ export function TriggerRules() {
             <button
               onClick={() => handleDelete(rule)}
               style={{ color: "var(--error)", opacity: 0.6, padding: 2 }}
-              aria-label="Delete rule"
+              aria-label={t("action.delete")}
             >
               <Trash2 size={13} />
             </button>

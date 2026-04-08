@@ -1,13 +1,21 @@
 import { useCallback, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent } from "react";
-import { UploadCloud, AlertCircle } from "lucide-react";
-import type { UIConfigResponse } from "../../models/types";
-import { useUpload } from "../../hooks/useUpload";
+import { UploadCloud, AlertCircle, CheckCircle, FileAudio } from "lucide-react";
+import type { UIConfigResponse, UploadProgress } from "../../models/types";
+import { api } from "../../api/client";
+import { useTranslation } from "../../i18n";
 import { Progress } from "../ui/Progress";
 
 interface UploadZoneProps {
   config: UIConfigResponse | null;
   onUploaded: () => void;
+}
+
+interface QueueItem {
+  file: File;
+  status: "pending" | "uploading" | "done" | "error";
+  progress: UploadProgress | null;
+  error: string | null;
 }
 
 const DEFAULT_ACCEPT = ".mp4,.mov,.mkv,.avi,.webm,.mp3,.wav,.m4a,.aac,.flac";
@@ -34,33 +42,81 @@ const zoneDragOver: React.CSSProperties = {
   background: "var(--accent-soft)",
 };
 
-const zoneUploading: React.CSSProperties = {
+const zoneBusy: React.CSSProperties = {
   cursor: "default",
   borderStyle: "solid",
   borderColor: "var(--border)",
 };
 
 export function UploadZone({ config, onUploaded }: UploadZoneProps) {
-  const { uploading, progress, error, upload, reset } = useUpload();
+  const { t } = useTranslation();
   const [dragOver, setDragOver] = useState(false);
-  const [fileName, setFileName] = useState("");
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const processingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const accept = config?.acceptedFormats.join(",") ?? DEFAULT_ACCEPT;
+  const busy = queue.some((q) => q.status === "uploading" || q.status === "pending");
 
-  const handleFile = useCallback(
-    async (file: File | null) => {
-      if (!file || uploading) return;
-      reset();
-      setFileName(file.name);
-      const result = await upload(file);
-      if (result) {
-        setFileName("");
-        onUploaded();
+  const processQueue = useCallback(async (items: QueueItem[]) => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+
+    const remaining = [...items];
+
+    for (let i = 0; i < remaining.length; i++) {
+      if (remaining[i].status !== "pending") continue;
+
+      remaining[i] = { ...remaining[i], status: "uploading", progress: { loaded: 0, total: remaining[i].file.size, percent: 0 } };
+      setQueue([...remaining]);
+
+      try {
+        await api.uploadWithProgress(remaining[i].file, (p) => {
+          remaining[i] = { ...remaining[i], progress: p };
+          setQueue([...remaining]);
+        });
+        remaining[i] = { ...remaining[i], status: "done", progress: null, error: null };
+      } catch (err) {
+        remaining[i] = {
+          ...remaining[i],
+          status: "error",
+          progress: null,
+          error: err instanceof Error ? err.message : t("upload.error.generic"),
+        };
       }
-    },
-    [uploading, upload, reset, onUploaded],
-  );
+
+      setQueue([...remaining]);
+      onUploaded();
+    }
+
+    processingRef.current = false;
+
+    // Clear completed items after a delay
+    setTimeout(() => {
+      setQueue((prev) => prev.filter((q) => q.status === "uploading" || q.status === "pending"));
+    }, 3000);
+  }, [onUploaded, t]);
+
+  const addFiles = useCallback((files: FileList | File[]) => {
+    const arr = Array.from(files);
+    if (arr.length === 0) return;
+
+    const newItems: QueueItem[] = arr.map((file) => ({
+      file,
+      status: "pending" as const,
+      progress: null,
+      error: null,
+    }));
+
+    setQueue((prev) => {
+      const merged = [...prev, ...newItems];
+      // Start processing if not already running
+      if (!processingRef.current) {
+        processQueue(merged);
+      }
+      return merged;
+    });
+  }, [processQueue]);
 
   const onDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
@@ -73,24 +129,30 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
     (e: DragEvent) => {
       e.preventDefault();
       setDragOver(false);
-      void handleFile(e.dataTransfer.files?.[0] ?? null);
+      if (e.dataTransfer.files.length > 0) {
+        addFiles(e.dataTransfer.files);
+      }
     },
-    [handleFile],
+    [addFiles],
   );
 
   const onFileChange = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
-      void handleFile(e.target.files?.[0] ?? null);
+      if (e.target.files && e.target.files.length > 0) {
+        addFiles(e.target.files);
+      }
       if (inputRef.current) inputRef.current.value = "";
     },
-    [handleFile],
+    [addFiles],
   );
 
   const computedStyle: React.CSSProperties = {
     ...zoneBase,
-    ...(dragOver && !uploading ? zoneDragOver : {}),
-    ...(uploading ? zoneUploading : {}),
+    ...(dragOver && !busy ? zoneDragOver : {}),
+    ...(busy ? zoneBusy : {}),
   };
+
+  const activeItem = queue.find((q) => q.status === "uploading");
 
   return (
     <div>
@@ -100,7 +162,7 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
-        {uploading ? (
+        {activeItem ? (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
             <div
               style={{
@@ -120,25 +182,30 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
                   maxWidth: "70%",
                 }}
               >
-                {fileName}
+                {activeItem.file.name}
               </span>
               <span style={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
-                {progress?.percent ?? 0}%
+                {activeItem.progress?.percent ?? 0}%
+                {queue.filter((q) => q.status === "pending").length > 0 && (
+                  <span style={{ marginLeft: 8, fontSize: "var(--text-xs)" }}>
+                    +{queue.filter((q) => q.status === "pending").length}
+                  </span>
+                )}
               </span>
             </div>
-            <Progress percent={progress?.percent ?? 0} height={6} animate />
+            <Progress percent={activeItem.progress?.percent ?? 0} height={6} animate />
           </div>
         ) : (
           <>
             <UploadCloud size={22} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               <span style={{ fontSize: "var(--text-sm)", fontWeight: 600, color: "var(--text)" }}>
-                Drop file or click to select
+                {t("upload.dropMultiple")}
               </span>
               <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
                 {config
                   ? `Max ${config.maxUploadHuman} \u00b7 ${config.acceptedFormats.join(", ")}`
-                  : "Loading format info\u2026"}
+                  : t("upload.loading")}
               </span>
             </div>
           </>
@@ -148,24 +215,46 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
           type="file"
           hidden
           accept={accept}
+          multiple
           onChange={onFileChange}
-          disabled={uploading}
+          disabled={false}
         />
       </label>
 
-      {error && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--sp-2)",
-            marginTop: "var(--sp-2)",
-            fontSize: "var(--text-sm)",
-            color: "var(--error)",
-          }}
-        >
-          <AlertCircle size={14} />
-          <span>{error}</span>
+      {/* Queue list (done/error items) */}
+      {queue.filter((q) => q.status === "done" || q.status === "error").length > 0 && (
+        <div style={{ marginTop: "var(--sp-2)", display: "flex", flexDirection: "column", gap: "var(--sp-1)" }}>
+          {queue
+            .filter((q) => q.status === "done" || q.status === "error")
+            .map((q, i) => (
+              <div
+                key={`${q.file.name}-${i}`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "var(--sp-2)",
+                  fontSize: "var(--text-sm)",
+                  animation: "fade-in var(--duration-fast) var(--ease)",
+                }}
+              >
+                {q.status === "done" ? (
+                  <CheckCircle size={14} style={{ color: "var(--success)", flexShrink: 0 }} />
+                ) : (
+                  <AlertCircle size={14} style={{ color: "var(--error)", flexShrink: 0 }} />
+                )}
+                <span
+                  style={{
+                    color: q.status === "done" ? "var(--text-muted)" : "var(--error)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {q.file.name}
+                  {q.error && ` — ${q.error}`}
+                </span>
+              </div>
+            ))}
         </div>
       )}
     </div>

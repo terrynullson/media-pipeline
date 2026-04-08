@@ -1,5 +1,6 @@
-:root {
-  /* ── Page backgrounds ── */
+:root,
+[data-theme="dark"] {
+  /* -- Page backgrounds -- */
   --bg-page: #151113;
   --bg-surface: #1c191f;
   --bg-card: #231f26;
@@ -7,24 +8,24 @@
   --bg-inset: #1a171d;
   --bg-overlay: rgba(15, 12, 17, 0.72);
 
-  /* ── Borders ── */
+  /* -- Borders -- */
   --border: rgba(232, 209, 197, 0.07);
   --border-strong: rgba(232, 209, 197, 0.25);
   --border-accent: rgba(255, 197, 112, 0.24);
 
-  /* ── Text ── */
+  /* -- Text -- */
   --text: #F3E8DF;
   --text-secondary: #E8D1C5;
   --text-muted: rgba(232, 209, 197, 0.42);
   --text-on-accent: #1a1214;
 
-  /* ── Accent ── */
+  /* -- Accent -- */
   --accent: #FFC570;
   --accent-hover: #FFD494;
   --accent-soft: rgba(255, 197, 112, 0.10);
   --accent-muted: rgba(255, 197, 112, 0.06);
 
-  /* ── Semantic ── */
+  /* -- Semantic -- */
   --success: #5cd68f;
   --success-soft: rgba(92, 214, 143, 0.12);
   --error: #ff7a7a;
@@ -34,7 +35,62 @@
   --info: #7ab8ff;
   --info-soft: rgba(122, 184, 255, 0.12);
 
-  /* ── Spacing ── */
+  /* -- Shadows -- */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.18);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.22);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.3);
+  --shadow-accent: 0 0 0 1px var(--border-accent), 0 4px 12px rgba(255, 197, 112, 0.08);
+
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  /* -- Page backgrounds -- */
+  --bg-page: #f5f0ec;
+  --bg-surface: #ffffff;
+  --bg-card: #ffffff;
+  --bg-card-hover: #faf6f3;
+  --bg-inset: #f0ebe6;
+  --bg-overlay: rgba(0, 0, 0, 0.32);
+
+  /* -- Borders -- */
+  --border: rgba(60, 40, 30, 0.08);
+  --border-strong: rgba(60, 40, 30, 0.18);
+  --border-accent: rgba(200, 130, 20, 0.28);
+
+  /* -- Text -- */
+  --text: #1a1214;
+  --text-secondary: #3d2e26;
+  --text-muted: rgba(60, 40, 30, 0.50);
+  --text-on-accent: #ffffff;
+
+  /* -- Accent -- */
+  --accent: #c87e14;
+  --accent-hover: #a86a0e;
+  --accent-soft: rgba(200, 126, 20, 0.10);
+  --accent-muted: rgba(200, 126, 20, 0.05);
+
+  /* -- Semantic -- */
+  --success: #1a9e50;
+  --success-soft: rgba(26, 158, 80, 0.10);
+  --error: #d93636;
+  --error-soft: rgba(217, 54, 54, 0.08);
+  --warning: #c47a10;
+  --warning-soft: rgba(196, 122, 16, 0.10);
+  --info: #1a6ed8;
+  --info-soft: rgba(26, 110, 216, 0.08);
+
+  /* -- Shadows -- */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.12);
+  --shadow-accent: 0 0 0 1px var(--border-accent), 0 4px 12px rgba(200, 130, 20, 0.08);
+
+  color-scheme: light;
+}
+
+:root {
+  /* -- Spacing -- */
   --sp-1: 4px;
   --sp-2: 8px;
   --sp-3: 12px;
@@ -44,14 +100,14 @@
   --sp-8: 32px;
   --sp-10: 40px;
 
-  /* ── Radii ── */
+  /* -- Radii -- */
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-pill: 999px;
 
-  /* ── Typography ── */
+  /* -- Typography -- */
   --font: "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-mono: "Cascadia Code", "Fira Code", "Consolas", monospace;
   --text-xs: 11px;
@@ -67,19 +123,13 @@
   --tracking-tight: -0.02em;
   --tracking-wide: 0.06em;
 
-  /* ── Shadows ── */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.18);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.22);
-  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.3);
-  --shadow-accent: 0 0 0 1px var(--border-accent), 0 4px 12px rgba(255, 197, 112, 0.08);
-
-  /* ── Transitions ── */
+  /* -- Transitions -- */
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --duration-fast: 120ms;
   --duration-normal: 200ms;
   --duration-slow: 320ms;
 
-  /* ── Z-index ── */
+  /* -- Z-index -- */
   --z-sticky: 10;
   --z-drawer-overlay: 40;
   --z-drawer: 50;

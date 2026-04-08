@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Volume2 } from "lucide-react";
 import type { MediaDetailResponse } from "../../models/types";
+import { useTranslation } from "../../i18n";
 import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 
@@ -10,6 +11,7 @@ interface PlayerAreaProps {
 }
 
 export function PlayerArea({ player, mediaRef }: PlayerAreaProps) {
+  const { t } = useTranslation();
   const [useAudioFallback, setUseAudioFallback] = useState(false);
 
   const showVideo =
@@ -59,7 +61,7 @@ export function PlayerArea({ player, mediaRef }: PlayerAreaProps) {
       )}
 
       {showNothing && (
-        <EmptyState text={player.playerFallbackText || "Player not available yet."} />
+        <EmptyState text={player.playerFallbackText || t("player.notAvailable")} />
       )}
 
       {player.hasSecondaryAudioFallback && player.audioFallbackURL && (
@@ -70,7 +72,7 @@ export function PlayerArea({ player, mediaRef }: PlayerAreaProps) {
             icon={<Volume2 size={13} />}
             onClick={() => setUseAudioFallback((v) => !v)}
           >
-            {useAudioFallback ? "Switch to video" : "Use audio fallback"}
+            {useAudioFallback ? t("player.switchToVideo") : t("player.audioFallback")}
           </Button>
         </div>
       )}

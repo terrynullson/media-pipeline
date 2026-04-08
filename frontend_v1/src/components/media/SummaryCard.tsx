@@ -1,5 +1,6 @@
 import { Sparkles } from "lucide-react";
 import type { MediaDetailResponse } from "../../models/types";
+import { useTranslation } from "../../i18n";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
@@ -10,6 +11,7 @@ interface SummaryCardProps {
 }
 
 export function SummaryCard({ summary, onRequestSummary }: SummaryCardProps) {
+  const { t } = useTranslation();
   if (summary.hasSummary) {
     return (
       <Card title="Summary">
@@ -74,12 +76,12 @@ export function SummaryCard({ summary, onRequestSummary }: SummaryCardProps) {
     return (
       <Card>
         <EmptyState
-          text={summary.notice || "No summary available yet."}
+          text={summary.notice || t("summary.notAvailable")}
           icon={<Sparkles size={20} />}
         />
         <div style={{ display: "flex", justifyContent: "center", marginTop: "var(--sp-3)" }}>
           <Button variant="primary" onClick={onRequestSummary} icon={<Sparkles size={14} />}>
-            {summary.actionLabel || "Request Summary"}
+            {summary.actionLabel || t("summary.request")}
           </Button>
         </div>
       </Card>
