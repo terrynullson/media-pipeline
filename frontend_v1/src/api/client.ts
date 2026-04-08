@@ -139,7 +139,12 @@ export const api = {
             reject(new Error("Invalid response"));
           }
         } else {
-          reject(new Error(`HTTP ${xhr.status}`));
+          let msg = `Ошибка загрузки (HTTP ${xhr.status})`;
+          try {
+            const body = JSON.parse(xhr.responseText);
+            if (body.message) msg = body.message;
+          } catch { /* ignore parse errors */ }
+          reject(new Error(msg));
         }
       });
 

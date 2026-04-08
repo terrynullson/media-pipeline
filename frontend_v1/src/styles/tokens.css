@@ -9,7 +9,7 @@
 
   /* ── Borders ── */
   --border: rgba(232, 209, 197, 0.07);
-  --border-strong: rgba(232, 209, 197, 0.13);
+  --border-strong: rgba(232, 209, 197, 0.25);
   --border-accent: rgba(255, 197, 112, 0.24);
 
   /* ── Text ── */

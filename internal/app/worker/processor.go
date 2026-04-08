@@ -149,13 +149,15 @@ func NewProcessor(
 }
 
 func (p *Processor) ProcessNext(ctx context.Context) (bool, error) {
+	// Later pipeline stages have higher priority so that an in-progress
+	// media item finishes completely before a new one starts processing.
 	for _, jobType := range []job.Type{
-		job.TypeExtractAudio,
-		job.TypeTranscribe,
-		job.TypeAnalyzeTriggers,
-		job.TypeExtractScreenshots,
-		job.TypePreparePreviewVideo,
 		job.TypeGenerateSummary,
+		job.TypePreparePreviewVideo,
+		job.TypeExtractScreenshots,
+		job.TypeAnalyzeTriggers,
+		job.TypeTranscribe,
+		job.TypeExtractAudio,
 	} {
 		processed, err := p.processNextByType(ctx, jobType)
 		if err != nil {
