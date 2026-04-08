@@ -6,7 +6,7 @@ import { EmptyState } from "../ui/EmptyState";
 
 interface PlayerAreaProps {
   player: MediaDetailResponse["player"];
-  mediaRef: React.RefObject<HTMLMediaElement | null>;
+  mediaRef: React.Ref<HTMLMediaElement>;
 }
 
 export function PlayerArea({ player, mediaRef }: PlayerAreaProps) {
@@ -24,7 +24,7 @@ export function PlayerArea({ player, mediaRef }: PlayerAreaProps) {
     <div>
       {showVideo && (
         <video
-          ref={mediaRef as React.RefObject<HTMLVideoElement>}
+          ref={mediaRef as React.Ref<HTMLVideoElement>}
           controls
           src={player.videoSourceURL}
           style={{
@@ -39,7 +39,7 @@ export function PlayerArea({ player, mediaRef }: PlayerAreaProps) {
       {showAudio && !showFallbackAudio && (
         <div style={{ padding: "var(--sp-4) 0" }}>
           <audio
-            ref={mediaRef as React.RefObject<HTMLAudioElement>}
+            ref={mediaRef as React.Ref<HTMLAudioElement>}
             controls
             src={player.audioPlayerURL}
             style={{ width: "100%", display: "block" }}
@@ -50,7 +50,7 @@ export function PlayerArea({ player, mediaRef }: PlayerAreaProps) {
       {showFallbackAudio && (
         <div style={{ padding: "var(--sp-4) 0" }}>
           <audio
-            ref={mediaRef as React.RefObject<HTMLAudioElement>}
+            ref={mediaRef as React.Ref<HTMLAudioElement>}
             controls
             src={player.audioFallbackURL}
             style={{ width: "100%", display: "block" }}

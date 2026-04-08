@@ -1,52 +1,57 @@
-import { useEffect, useState, useCallback, type RefObject } from "react";
+import { useState, useCallback, useRef } from "react";
 
-export function useMediaPlayer(mediaRef: RefObject<HTMLMediaElement | null>) {
+export function useMediaPlayer() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const elementRef = useRef<HTMLMediaElement | null>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
-    const el = mediaRef.current;
-    if (!el) return;
+  const mediaRef = useCallback((node: HTMLMediaElement | null) => {
+    // Cleanup previous element's listeners
+    if (cleanupRef.current) {
+      cleanupRef.current();
+      cleanupRef.current = null;
+    }
+
+    elementRef.current = node;
+    if (!node) return;
 
     let lastSecond = -1;
 
     const onTimeUpdate = () => {
-      const sec = Math.floor(el.currentTime);
+      const sec = Math.floor(node.currentTime);
       if (sec !== lastSecond) {
         lastSecond = sec;
-        setCurrentTime(el.currentTime);
+        setCurrentTime(node.currentTime);
       }
     };
 
-    const onMeta = () => setDuration(el.duration);
+    const onMeta = () => setDuration(node.duration);
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
 
-    el.addEventListener("timeupdate", onTimeUpdate);
-    el.addEventListener("loadedmetadata", onMeta);
-    el.addEventListener("play", onPlay);
-    el.addEventListener("pause", onPause);
+    node.addEventListener("timeupdate", onTimeUpdate);
+    node.addEventListener("loadedmetadata", onMeta);
+    node.addEventListener("play", onPlay);
+    node.addEventListener("pause", onPause);
 
-    if (el.duration) setDuration(el.duration);
+    if (node.duration) setDuration(node.duration);
 
-    return () => {
-      el.removeEventListener("timeupdate", onTimeUpdate);
-      el.removeEventListener("loadedmetadata", onMeta);
-      el.removeEventListener("play", onPlay);
-      el.removeEventListener("pause", onPause);
+    cleanupRef.current = () => {
+      node.removeEventListener("timeupdate", onTimeUpdate);
+      node.removeEventListener("loadedmetadata", onMeta);
+      node.removeEventListener("play", onPlay);
+      node.removeEventListener("pause", onPause);
     };
-  }, [mediaRef]);
+  }, []);
 
-  const seek = useCallback(
-    (time: number) => {
-      const el = mediaRef.current;
-      if (!el) return;
-      el.currentTime = time;
-      if (el.paused) el.play().catch(() => {});
-    },
-    [mediaRef]
-  );
+  const seek = useCallback((time: number) => {
+    const el = elementRef.current;
+    if (!el) return;
+    el.currentTime = time;
+    if (el.paused) el.play().catch(() => {});
+  }, []);
 
-  return { currentTime, duration, playing, seek };
+  return { currentTime, duration, playing, seek, mediaRef };
 }

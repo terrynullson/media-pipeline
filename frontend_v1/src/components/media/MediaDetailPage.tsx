@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, Loader2, AlertCircle, Trash2 } from "lucide-react";
 import { api } from "../../api/client";
@@ -31,8 +31,7 @@ export function MediaDetailPage() {
   // The polling hook already handles enabled internally, but we always poll
   // and rely on the interval. This is fine — the server call is lightweight.
 
-  const mediaRef = useRef<HTMLMediaElement>(null);
-  const { currentTime, seek } = useMediaPlayer(mediaRef);
+  const { currentTime, seek, mediaRef } = useMediaPlayer();
 
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
