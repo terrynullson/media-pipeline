@@ -23,6 +23,9 @@ type Config struct {
 	PreviewTimeoutSec    int64
 	ScreenshotTimeoutSec int64
 	TranscribeTimeoutSec int64
+	OllamaURL            string
+	OllamaModel          string
+	SummaryProvider      string
 }
 
 func Load() Config {
@@ -43,6 +46,9 @@ func Load() Config {
 		PreviewTimeoutSec:    getEnvInt64("PREVIEW_TIMEOUT_SEC", 600),
 		ScreenshotTimeoutSec: getEnvInt64("SCREENSHOT_TIMEOUT_SEC", 60),
 		TranscribeTimeoutSec: getEnvInt64("TRANSCRIBE_TIMEOUT_SEC", 300),
+		OllamaURL:            getEnv("OLLAMA_URL", "http://127.0.0.1:11434"),
+		OllamaModel:          getEnv("OLLAMA_MODEL", "phi3:mini"),
+		SummaryProvider:      getEnv("SUMMARY_PROVIDER", "simple"),
 	}
 	if cfg.MaxUploadSizeMB <= 0 {
 		cfg.MaxUploadSizeMB = 1024

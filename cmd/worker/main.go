@@ -10,6 +10,7 @@ import (
 
 	transcriptionapp "media-pipeline/internal/app/transcription"
 	appworker "media-pipeline/internal/app/worker"
+	"media-pipeline/internal/domain/ports"
 	domaintranscription "media-pipeline/internal/domain/transcription"
 	"media-pipeline/internal/infra/config"
 	"media-pipeline/internal/infra/db"
@@ -63,7 +64,14 @@ func main() {
 	previewGenerator := infraMedia.NewFFmpegPreviewGenerator(cfg.FFmpegBinary)
 	audioDurationReader := infraMedia.NewWAVDurationReader()
 	screenshotExtractor := infraMedia.NewFFmpegScreenshotExtractor(cfg.FFmpegBinary)
-	summarizer := infraSummary.NewSimpleSummarizer()
+	var summarizer ports.Summarizer
+	if cfg.SummaryProvider == "ollama" {
+		summarizer = infraSummary.NewOllamaSummarizer(cfg.OllamaURL, cfg.OllamaModel, logger)
+		logger.Info("using Ollama summarizer", slog.String("url", cfg.OllamaURL), slog.String("model", cfg.OllamaModel))
+	} else {
+		summarizer = infraSummary.NewSimpleSummarizer()
+		logger.Info("using simple summarizer")
+	}
 	transcribeScriptPath, err := infraRuntime.ResolvePath(cfg.TranscribeScript)
 	if err != nil {
 		logger.Error("resolve transcribe script path", slog.Any("error", err), slog.String("path", cfg.TranscribeScript))

@@ -71,7 +71,7 @@ func SupportedBackends() []Backend {
 }
 
 func SupportedModels() []string {
-	return []string{"tiny", "base", "small"}
+	return []string{"tiny", "base", "small", "medium", "large"}
 }
 
 func SupportedDevices() []string {
