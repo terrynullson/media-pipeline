@@ -1,267 +1,175 @@
 # Media Pipeline
 
-Minimal Go media intake service. Stage 3.1 adds real local transcription with `faster-whisper`, persisted transcription settings, and a simple server-rendered settings UI.
+Upload video/audio, extract audio, transcribe speech, detect trigger keywords, capture screenshots at trigger points, generate summaries.
 
-Current scope:
-- `GET /`
-- `POST /upload`
-- `GET /health`
-- SQLite persistence
-- local filesystem storage
-- startup migrations
-- pending `extract_audio` job created after upload
-- pending `transcribe` job created after successful audio extraction
-- separate worker process for local media processing with `ffmpeg`
-- transcript persistence in SQLite
-- timestamped transcript segments in SQLite
+**Stack:** Go backend + worker, React frontend (Vite + TypeScript), SQLite, ffmpeg, faster-whisper (Python), Ollama (optional).
 
-## Local Run On Windows
+## Features
 
-### What you need
+- Drag & drop upload (multiple files, up to 1 GB each)
+- Automatic pipeline: extract audio -> transcribe -> analyze triggers -> screenshots -> summary
+- Real-time progress tracking on the home page with expandable pipeline steps
+- Transcript viewer with segment sync to video playback
+- Full-text search across transcripts
+- Trigger keyword matching (exact / contains) with screenshots
+- AI summary via Ollama (Phi-3 Mini) or simple local algorithm
+- Settings UI: whisper model, device, compute type, language, beam size, VAD, trigger rules
+- i18n: Russian and English interface
+- Light and dark theme with smooth transitions
+- Responsive design
 
-- Go installed
-- `ffmpeg` available in `PATH`
-- Python 3 available through `py` or `python`
+## Quick Start
 
-This repository now includes Windows-first helper scripts so local startup is one obvious command.
-
-### One-command startup
-
-PowerShell:
-
-```powershell
-.\scripts\dev_up.ps1
-```
-
-Batch:
+### Windows
 
 ```bat
-scripts\dev_up.bat
+start.bat
 ```
 
-What it does:
-- ensures `data`, `data\uploads`, `data\audio`, and `data\logs` exist
-- starts the web app in one PowerShell window
-- starts the worker in another PowerShell window
-- opens the browser to the main page unless you pass `-NoBrowser`
-- writes logs to `data\logs\web.log` and `data\logs\worker.log`
-
-Local URLs:
-- Browser URL: `http://localhost:8080/`
-- Health URL: `http://localhost:8080/health`
-
-How to stop:
-- press `Ctrl+C` in each PowerShell window
-- or close the two windows opened by `dev_up.ps1`
-
-### Start pieces manually
-
-Web only:
-
-```powershell
-.\scripts\dev_web.ps1
-```
-
-Worker only:
-
-```powershell
-.\scripts\dev_worker.ps1
-```
-
-## Transcription Backend On Windows
-
-### Install backend dependencies
-
-PowerShell:
-
-```powershell
-.\scripts\install_transcription_backend.ps1
-```
-
-Batch:
-
-```bat
-scripts\install_transcription_backend.bat
-```
-
-What the installer does:
-- detects whether `py` or `python` works on your machine
-- creates a local `.venv` virtual environment
-- upgrades `pip`
-- installs packages from `scripts\requirements-transcription.txt`
-- runs `scripts\transcribe.py --self-check`
-
-The worker automatically prefers `.venv\Scripts\python.exe` when that virtual environment exists, so local Windows runs do not depend on the fragile `python` app alias.
-
-### Backend details
-
-The local transcription backend now uses `faster-whisper`.
-
-Required Python packages are listed in `scripts\requirements-transcription.txt`.
-
-Today that file installs:
-- `faster-whisper`
-
-The application now stores transcription settings in SQLite and lets you edit them in the web UI.
-
-Default profile after first start:
-- backend: `faster-whisper`
-- model: `tiny`
-- device: `cpu`
-- compute type: `int8`
-- beam size: `5`
-- VAD: enabled
-
-Supported UI settings:
-- model: `tiny`, `base`, `small`
-- device: `cpu`, `cuda`
-- compute type for `cpu`: `int8`, `float32`
-- compute type for `cuda`: `float16`, `int8_float16`
-- language: blank means auto-detect
-- beam size: `1` to `10`
-- VAD: on or off
-
-This is the safest default for a normal Windows laptop without GPU setup. It is practical for local testing, but CPU transcription can still be slow on longer files.
-
-### Verify transcription backend
-
-Self-check only:
-
-```powershell
-.\.venv\Scripts\python.exe .\scripts\transcribe.py --self-check --model-name tiny --device cpu --compute-type int8
-```
-
-Real transcription check on the sample WAV already in the repository:
-
-```powershell
-.\.venv\Scripts\python.exe .\scripts\transcribe.py --audio-path .\data\valid-upload.wav --model-name tiny --device cpu --compute-type int8 --beam-size 5 --vad-enabled true
-```
-
-The first real run may download the selected whisper model, so it can take noticeably longer than later runs.
-
-### `PYTHON_BINARY` on Windows
-
-If your machine does not resolve `python` correctly, set `PYTHON_BINARY` explicitly.
-
-PowerShell example:
-
-```powershell
-$env:PYTHON_BINARY = ".\.venv\Scripts\python.exe"
-go run ./cmd/worker
-```
-
-You can also set it permanently in your shell profile or your preferred `.env` workflow.
-
-## Useful Commands
+### Linux / macOS
 
 ```bash
-make fmt
-make build
-make test
-make run
-make run-worker
+chmod +x start.sh
+./start.sh
 ```
 
-## Environment
+The start script will:
+- Check all dependencies (Go, ffmpeg, Python 3, faster-whisper, Node.js, Ollama)
+- Offer to install any missing dependency interactively (`[y/N]` prompts)
+- Build the frontend (if not already built)
+- Build Go binaries
+- Start the backend and worker
+- Show local and network URLs
 
-Default values come from `.env.example`.
+Open `http://localhost:8080/app-v1/` in your browser.
 
-- `APP_PORT=8080`
-- `DB_PATH=./data/app.db`
-- `UPLOAD_DIR=./data/uploads`
-- `AUDIO_DIR=./data/audio`
-- `FFMPEG_BINARY=ffmpeg`
-- `PYTHON_BINARY=python`
-- `TRANSCRIBE_SCRIPT=./scripts/transcribe.py`
-- `TRANSCRIBE_LANGUAGE=`
-- `MAX_UPLOAD_SIZE_MB=500`
-- `WORKER_POLL_INTERVAL_MS=2000`
-- `FFMPEG_TIMEOUT_SEC=120`
-- `TRANSCRIBE_TIMEOUT_SEC=300`
+### Dependencies
 
-Uploaded files are stored in `UPLOAD_DIR/<UTC-date>/...`.
-Extracted audio is stored in `AUDIO_DIR/<UTC-date>/media_<media_id>_<stored_name>.wav`.
+| Dependency | Required | Purpose |
+|---|---|---|
+| Go 1.21+ | Yes | Backend + worker |
+| ffmpeg | Yes | Audio extraction, previews, screenshots |
+| Python 3.10+ | Yes | Transcription |
+| faster-whisper | Yes | Speech-to-text engine |
+| Node.js + npm | Once | Frontend build |
+| Ollama | Optional | AI-powered summaries |
 
-## Worker Behavior
+### Manual install (Debian/Ubuntu)
 
-The worker:
-- polls SQLite on a small interval
-- processes one job at a time
-- claims `pending` jobs of type `extract_audio`, then `transcribe`
-- marks jobs as `running`, then `done` or `failed`
-- stores useful `error_message` values on failure
-- requeues interrupted `running` jobs back to `pending` on startup
-- runs `ffmpeg` with a timeout
-- runs the Python transcription script with a timeout
-- persists transcript header text and transcript segments
-- keeps processing later jobs even if one transcription fails
+```bash
+sudo apt install golang ffmpeg python3 python3-pip nodejs npm curl
+pip3 install faster-whisper
 
-Job flow is explicit:
+# Optional: AI summaries
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull phi3:mini
+```
 
-1. Upload creates an `extract_audio` job.
-2. Successful audio extraction stores `media.extracted_audio_path` and enqueues a `transcribe` job with a snapshot of the effective transcription settings.
-3. Successful transcription stores transcript text and timestamped segments.
-4. Media status moves to `transcribed`.
+## Architecture
+
+```
+Browser -> Go backend (:8080) -> SQLite
+                                    ^
+                              Go worker (polls jobs)
+                                    |
+                      ffmpeg / Python transcribe / Ollama
+```
+
+**Backend** (`cmd/web`): HTTP API, file upload, static frontend serving, settings management.
+
+**Worker** (`cmd/worker`): Processes pipeline jobs sequentially. Later stages have priority so each file completes fully before the next one starts.
+
+**Frontend** (`frontend_v1`): React 18 SPA served at `/app-v1`. Built with Vite, uses lucide-react for icons.
+
+### Pipeline stages
+
+1. **Extract audio** -- ffmpeg converts uploaded media to WAV
+2. **Transcribe** -- faster-whisper produces timestamped segments
+3. **Analyze triggers** -- matches keyword rules against transcript
+4. **Extract screenshots** -- ffmpeg captures frames at trigger timestamps
+5. **Prepare preview** -- ffmpeg creates browser-compatible preview video
+6. **Generate summary** -- Ollama LLM or simple local algorithm
+
+## Configuration
+
+Environment variables (defaults in parentheses):
+
+| Variable | Default | Description |
+|---|---|---|
+| `APP_PORT` | `8080` | HTTP server port |
+| `DB_PATH` | `./data/app.db` | SQLite database path |
+| `UPLOAD_DIR` | `./data/uploads` | Uploaded files storage |
+| `AUDIO_DIR` | `./data/audio` | Extracted audio storage |
+| `PREVIEW_DIR` | `./data/previews` | Preview videos storage |
+| `SCREENSHOTS_DIR` | `./data/screenshots` | Trigger screenshots storage |
+| `FFMPEG_BINARY` | `ffmpeg` | Path to ffmpeg |
+| `PYTHON_BINARY` | `python` | Path to Python 3 |
+| `TRANSCRIBE_SCRIPT` | `./scripts/transcribe.py` | Transcription script |
+| `TRANSCRIBE_LANGUAGE` | *(auto-detect)* | Force transcription language |
+| `MAX_UPLOAD_SIZE_MB` | `1024` | Max upload size in MB |
+| `SUMMARY_PROVIDER` | `simple` | Summary engine: `simple` or `ollama` |
+| `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama API endpoint |
+| `OLLAMA_MODEL` | `phi3:mini` | Ollama model for summaries |
 
 ## Transcription Settings
 
-The main page now includes a small settings form.
+Configurable via the Settings drawer in the UI:
 
-It lets you:
-- view the current default transcription profile
-- edit and save backend, model, device, compute type, language, beam size, and VAD
-- keep settings server-side validated before they are saved
+| Setting | Options |
+|---|---|
+| Model | `tiny`, `base`, `small`, `medium`, `large` |
+| Device | `cpu`, `cuda` |
+| Compute type (CPU) | `int8`, `float32` |
+| Compute type (CUDA) | `float16`, `int8_float16` |
+| Language | blank = auto-detect |
+| Beam size | 1--10 |
+| VAD filter | on / off |
 
-The worker uses the settings snapshot from each `transcribe` job payload, so old jobs stay traceable even after you change the default profile later.
+Model recommendations:
+- **tiny/base** -- fast, lower quality, good for testing
+- **small** -- balanced, recommended for most use cases
+- **medium** -- better quality, ~5 GB VRAM or slow on CPU
+- **large** -- best quality, ~10 GB VRAM, very slow on CPU
 
-## Transcription Contract
+## Trigger Rules
 
-The Python adapter calls `scripts/transcribe.py` as a subprocess.
+Managed via the Settings drawer. Each rule has:
+- **Name** -- display label
+- **Category** -- grouping tag
+- **Pattern** -- text to match in transcript
+- **Match mode** -- `contains` (substring) or `exact` (whole segment)
 
-Input arguments:
-- `--audio-path` absolute path to extracted audio
-- `--backend` backend name
-- `--model-name` model name
-- `--device` inference device
-- `--compute-type` backend compute type
-- `--language` optional language hint
-- `--beam-size` decoding beam size
-- `--vad-enabled` `true` or `false`
-- `--self-check` to verify backend import and current configuration
+When a trigger matches, the worker captures a screenshot from the video at that timestamp.
 
-Expected JSON on stdout:
+## Network Access
 
-```json
-{
-  "full_text": "hello world",
-  "segments": [
-    {
-      "start_sec": 0.0,
-      "end_sec": 1.2,
-      "text": "hello",
-      "confidence": 0.95
-    }
-  ]
-}
+After starting, the script shows the network URL:
+
+```
+  Local:   http://localhost:8080/app-v1/
+  Network: http://192.168.1.50:8080/app-v1/
 ```
 
-If the transcription backend is not installed, the script exits with a useful stderr message and the worker saves that error on the failed `transcribe` job.
+Any device on the same network can access the app via the Network URL. For internet access, set up nginx as a reverse proxy with HTTPS.
 
-## Known Limitations
+## Project Structure
 
-- The browser UI is intentionally simple: it helps with upload and basic inspection, not transcript browsing.
-- The first `faster-whisper` run may download a model, so offline first-run transcription may fail until the model is cached.
-- CPU transcription is appropriate for smoke tests and local development, but it is not fast for large files.
-- `dev_up.ps1` starts separate PowerShell windows; it does not manage them as a background service manager.
-
-## Docker
-
-```bash
-docker compose up --build
+```
+cmd/
+  web/           -- HTTP server entry point
+  worker/        -- Background job processor entry point
+internal/
+  app/           -- Application use cases
+  domain/        -- Domain models (job, media, transcript, trigger)
+  infra/         -- Infrastructure (DB, config, ffmpeg, transcription, summary)
+  transport/     -- HTTP handlers and router
+frontend_v1/     -- React frontend (Vite + TypeScript)
+scripts/         -- Python transcription script
+data/            -- Runtime data (DB, uploads, audio, logs)
+start.bat        -- Windows launch script
+start.sh         -- Linux/macOS launch script
 ```
 
-`docker compose` starts two services:
-- `app` for the HTTP interface
-- `worker` for polling, `extract_audio`, and `transcribe` execution
+## License
 
-Both services share `/app/data`, so the web app and worker use the same SQLite database, uploaded files, extracted audio files, and transcript records.
+Private project.
