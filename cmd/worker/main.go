@@ -31,6 +31,16 @@ func main() {
 	}
 	defer closeLog()
 
+	if check := infraRuntime.CheckWorkerDependencies(cfg); !check.OK() {
+		for _, e := range check.Errors {
+			logger.Error("startup check failed", slog.String("error", e))
+		}
+		for _, w := range check.Warnings {
+			logger.Warn("startup warning", slog.String("warning", w))
+		}
+		os.Exit(1)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

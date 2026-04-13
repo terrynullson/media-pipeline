@@ -31,6 +31,16 @@ func main() {
 	}
 	defer closeLog()
 
+	if check := infraRuntime.CheckWebDependencies(cfg); !check.OK() {
+		for _, e := range check.Errors {
+			logger.Error("startup check failed", slog.String("error", e))
+		}
+		for _, w := range check.Warnings {
+			logger.Warn("startup warning", slog.String("warning", w))
+		}
+		os.Exit(1)
+	}
+
 	sqlDB, err := db.OpenSQLite(cfg.DBPath)
 	if err != nil {
 		logger.Error("open database", slog.Any("error", err), slog.String("db_path", cfg.DBPath))
@@ -113,7 +123,7 @@ func main() {
 	if frontendV1Err != nil {
 		frontendV1DistPath = ""
 	}
-	router := httptransport.NewRouter(logger, uploadHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir, frontendV1DistPath)
+	router := httptransport.NewRouter(logger, uploadHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir, cfg.MediaAccessToken, frontendV1DistPath)
 
 	addr := ":" + cfg.AppPort
 	logger.Info("starting web server",

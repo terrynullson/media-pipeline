@@ -26,6 +26,7 @@ type Config struct {
 	OllamaURL            string
 	OllamaModel          string
 	SummaryProvider      string
+	MediaAccessToken     string // env: MEDIA_ACCESS_TOKEN, default: "" (disabled)
 }
 
 func Load() Config {
@@ -49,6 +50,7 @@ func Load() Config {
 		OllamaURL:            getEnv("OLLAMA_URL", "http://127.0.0.1:11434"),
 		OllamaModel:          getEnv("OLLAMA_MODEL", "phi3:mini"),
 		SummaryProvider:      getEnv("SUMMARY_PROVIDER", "simple"),
+		MediaAccessToken:     getEnv("MEDIA_ACCESS_TOKEN", ""),
 	}
 	if cfg.MaxUploadSizeMB <= 0 {
 		cfg.MaxUploadSizeMB = 1024

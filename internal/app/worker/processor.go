@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
+
+	appruntime "media-pipeline/internal/infra/runtime"
 
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
@@ -230,7 +231,7 @@ func (p *Processor) processExtractAudioJob(ctx context.Context, claimedJob job.J
 		return
 	}
 
-	inputPath, err := safeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
+	inputPath, err := appruntime.SafeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
 	if err != nil {
 		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось подготовить путь к исходному файлу", err), true, jobLog, slog.Any("error", err))
 		return
@@ -312,7 +313,7 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 		return
 	}
 
-	audioPath, err := safeJoinBasePath(p.audioDir, mediaItem.ExtractedAudioPath)
+	audioPath, err := appruntime.SafeJoinBasePath(p.audioDir, mediaItem.ExtractedAudioPath)
 	if err != nil {
 		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось подготовить путь к аудио", err), true, jobLog, slog.Any("error", err))
 		return
@@ -428,6 +429,12 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 	)
 
 	nowUTC := time.Now().UTC()
+	// NOTE: The three operations below (Save transcript → MarkTranscribed → MarkDone) are
+	// not wrapped in a single transaction. If the process crashes between them, the job
+	// stays StatusRunning and RecoverInterruptedJobs will handle it on next startup:
+	// it detects that the transcript already exists and calls MarkDone directly instead
+	// of resetting state and re-running transcription. The acceptable risk window is the
+	// brief interval between these three sequential DB writes.
 	if err := p.transcripts.Save(ctx, transcript.Transcript{
 		MediaID:      mediaItem.ID,
 		Language:     settings.Language,
@@ -534,7 +541,7 @@ func (p *Processor) processExtractScreenshotsJob(ctx context.Context, claimedJob
 		return
 	}
 
-	inputPath, err := safeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
+	inputPath, err := appruntime.SafeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
 	if err != nil {
 		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось подготовить путь к видео для скриншотов", err), false, jobLog, slog.Any("error", err))
 		return
@@ -651,7 +658,7 @@ func (p *Processor) processPreparePreviewVideoJob(ctx context.Context, claimedJo
 		return
 	}
 
-	inputPath, err := safeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
+	inputPath, err := appruntime.SafeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
 	if err != nil {
 		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось подготовить путь к исходному видео для preview", err), false, jobLog, slog.Any("error", err))
 		return
@@ -782,18 +789,27 @@ func (p *Processor) processGenerateSummaryJob(ctx context.Context, claimedJob jo
 }
 
 func (p *Processor) RecoverInterruptedJobs(ctx context.Context) error {
+	// transcriptExists is used by TypeTranscribe recovery to detect the crash window
+	// between MarkTranscribed and MarkDone: if transcript already exists, mark the job
+	// done immediately instead of resetting state and re-running transcription.
+	transcriptExists := func(ctx context.Context, mediaID int64) (bool, error) {
+		_, ok, err := p.transcripts.GetByMediaID(ctx, mediaID)
+		return ok, err
+	}
+
 	for _, recovery := range []struct {
-		jobType      job.Type
-		restoreState func(context.Context, int64, time.Time) error
+		jobType        job.Type
+		restoreState   func(context.Context, int64, time.Time) error
+		alreadyDoneFor func(ctx context.Context, mediaID int64) (bool, error)
 	}{
 		{jobType: job.TypeExtractAudio, restoreState: p.media.MarkUploaded},
-		{jobType: job.TypeTranscribe, restoreState: p.media.MarkAudioReady},
+		{jobType: job.TypeTranscribe, restoreState: p.media.MarkAudioReady, alreadyDoneFor: transcriptExists},
 		{jobType: job.TypeAnalyzeTriggers},
 		{jobType: job.TypeExtractScreenshots},
 		{jobType: job.TypePreparePreviewVideo},
 		{jobType: job.TypeGenerateSummary},
 	} {
-		if err := p.recoverInterruptedJobType(ctx, recovery.jobType, recovery.restoreState); err != nil {
+		if err := p.recoverInterruptedJobType(ctx, recovery.jobType, recovery.restoreState, recovery.alreadyDoneFor); err != nil {
 			return err
 		}
 	}
@@ -835,7 +851,7 @@ func cleanupOutputFile(audioDir string, relativePath string) error {
 		return nil
 	}
 
-	fullPath, err := safeJoinBasePath(audioDir, relativePath)
+	fullPath, err := appruntime.SafeJoinBasePath(audioDir, relativePath)
 	if err != nil {
 		return err
 	}
@@ -965,6 +981,7 @@ func (p *Processor) recoverInterruptedJobType(
 	ctx context.Context,
 	jobType job.Type,
 	restoreState func(context.Context, int64, time.Time) error,
+	alreadyDoneFor func(ctx context.Context, mediaID int64) (bool, error),
 ) error {
 	runningJobs, err := p.jobs.ListByStatus(ctx, jobType, job.StatusRunning)
 	if err != nil {
@@ -981,6 +998,25 @@ func (p *Processor) recoverInterruptedJobType(
 			slog.Int64("media_id", currentJob.MediaID),
 			slog.String("job_type", string(currentJob.Type)),
 		)
+
+		// If an alreadyDoneFor check is provided (e.g. transcript exists for TypeTranscribe),
+		// the crash occurred in the narrow window after the work was completed but before
+		// MarkDone was called. Mark the job done directly without re-running the work.
+		if alreadyDoneFor != nil {
+			done, checkErr := alreadyDoneFor(ctx, currentJob.MediaID)
+			if checkErr != nil {
+				logger.Error("recover: alreadyDone check failed", slog.Any("error", checkErr))
+				continue
+			}
+			if done {
+				if err := p.jobs.MarkDone(ctx, currentJob.ID, time.Now().UTC()); err != nil {
+					logger.Error("recover: mark job done failed", slog.Any("error", err))
+					continue
+				}
+				logger.Warn("recovered interrupted job as done (work already completed)", slog.String("job_type", string(jobType)))
+				continue
+			}
+		}
 
 		if restoreState != nil {
 			if err := restoreState(ctx, currentJob.MediaID, time.Now().UTC()); err != nil {
@@ -1225,24 +1261,3 @@ func isDiagnosticNoise(line string) bool {
 	return false
 }
 
-func safeJoinBasePath(baseDir string, relativePath string) (string, error) {
-	cleanRelativePath := filepath.Clean(filepath.FromSlash(relativePath))
-	if cleanRelativePath == "." || cleanRelativePath == string(filepath.Separator) {
-		return "", fmt.Errorf("invalid relative path %q", relativePath)
-	}
-	fullPath := filepath.Join(baseDir, cleanRelativePath)
-
-	baseAbs, err := filepath.Abs(baseDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve base dir: %w", err)
-	}
-	fullAbs, err := filepath.Abs(fullPath)
-	if err != nil {
-		return "", fmt.Errorf("resolve full path: %w", err)
-	}
-	if fullAbs != baseAbs && !strings.HasPrefix(fullAbs, baseAbs+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q escapes base dir", relativePath)
-	}
-
-	return fullAbs, nil
-}

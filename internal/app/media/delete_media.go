@@ -2,7 +2,6 @@ package mediaapp
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -64,8 +63,8 @@ func NewDeleteMediaUseCase(
 func (u *DeleteMediaUseCase) Delete(ctx context.Context, mediaID int64) (DeleteMediaResult, error) {
 	mediaItem, err := u.repo.GetByID(ctx, mediaID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return DeleteMediaResult{}, fmt.Errorf("media %d not found: %w", mediaID, err)
+		if errors.Is(err, ports.ErrNotFound) {
+			return DeleteMediaResult{}, fmt.Errorf("media %d not found: %w", mediaID, ports.ErrNotFound)
 		}
 		return DeleteMediaResult{}, fmt.Errorf("load media for deletion: %w", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"media-pipeline/internal/domain/media"
+	"media-pipeline/internal/domain/ports"
 )
 
 type MediaRepository struct {
@@ -210,7 +211,7 @@ func (r *MediaRepository) GetByID(ctx context.Context, id int64) (media.Media, e
 		&updatedAt,
 	); err != nil {
 		if err == sql.ErrNoRows {
-			return media.Media{}, fmt.Errorf("get media by id %d: %w", id, err)
+			return media.Media{}, fmt.Errorf("get media by id %d: %w", id, ports.ErrNotFound)
 		}
 		return media.Media{}, fmt.Errorf("scan media by id %d: %w", id, err)
 	}

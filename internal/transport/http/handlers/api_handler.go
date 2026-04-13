@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"media-pipeline/internal/domain/job"
+	"media-pipeline/internal/domain/ports"
 	"media-pipeline/internal/domain/transcription"
 	domaintrigger "media-pipeline/internal/domain/trigger"
 	"media-pipeline/internal/observability"
@@ -240,7 +240,7 @@ func (h *UploadHandler) APIMediaDetail(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.transcriptViewUC.Load(r.Context(), mediaID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, ports.ErrNotFound) {
 			http.NotFound(w, r)
 			return
 		}

@@ -35,8 +35,10 @@ func TestProcessor_RecoverInterruptedJobs(t *testing.T) {
 		},
 	}
 	mediaRepo := &stubMediaRepository{}
+	// No transcript saved → TypeTranscribe job should be requeued (normal recovery).
+	transcriptRepo := &stubTranscriptRepository{}
 
-	processor := newTestProcessor(jobRepo, mediaRepo, &stubTranscriptRepository{}, &stubAudioExtractor{}, &stubTranscriber{})
+	processor := newTestProcessor(jobRepo, mediaRepo, transcriptRepo, &stubAudioExtractor{}, &stubTranscriber{})
 
 	if err := processor.RecoverInterruptedJobs(context.Background()); err != nil {
 		t.Fatalf("RecoverInterruptedJobs() error = %v", err)
@@ -50,6 +52,43 @@ func TestProcessor_RecoverInterruptedJobs(t *testing.T) {
 	}
 	if len(mediaRepo.markAudioReadyIDs) != 1 || mediaRepo.markAudioReadyIDs[0] != 21 {
 		t.Fatalf("mark audio ready ids = %#v, want [21]", mediaRepo.markAudioReadyIDs)
+	}
+}
+
+// TestProcessor_RecoverInterruptedJobs_TranscriptExists covers the crash window where
+// transcript was saved but the job was not yet marked done. Recovery should mark the
+// job done directly without resetting media state or re-running transcription.
+func TestProcessor_RecoverInterruptedJobs_TranscriptExists(t *testing.T) {
+	t.Parallel()
+
+	jobRepo := &stubJobRepository{
+		listByTypeAndStatus: map[job.Type][]job.Job{
+			job.TypeTranscribe: {
+				{ID: 11, MediaID: 21, Type: job.TypeTranscribe, Status: job.StatusRunning},
+			},
+		},
+	}
+	mediaRepo := &stubMediaRepository{}
+	// Transcript already exists for mediaID 21 → job should be marked done, not requeued.
+	transcriptRepo := &stubTranscriptRepository{
+		item: transcript.Transcript{ID: 1, MediaID: 21, FullText: "hello"},
+		ok:   true,
+	}
+
+	processor := newTestProcessor(jobRepo, mediaRepo, transcriptRepo, &stubAudioExtractor{}, &stubTranscriber{})
+
+	if err := processor.RecoverInterruptedJobs(context.Background()); err != nil {
+		t.Fatalf("RecoverInterruptedJobs() error = %v", err)
+	}
+
+	if len(jobRepo.requeued) != 0 {
+		t.Fatalf("requeued jobs = %d, want 0 (transcript exists, should mark done)", len(jobRepo.requeued))
+	}
+	if len(jobRepo.markDoneIDs) != 1 || jobRepo.markDoneIDs[0] != 11 {
+		t.Fatalf("markDoneIDs = %v, want [11]", jobRepo.markDoneIDs)
+	}
+	if len(mediaRepo.markAudioReadyIDs) != 0 {
+		t.Fatalf("markAudioReadyIDs = %v, want [] (state must not be reset when transcript exists)", mediaRepo.markAudioReadyIDs)
 	}
 }
 

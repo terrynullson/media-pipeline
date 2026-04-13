@@ -120,6 +120,32 @@ func (r *statusRecorder) ensureStatus(statusCode int) {
 	r.WriteHeader(statusCode)
 }
 
+// MediaTokenMiddleware protects routes with a static shared-secret token.
+// If token is empty the middleware is a no-op (disabled, backward-compatible).
+// Clients must supply the token via:
+//   - Header:        Authorization: Bearer <token>
+//   - Query param:   ?token=<token>
+func MediaTokenMiddleware(token string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		if token == "" {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var got string
+			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				got = strings.TrimPrefix(auth, "Bearer ")
+			} else {
+				got = r.URL.Query().Get("token")
+			}
+			if got != token {
+				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func sanitizeRequestID(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {

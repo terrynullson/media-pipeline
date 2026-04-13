@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	appruntime "media-pipeline/internal/infra/runtime"
+
 	"media-pipeline/internal/domain/job"
 	domainmedia "media-pipeline/internal/domain/media"
 	domainsummary "media-pipeline/internal/domain/summary"
@@ -219,7 +221,7 @@ func (u *TranscriptViewUseCase) buildRuntimePolicy(
 		return nil, false
 	}
 
-	audioPath, err := safeJoinBasePath(u.audioDir, mediaItem.ExtractedAudioPath)
+	audioPath, err := appruntime.SafeJoinBasePath(u.audioDir, mediaItem.ExtractedAudioPath)
 	if err != nil {
 		return nil, false
 	}
@@ -237,7 +239,7 @@ func (u *TranscriptViewUseCase) resolvePlayableMediaSource(mediaItem domainmedia
 		return "", false
 	}
 
-	sourcePath, err := safeJoinBasePath(u.uploadDir, mediaItem.StoragePath)
+	sourcePath, err := appruntime.SafeJoinBasePath(u.uploadDir, mediaItem.StoragePath)
 	if err != nil {
 		return "", false
 	}
@@ -253,7 +255,7 @@ func (u *TranscriptViewUseCase) resolvePlayableAudioSource(mediaItem domainmedia
 		return "", false
 	}
 
-	audioPath, err := safeJoinBasePath(u.audioDir, mediaItem.ExtractedAudioPath)
+	audioPath, err := appruntime.SafeJoinBasePath(u.audioDir, mediaItem.ExtractedAudioPath)
 	if err != nil {
 		return "", false
 	}
@@ -269,7 +271,7 @@ func (u *TranscriptViewUseCase) resolvePlayablePreviewSource(mediaItem domainmed
 		return "", false
 	}
 
-	previewPath, err := safeJoinBasePath(u.previewDir, mediaItem.PreviewVideoPath)
+	previewPath, err := appruntime.SafeJoinBasePath(u.previewDir, mediaItem.PreviewVideoPath)
 	if err != nil {
 		return "", false
 	}
@@ -278,28 +280,6 @@ func (u *TranscriptViewUseCase) resolvePlayablePreviewSource(mediaItem domainmed
 	}
 
 	return filepath.ToSlash(filepath.Clean(mediaItem.PreviewVideoPath)), true
-}
-
-func safeJoinBasePath(baseDir string, relativePath string) (string, error) {
-	cleanRelativePath := filepath.Clean(filepath.FromSlash(relativePath))
-	if cleanRelativePath == "." || cleanRelativePath == string(filepath.Separator) {
-		return "", fmt.Errorf("invalid relative path %q", relativePath)
-	}
-	fullPath := filepath.Join(baseDir, cleanRelativePath)
-
-	baseAbs, err := filepath.Abs(baseDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve base dir: %w", err)
-	}
-	fullAbs, err := filepath.Abs(fullPath)
-	if err != nil {
-		return "", fmt.Errorf("resolve full path: %w", err)
-	}
-	if fullAbs != baseAbs && !strings.HasPrefix(fullAbs, baseAbs+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q escapes base dir", relativePath)
-	}
-
-	return fullAbs, nil
 }
 
 func latestJobsByType(items []job.Job) map[job.Type]job.Job {

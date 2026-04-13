@@ -1269,7 +1269,7 @@ func newTestApp(t *testing.T) testWebApp {
 	}
 
 	return testWebApp{
-		router:         httptransport.NewRouter(logger, handler, staticPath, uploadDir, audioDir, previewDir, screenshotsDir),
+		router:         httptransport.NewRouter(logger, handler, staticPath, uploadDir, audioDir, previewDir, screenshotsDir, ""),
 		db:             sqlDB,
 		uploadDir:      uploadDir,
 		audioDir:       audioDir,

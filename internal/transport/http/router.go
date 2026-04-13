@@ -13,7 +13,7 @@ import (
 	"media-pipeline/internal/transport/http/handlers"
 )
 
-func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, staticDir string, uploadsDir string, audioDir string, previewDir string, screenshotsDir string, frontendDirs ...string) http.Handler {
+func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, staticDir string, uploadsDir string, audioDir string, previewDir string, screenshotsDir string, mediaAccessToken string, frontendDirs ...string) http.Handler {
 	r := chi.NewRouter()
 	r.Use(RequestIDMiddleware(logger))
 	r.Use(AccessLogMiddleware(logger))
@@ -54,17 +54,19 @@ func NewRouter(logger *slog.Logger, uploadHandler *handlers.UploadHandler, stati
 	fs := http.FileServer(http.Dir(staticDir))
 	r.Handle("/static/*", http.StripPrefix("/static/", fs))
 
+	mediaToken := MediaTokenMiddleware(mediaAccessToken)
+
 	uploadFS := http.FileServer(http.Dir(uploadsDir))
-	r.Handle("/media-source/*", http.StripPrefix("/media-source/", uploadFS))
+	r.With(mediaToken).Handle("/media-source/*", http.StripPrefix("/media-source/", uploadFS))
 
 	audioFS := http.FileServer(http.Dir(audioDir))
-	r.Handle("/media-audio/*", http.StripPrefix("/media-audio/", audioFS))
+	r.With(mediaToken).Handle("/media-audio/*", http.StripPrefix("/media-audio/", audioFS))
 
 	previewFS := http.FileServer(http.Dir(previewDir))
-	r.Handle("/media-preview/*", http.StripPrefix("/media-preview/", previewFS))
+	r.With(mediaToken).Handle("/media-preview/*", http.StripPrefix("/media-preview/", previewFS))
 
 	screenshotFS := http.FileServer(http.Dir(screenshotsDir))
-	r.Handle("/media-screenshots/*", http.StripPrefix("/media-screenshots/", screenshotFS))
+	r.With(mediaToken).Handle("/media-screenshots/*", http.StripPrefix("/media-screenshots/", screenshotFS))
 
 	// Frontend v1 - /app-v1
 	frontendDir := ""

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // ResolvePath tries a few stable locations so the app can start
@@ -31,6 +32,30 @@ func ResolvePath(rel string) (string, error) {
 	}
 
 	return "", fmt.Errorf("resolve path %q: not found in known runtime locations", rel)
+}
+
+// SafeJoinBasePath joins baseDir and relativePath, ensuring the result
+// does not escape baseDir. Returns an absolute path on success.
+func SafeJoinBasePath(baseDir string, relativePath string) (string, error) {
+	cleanRelativePath := filepath.Clean(filepath.FromSlash(relativePath))
+	if cleanRelativePath == "." || cleanRelativePath == string(filepath.Separator) {
+		return "", fmt.Errorf("invalid relative path %q", relativePath)
+	}
+	fullPath := filepath.Join(baseDir, cleanRelativePath)
+
+	baseAbs, err := filepath.Abs(baseDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve base dir: %w", err)
+	}
+	fullAbs, err := filepath.Abs(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve full path: %w", err)
+	}
+	if fullAbs != baseAbs && !strings.HasPrefix(fullAbs, baseAbs+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes base dir", relativePath)
+	}
+
+	return fullAbs, nil
 }
 
 func projectRootFromSource() string {

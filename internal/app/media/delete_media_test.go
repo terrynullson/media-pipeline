@@ -2,7 +2,6 @@ package mediaapp
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"io"
 	"log/slog"
@@ -49,7 +48,7 @@ func TestDeleteMediaUseCase_DeleteReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
 	uc := NewDeleteMediaUseCase(
-		&stubMediaDeletionRepository{getErr: sql.ErrNoRows},
+		&stubMediaDeletionRepository{getErr: ports.ErrNotFound},
 		stubScreenshotPathReader{},
 		stubDeleteStorage{},
 		stubDeleteStorage{},
@@ -58,8 +57,8 @@ func TestDeleteMediaUseCase_DeleteReturnsNotFound(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
-	if _, err := uc.Delete(context.Background(), 5); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("Delete() error = %v, want sql.ErrNoRows", err)
+	if _, err := uc.Delete(context.Background(), 5); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("Delete() error = %v, want ports.ErrNotFound", err)
 	}
 }
 
