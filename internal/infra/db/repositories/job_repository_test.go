@@ -369,6 +369,98 @@ func TestJobRepository_ListByMediaIDReturnsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestJobRepository_ClaimNextPendingSelectsOldestAcrossMedia(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
+
+	mediaRepo := NewMediaRepository(sqlDB)
+	jobRepo := NewJobRepository(sqlDB)
+
+	mediaID1 := createTestMedia(t, ctx, mediaRepo)
+	mediaID2 := createTestMedia(t, ctx, mediaRepo)
+
+	older := time.Date(2026, 4, 3, 8, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+
+	// Intentionally create the newer job first so insertion order differs from creation time.
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID2,
+		Type:         job.TypeExtractAudio,
+		Status:       job.StatusPending,
+		CreatedAtUTC: newer,
+		UpdatedAtUTC: newer,
+	}); err != nil {
+		t.Fatalf("Create(job2) error = %v", err)
+	}
+	firstID, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID1,
+		Type:         job.TypeExtractAudio,
+		Status:       job.StatusPending,
+		CreatedAtUTC: older,
+		UpdatedAtUTC: older,
+	})
+	if err != nil {
+		t.Fatalf("Create(job1) error = %v", err)
+	}
+
+	claimedJob, ok, err := jobRepo.ClaimNextPending(ctx, job.TypeExtractAudio, newer.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("ClaimNextPending() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ClaimNextPending() ok = false, want true")
+	}
+	if claimedJob.ID != firstID {
+		t.Fatalf("claimed job ID = %d, want %d (oldest job for media %d)", claimedJob.ID, firstID, mediaID1)
+	}
+	if claimedJob.MediaID != mediaID1 {
+		t.Fatalf("claimed media ID = %d, want %d", claimedJob.MediaID, mediaID1)
+	}
+}
+
+func TestJobRepository_ClaimNextPendingSecondCallReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
+
+	mediaRepo := NewMediaRepository(sqlDB)
+	jobRepo := NewJobRepository(sqlDB)
+
+	mediaID := createTestMedia(t, ctx, mediaRepo)
+	nowUTC := time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC)
+
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeTranscribe,
+		Status:       job.StatusPending,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		t.Fatalf("Create(job) error = %v", err)
+	}
+
+	_, ok1, err := jobRepo.ClaimNextPending(ctx, job.TypeTranscribe, nowUTC.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("first ClaimNextPending() error = %v", err)
+	}
+	if !ok1 {
+		t.Fatal("first ClaimNextPending() ok = false, want true")
+	}
+
+	_, ok2, err := jobRepo.ClaimNextPending(ctx, job.TypeTranscribe, nowUTC.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("second ClaimNextPending() error = %v", err)
+	}
+	if ok2 {
+		t.Fatal("second ClaimNextPending() ok = true, want false (no more pending jobs)")
+	}
+}
+
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 

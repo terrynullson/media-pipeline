@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"media-pipeline/internal/transport/http/handlers"
 )
@@ -26,6 +27,7 @@ func NewRouter(
 	screenshotsDir string,
 	mediaAccessToken string,
 	requestTimeout time.Duration,
+	uploadRateLimitPerMinute int64,
 	frontendDirs ...string,
 ) http.Handler {
 	r := chi.NewRouter()
@@ -58,7 +60,8 @@ func NewRouter(
 		http.Redirect(w, r, "/app-v1", http.StatusSeeOther)
 	})
 	r.With(timeout).Get("/workspace", uploadHandler.Workspace)
-	r.Post("/upload", uploadHandler.Upload) // no timeout — large file uploads
+	uploadRateLimit := UploadRateLimitMiddleware(uploadRateLimitPerMinute)
+	r.With(uploadRateLimit).Post("/upload", uploadHandler.Upload) // no timeout — large file uploads
 	r.With(timeout).Get("/media/statuses", uploadHandler.MediaStatuses)
 	r.With(timeout).Get("/media/{mediaID}/transcript", uploadHandler.Transcript)
 	r.With(timeout).Post("/media/{mediaID}/summary", uploadHandler.RequestSummary)
@@ -72,6 +75,7 @@ func NewRouter(
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
+	r.Handle("/metrics", promhttp.Handler())
 
 	fs := http.FileServer(http.Dir(staticDir))
 	r.Handle("/static/*", http.StripPrefix("/static/", fs))

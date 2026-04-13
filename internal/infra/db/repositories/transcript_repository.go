@@ -91,6 +91,22 @@ func (r *TranscriptRepository) Save(ctx context.Context, item transcript.Transcr
 	return nil
 }
 
+func (r *TranscriptRepository) ExistsByMediaID(ctx context.Context, mediaID int64) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(
+		ctx,
+		`SELECT 1 FROM transcripts WHERE media_id = ? LIMIT 1`,
+		mediaID,
+	).Scan(&exists)
+	if err == nil {
+		return true, nil
+	}
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return false, fmt.Errorf("check transcript exists for media %d: %w", mediaID, err)
+}
+
 func (r *TranscriptRepository) GetByMediaID(ctx context.Context, mediaID int64) (transcript.Transcript, bool, error) {
 	row := r.db.QueryRowContext(
 		ctx,

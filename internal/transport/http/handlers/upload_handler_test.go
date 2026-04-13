@@ -1268,11 +1268,12 @@ func newTestApp(t *testing.T) testWebApp {
 		t.Fatalf("NewUploadHandler() error = %v", err)
 	}
 
-	machineAPIHandler := handlers.NewMachineAPIHandler(transcriptViewUC, logger)
+	mediaStatusUC := mediaapp.NewMediaStatusUseCase(mediaRepo, transcriptRepo, jobRepo)
+	machineAPIHandler := handlers.NewMachineAPIHandler(mediaStatusUC, transcriptViewUC, logger)
 	triggerRuleHandler := handlers.NewTriggerRuleHandler(triggerRuleService, handler, logger)
 
 	return testWebApp{
-		router:         httptransport.NewRouter(logger, handler, machineAPIHandler, triggerRuleHandler, staticPath, uploadDir, audioDir, previewDir, screenshotsDir, "", 30*time.Second),
+		router:         httptransport.NewRouter(logger, handler, machineAPIHandler, triggerRuleHandler, staticPath, uploadDir, audioDir, previewDir, screenshotsDir, "", 30*time.Second, 0),
 		db:             sqlDB,
 		uploadDir:      uploadDir,
 		audioDir:       audioDir,

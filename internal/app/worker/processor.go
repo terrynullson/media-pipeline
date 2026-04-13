@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"media-pipeline/internal/app/messages"
 	appruntime "media-pipeline/internal/infra/runtime"
+	"media-pipeline/internal/observability"
 
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
@@ -227,7 +229,7 @@ func (p *Processor) processNextByType(ctx context.Context, jobType job.Type) (bo
 	case job.TypeGenerateSummary:
 		p.processGenerateSummaryJob(ctx, claimedJob, logger)
 	default:
-		jobLog := newJobExecutionLog(logger)
+		jobLog := newJobExecutionLog(claimedJob.Type, logger)
 		p.failJob(
 			ctx,
 			claimedJob,
@@ -242,7 +244,7 @@ func (p *Processor) processNextByType(ctx context.Context, jobType job.Type) (bo
 }
 
 func (p *Processor) processExtractAudioJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
-	jobLog := newJobExecutionLog(logger)
+	jobLog := newJobExecutionLog(job.TypeExtractAudio, logger)
 
 	mediaItem, err := p.media.GetByID(ctx, claimedJob.MediaID)
 	if err != nil {
@@ -319,7 +321,7 @@ func (p *Processor) processExtractAudioJob(ctx context.Context, claimedJob job.J
 }
 
 func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
-	jobLog := newJobExecutionLog(logger)
+	jobLog := newJobExecutionLog(job.TypeTranscribe, logger)
 
 	mediaItem, err := p.media.GetByID(ctx, claimedJob.MediaID)
 	if err != nil {
@@ -491,7 +493,7 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 }
 
 func (p *Processor) processAnalyzeTriggersJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
-	jobLog := newJobExecutionLog(logger)
+	jobLog := newJobExecutionLog(job.TypeAnalyzeTriggers, logger)
 
 	transcriptItem, ok, err := p.transcripts.GetByMediaID(ctx, claimedJob.MediaID)
 	if err != nil {
@@ -538,7 +540,7 @@ func (p *Processor) processAnalyzeTriggersJob(ctx context.Context, claimedJob jo
 }
 
 func (p *Processor) processExtractScreenshotsJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
-	jobLog := newJobExecutionLog(logger)
+	jobLog := newJobExecutionLog(job.TypeExtractScreenshots, logger)
 
 	mediaItem, err := p.media.GetByID(ctx, claimedJob.MediaID)
 	if err != nil {
@@ -665,7 +667,7 @@ func (p *Processor) processExtractScreenshotsJob(ctx context.Context, claimedJob
 }
 
 func (p *Processor) processPreparePreviewVideoJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
-	jobLog := newJobExecutionLog(logger)
+	jobLog := newJobExecutionLog(job.TypePreparePreviewVideo, logger)
 
 	mediaItem, err := p.media.GetByID(ctx, claimedJob.MediaID)
 	if err != nil {
@@ -747,7 +749,7 @@ func (p *Processor) processPreparePreviewVideoJob(ctx context.Context, claimedJo
 }
 
 func (p *Processor) processGenerateSummaryJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
-	jobLog := newJobExecutionLog(logger)
+	jobLog := newJobExecutionLog(job.TypeGenerateSummary, logger)
 
 	transcriptItem, ok, err := p.transcripts.GetByMediaID(ctx, claimedJob.MediaID)
 	if err != nil {
@@ -1084,12 +1086,15 @@ func transcriptionDiagnostics(err error) string {
 
 type jobExecutionLog struct {
 	startedAt time.Time
+	jobType   job.Type
 	logger    *slog.Logger
 }
 
-func newJobExecutionLog(logger *slog.Logger, attrs ...slog.Attr) jobExecutionLog {
+func newJobExecutionLog(jobType job.Type, logger *slog.Logger, attrs ...slog.Attr) jobExecutionLog {
+	observability.ActiveJobs.WithLabelValues(string(jobType)).Inc()
 	run := jobExecutionLog{
 		startedAt: time.Now(),
+		jobType:   jobType,
 		logger:    logger,
 	}
 	run.logger.Info("pipeline step started", attrsToAnySlice(attrs)...)
@@ -1097,12 +1102,20 @@ func newJobExecutionLog(logger *slog.Logger, attrs ...slog.Attr) jobExecutionLog
 }
 
 func (j jobExecutionLog) Success(attrs ...slog.Attr) {
-	attrs = append(attrs, slog.Duration("duration", time.Since(j.startedAt)))
+	elapsed := time.Since(j.startedAt)
+	observability.ActiveJobs.WithLabelValues(string(j.jobType)).Dec()
+	observability.JobsProcessedTotal.WithLabelValues(string(j.jobType), "done").Inc()
+	observability.JobDurationSeconds.WithLabelValues(string(j.jobType)).Observe(elapsed.Seconds())
+	attrs = append(attrs, slog.Duration("duration", elapsed))
 	j.logger.Info("pipeline step succeeded", attrsToAnySlice(attrs)...)
 }
 
 func (j jobExecutionLog) Failure(attrs ...slog.Attr) {
-	attrs = append(attrs, slog.Duration("duration", time.Since(j.startedAt)))
+	elapsed := time.Since(j.startedAt)
+	observability.ActiveJobs.WithLabelValues(string(j.jobType)).Dec()
+	observability.JobsProcessedTotal.WithLabelValues(string(j.jobType), "failed").Inc()
+	observability.JobDurationSeconds.WithLabelValues(string(j.jobType)).Observe(elapsed.Seconds())
+	attrs = append(attrs, slog.Duration("duration", elapsed))
 	j.logger.Error("pipeline step failed", attrsToAnySlice(attrs)...)
 }
 
@@ -1121,7 +1134,7 @@ func attrsToAnySlice(attrs []slog.Attr) []any {
 
 func buildPreviewFailureMessage(err error, diagnostics string) string {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return "Истекло время ожидания подготовки browser-safe preview видео."
+		return messages.TimeoutPreview
 	}
 
 	reason := compactDiagnostic(diagnostics, 240)
@@ -1130,12 +1143,12 @@ func buildPreviewFailureMessage(err error, diagnostics string) string {
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
-		reason = "не удалось определить причину"
+		reason = messages.UnknownFailureReason
 	} else if strings.Contains(strings.ToLower(reason), "exit status") {
-		reason = "ffmpeg завершился с ошибкой"
+		reason = messages.FFmpegExitError
 	}
 
-	return "Не удалось подготовить browser-safe preview видео: " + reason
+	return messages.PrefixPreviewVideo + reason
 }
 
 func buildUserFacingStageError(jobType job.Type, err error, diagnostics string) string {
@@ -1145,29 +1158,29 @@ func buildUserFacingStageError(jobType job.Type, err error, diagnostics string) 
 	}
 	reason = humanizeUserReason(jobType, reason)
 	if reason == "" {
-		reason = "не удалось определить причину"
+		reason = messages.UnknownFailureReason
 	}
 
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		switch jobType {
 		case job.TypeExtractAudio, job.TypeExtractScreenshots:
-			return "Истекло время ожидания ffmpeg."
+			return messages.TimeoutFFmpeg
 		case job.TypeTranscribe:
-			return "Истекло время ожидания распознавания текста."
+			return messages.TimeoutTranscribe
 		default:
-			return "Истекло время ожидания обработки."
+			return messages.TimeoutGeneric
 		}
 	case jobType == job.TypeExtractAudio:
-		return "Не удалось извлечь аудио: " + reason
+		return messages.PrefixExtractAudio + reason
 	case jobType == job.TypeTranscribe:
-		return "Не удалось распознать текст: " + reason
+		return messages.PrefixTranscribe + reason
 	case jobType == job.TypeAnalyzeTriggers:
-		return "Не удалось проанализировать триггеры: " + reason
+		return messages.PrefixAnalyze + reason
 	case jobType == job.TypeExtractScreenshots:
-		return "Не удалось подготовить скриншоты: " + reason
+		return messages.PrefixScreenshots + reason
 	case jobType == job.TypeGenerateSummary:
-		return "Не удалось собрать саммари: " + reason
+		return messages.PrefixSummary + reason
 	default:
 		return reason
 	}
@@ -1186,20 +1199,20 @@ func humanizeUserReason(jobType job.Type, reason string) string {
 	if jobType == job.TypeTranscribe {
 		switch {
 		case strings.Contains(lower, "transcription backend returned empty text"):
-			return "модель вернула пустой результат"
+			return messages.TranscriptionEmpty
 		case strings.Contains(lower, "no module named"):
-			return "не удалось запустить Python-зависимости распознавания"
+			return messages.PythonDepsNotFound
 		case strings.Contains(lower, "out of memory"):
-			return "не хватило памяти для запуска модели"
+			return messages.OutOfMemory
 		case strings.Contains(lower, "cuda") && strings.Contains(lower, "not available"):
-			return "CUDA недоступна для этой модели"
+			return messages.CUDAUnavailable
 		case strings.Contains(lower, "exit status"):
-			return "процесс распознавания завершился с ошибкой"
+			return messages.TranscribeExitError
 		}
 	}
 
 	if (jobType == job.TypeExtractAudio || jobType == job.TypeExtractScreenshots) && strings.Contains(lower, "exit status") {
-		return "ffmpeg завершился с ошибкой"
+		return messages.FFmpegExitError
 	}
 
 	return trimmed

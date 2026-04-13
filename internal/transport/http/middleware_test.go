@@ -159,3 +159,81 @@ func TestRequestTimeoutMiddleware_FastHandlerNotAffected(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }
+
+func TestUploadRateLimitMiddleware_DisabledWhenZero(t *testing.T) {
+	t.Parallel()
+
+	handler := UploadRateLimitMiddleware(0)(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+
+	for i := range 20 {
+		req := httptest.NewRequest(http.MethodPost, "/upload", nil)
+		req.RemoteAddr = "1.2.3.4:5678"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d: status = %d, want 200 (rate limit disabled)", i+1, rec.Code)
+		}
+	}
+}
+
+func TestUploadRateLimitMiddleware_BlocksAfterLimitExceeded(t *testing.T) {
+	t.Parallel()
+
+	const limit = 3
+	handler := UploadRateLimitMiddleware(limit)(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+
+	for i := range limit {
+		req := httptest.NewRequest(http.MethodPost, "/upload", nil)
+		req.RemoteAddr = "10.0.0.1:1234"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d: status = %d, want 200 (within limit)", i+1, rec.Code)
+		}
+	}
+
+	// The limit+1-th request must be rejected.
+	req := httptest.NewRequest(http.MethodPost, "/upload", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("request %d: status = %d, want 429", limit+1, rec.Code)
+	}
+}
+
+func TestUploadRateLimitMiddleware_DifferentIPsAreIndependent(t *testing.T) {
+	t.Parallel()
+
+	const limit = 2
+	handler := UploadRateLimitMiddleware(limit)(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+
+	// Exhaust limit for IP A.
+	for range limit {
+		req := httptest.NewRequest(http.MethodPost, "/upload", nil)
+		req.RemoteAddr = "192.168.1.1:1111"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+	}
+
+	// IP B is unaffected.
+	req := httptest.NewRequest(http.MethodPost, "/upload", nil)
+	req.RemoteAddr = "192.168.1.2:2222"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for unrelated IP", rec.Code)
+	}
+}

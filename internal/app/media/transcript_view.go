@@ -154,7 +154,7 @@ func (u *TranscriptViewUseCase) Load(ctx context.Context, mediaID int64) (Transc
 	if err != nil {
 		return TranscriptViewResult{}, fmt.Errorf("load jobs for media %d: %w", mediaID, err)
 	}
-	jobsByType := latestJobsByType(jobs)
+	jobsByType := latestJobByType(jobs)
 	result.LatestFailedJob = latestFailedJob(jobs)
 
 	if currentJob, ok := jobsByType[job.TypeExtractAudio]; ok {
@@ -282,7 +282,10 @@ func (u *TranscriptViewUseCase) resolvePlayablePreviewSource(mediaItem domainmed
 	return filepath.ToSlash(filepath.Clean(mediaItem.PreviewVideoPath)), true
 }
 
-func latestJobsByType(items []job.Job) map[job.Type]job.Job {
+// latestJobByType returns the most recently created job for each job type.
+// Relies on the repository returning jobs in DESC order by created_at/id,
+// so the first occurrence of each type is the latest.
+func latestJobByType(items []job.Job) map[job.Type]job.Job {
 	result := make(map[job.Type]job.Job, len(items))
 	for _, item := range items {
 		if _, ok := result[item.Type]; ok {

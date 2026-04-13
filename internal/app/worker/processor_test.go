@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"media-pipeline/internal/app/messages"
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/ports"
@@ -570,7 +571,7 @@ func TestProcessor_ProcessNextTranscribeFailureStoresReadableError(t *testing.T)
 	if len(jobRepo.markFailedCalls) != 1 {
 		t.Fatalf("mark failed calls = %d, want 1", len(jobRepo.markFailedCalls))
 	}
-	if got := jobRepo.markFailedCalls[0].errorMessage; got != "Не удалось распознать текст: модель вернула пустой результат" {
+	if got := jobRepo.markFailedCalls[0].errorMessage; got != messages.PrefixTranscribe+messages.TranscriptionEmpty {
 		t.Fatalf("errorMessage = %q, want readable transcription failure", got)
 	}
 	if len(mediaRepo.markFailedIDs) != 1 || mediaRepo.markFailedIDs[0] != 51 {

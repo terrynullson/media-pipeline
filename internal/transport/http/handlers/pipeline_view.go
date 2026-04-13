@@ -62,7 +62,7 @@ type pipelineStepState struct {
 
 func buildMediaPipelineView(mediaItem media.Media, jobs []job.Job) MediaPipelineView {
 	nowUTC := time.Now().UTC()
-	jobsByType := latestJobsByType(jobs)
+	jobsByType := latestJobByType(jobs)
 
 	uploadStep := describeUploadStep(mediaItem, jobsByType[job.TypeUpload], nowUTC)
 	extractStep := describeExtractAudioStep(mediaItem, jobsByType[job.TypeExtractAudio], nowUTC)
@@ -358,7 +358,10 @@ func clampPercent(value float64) int {
 	}
 }
 
-func latestJobsByType(items []job.Job) map[job.Type]*job.Job {
+// latestJobByType returns the most recently created job for each job type.
+// Relies on the repository returning jobs in DESC order by created_at/id,
+// so the first occurrence of each type is the latest.
+func latestJobByType(items []job.Job) map[job.Type]*job.Job {
 	result := make(map[job.Type]*job.Job, len(items))
 	for _, item := range items {
 		if _, ok := result[item.Type]; ok {
@@ -392,6 +395,10 @@ func firstPendingIndex(steps []pipelineStepState) int {
 	return -1
 }
 
+// lastCompletedIndex returns the index of the last consecutively completed step
+// from the beginning of the pipeline. It stops at the first non-done step because
+// the pipeline is strictly sequential: a step cannot be done if any preceding step is not.
+// Returns 0 if no steps are done (0 represents the first step, the minimum meaningful stage).
 func lastCompletedIndex(steps []pipelineStepState) int {
 	lastIndex := 0
 	for index, step := range steps {

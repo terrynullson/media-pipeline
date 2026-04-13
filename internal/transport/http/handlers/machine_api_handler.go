@@ -1,25 +1,33 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 
+	mediaapp "media-pipeline/internal/app/media"
 	"media-pipeline/internal/domain/ports"
 	"media-pipeline/internal/observability"
 )
 
+// MediaStatusService loads the minimal data required for the /status endpoint.
+type MediaStatusService interface {
+	Load(ctx context.Context, mediaID int64) (mediaapp.MediaStatusResult, error)
+}
+
 // MachineAPIHandler handles polling endpoints intended for n8n and other
 // external automation tools. It has no dependency on HTML templates or
-// business-logic services other than TranscriptViewService.
+// business-logic services other than TranscriptViewService and MediaStatusService.
 type MachineAPIHandler struct {
+	mediaStatusUC    MediaStatusService
 	transcriptViewUC TranscriptViewService
 	logger           *slog.Logger
 }
 
-func NewMachineAPIHandler(transcriptViewUC TranscriptViewService, logger *slog.Logger) *MachineAPIHandler {
-	return &MachineAPIHandler{transcriptViewUC: transcriptViewUC, logger: logger}
+func NewMachineAPIHandler(mediaStatusUC MediaStatusService, transcriptViewUC TranscriptViewService, logger *slog.Logger) *MachineAPIHandler {
+	return &MachineAPIHandler{mediaStatusUC: mediaStatusUC, transcriptViewUC: transcriptViewUC, logger: logger}
 }
 
 func (h *MachineAPIHandler) writeJSON(w http.ResponseWriter, statusCode int, payload any) {
@@ -36,7 +44,7 @@ func (h *MachineAPIHandler) APIMediaStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	result, err := h.transcriptViewUC.Load(r.Context(), mediaID)
+	result, err := h.mediaStatusUC.Load(r.Context(), mediaID)
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
 			http.NotFound(w, r)

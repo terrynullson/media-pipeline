@@ -40,7 +40,7 @@ type apiMediaResultResponse struct {
 //	Stage 4: analyze_triggers
 //	Stage 5: extract_screenshots (skipped for audio-only)
 //	Stage 6: completed
-func buildTranscriptAutomationStatus(result mediaapp.TranscriptViewResult) apiMediaStatusResponse {
+func buildTranscriptAutomationStatus(result mediaapp.MediaStatusResult) apiMediaStatusResponse {
 	audioOnly := result.Media.IsAudioOnly()
 
 	// stageTotal: 6 for video, 4 for audio-only (no preview / no screenshots).
@@ -88,7 +88,7 @@ func buildTranscriptAutomationStatus(result mediaapp.TranscriptViewResult) apiMe
 // pipeline stages, or nil if none are failed.
 // All four stages must be checked so that failures in analyze_triggers or
 // extract_screenshots are also detected by polling clients.
-func failedTranscriptAutomationJob(result mediaapp.TranscriptViewResult) *job.Job {
+func failedTranscriptAutomationJob(result mediaapp.MediaStatusResult) *job.Job {
 	for _, current := range []*job.Job{
 		result.ExtractAudioJob,
 		result.TranscribeJob,
@@ -104,7 +104,7 @@ func failedTranscriptAutomationJob(result mediaapp.TranscriptViewResult) *job.Jo
 
 // currentStageIndex maps the in-progress pipeline state to a 1-based stage
 // index and a human-readable stage name.
-func currentStageIndex(result mediaapp.TranscriptViewResult, audioOnly bool) (int, string) {
+func currentStageIndex(result mediaapp.MediaStatusResult, audioOnly bool) (int, string) {
 	// Stage progression (video): prepare_preview(1) → extract_audio(2) →
 	//                             transcribe(3) → analyze_triggers(4) → extract_screenshots(5) → done(6)
 	// Stage progression (audio):  extract_audio(1) → transcribe(2) → analyze_triggers(3) → done(4)
