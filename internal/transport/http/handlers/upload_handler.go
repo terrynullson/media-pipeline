@@ -15,8 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
 	"media-pipeline/internal/app/command"
 	mediaapp "media-pipeline/internal/app/media"
 	"media-pipeline/internal/domain/job"
@@ -134,27 +132,6 @@ type TranscriptionSettingsForm struct {
 	BeamSize    int    `json:"beamSize"`
 	VADEnabled  bool   `json:"vadEnabled"`
 	UITheme     string `json:"uiTheme"`
-}
-
-type TriggerRuleForm struct {
-	Name      string
-	Category  string
-	Pattern   string
-	MatchMode string
-}
-
-type TriggerRuleView struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	Category     string `json:"category"`
-	Pattern      string `json:"pattern"`
-	MatchMode    string `json:"matchMode"`
-	Enabled      bool   `json:"enabled"`
-	ToggleURL    string `json:"toggleUrl"`
-	DeleteURL    string `json:"deleteUrl"`
-	ToggleLabel  string `json:"toggleLabel"`
-	EnabledLabel string `json:"enabledLabel"`
-	EnabledTone  string `json:"enabledTone"`
 }
 
 func NewUploadHandler(
@@ -317,18 +294,6 @@ func (h *UploadHandler) MediaStatuses(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *UploadHandler) renderUploadFailure(w http.ResponseWriter, r *http.Request, message string) {
-	if wantsJSON(r) {
-		h.writeJSON(w, http.StatusBadRequest, map[string]string{
-			"status":  "error",
-			"message": message,
-		})
-		return
-	}
-
-	h.renderIndex(w, r, message, "", "", "", "", "", nil, nil)
-}
-
 func (h *UploadHandler) SaveTranscriptionSettings(w http.ResponseWriter, r *http.Request) {
 	logger := observability.LoggerFromContext(r.Context(), h.logger).With(
 		slog.String("method", r.Method),
@@ -363,68 +328,22 @@ func (h *UploadHandler) SaveTranscriptionSettings(w http.ResponseWriter, r *http
 	http.Redirect(w, r, "/?status=settings_saved", http.StatusSeeOther)
 }
 
-func (h *UploadHandler) CreateTriggerRule(w http.ResponseWriter, r *http.Request) {
-	logger := observability.LoggerFromContext(r.Context(), h.logger).With(
-		slog.String("method", r.Method),
-		slog.String("path", r.URL.Path),
-	)
-
-	r.Body = http.MaxBytesReader(w, r.Body, h.maxSettingsBodyB)
-	if err := r.ParseForm(); err != nil {
-		logger.Warn("trigger rule request rejected: invalid form", slog.Any("error", err))
-		h.renderIndex(w, r, "", "", "", "", "Не удалось прочитать форму правила триггера. Попробуйте ещё раз.", "", nil, buildTriggerRuleFormFromRequest(r))
-		return
-	}
-
-	rule, form, err := parseTriggerRuleForm(r)
-	if err != nil {
-		h.renderIndex(w, r, "", "", "", "", err.Error(), "", nil, &form)
-		return
-	}
-
-	if _, err := h.triggerRulesSvc.Create(r.Context(), rule); err != nil {
-		logger.Warn("create trigger rule failed", slog.Any("error", err))
-		h.renderIndex(w, r, "", "", "", "", "Не удалось сохранить правило триггера: "+err.Error(), "", nil, &form)
-		return
-	}
-
-	http.Redirect(w, r, "/?status=trigger_rule_saved", http.StatusSeeOther)
+// renderTriggerRuleError implements triggerRulePageRenderer so that
+// TriggerRuleHandler can delegate HTML error rendering.
+func (h *UploadHandler) renderTriggerRuleError(w http.ResponseWriter, r *http.Request, errMsg string, form *TriggerRuleForm) {
+	h.renderIndex(w, r, "", "", "", "", errMsg, "", nil, form)
 }
 
-func (h *UploadHandler) ToggleTriggerRule(w http.ResponseWriter, r *http.Request) {
-	ruleID, err := triggerRuleIDFromRequest(r)
-	if err != nil {
-		http.Error(w, "invalid trigger rule id", http.StatusBadRequest)
+func (h *UploadHandler) renderUploadFailure(w http.ResponseWriter, r *http.Request, message string) {
+	if wantsJSON(r) {
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{
+			"status":  "error",
+			"message": message,
+		})
 		return
 	}
 
-	if err := r.ParseForm(); err != nil {
-		h.renderIndex(w, r, "", "", "", "", "Не удалось прочитать действие для правила триггера.", "", nil, nil)
-		return
-	}
-
-	enabled := r.FormValue("enabled") == "true"
-	if err := h.triggerRulesSvc.SetEnabled(r.Context(), ruleID, enabled); err != nil {
-		h.renderIndex(w, r, "", "", "", "", "Не удалось обновить правило триггера: "+err.Error(), "", nil, nil)
-		return
-	}
-
-	http.Redirect(w, r, "/?status=trigger_rule_updated", http.StatusSeeOther)
-}
-
-func (h *UploadHandler) DeleteTriggerRule(w http.ResponseWriter, r *http.Request) {
-	ruleID, err := triggerRuleIDFromRequest(r)
-	if err != nil {
-		http.Error(w, "invalid trigger rule id", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.triggerRulesSvc.Delete(r.Context(), ruleID); err != nil {
-		h.renderIndex(w, r, "", "", "", "", "Не удалось удалить правило триггера: "+err.Error(), "", nil, nil)
-		return
-	}
-
-	http.Redirect(w, r, "/?status=trigger_rule_deleted", http.StatusSeeOther)
+	h.renderIndex(w, r, message, "", "", "", "", "", nil, nil)
 }
 
 func (h *UploadHandler) renderIndex(
@@ -721,92 +640,6 @@ func backendOptions() []string {
 		values = append(values, string(item))
 	}
 	return values
-}
-
-func parseTriggerRuleForm(r *http.Request) (domaintrigger.Rule, TriggerRuleForm, error) {
-	form := *buildTriggerRuleFormFromRequest(r)
-	rule := domaintrigger.NormalizeRule(domaintrigger.Rule{
-		Name:      form.Name,
-		Category:  form.Category,
-		Pattern:   form.Pattern,
-		MatchMode: domaintrigger.MatchMode(form.MatchMode),
-		Enabled:   true,
-	})
-	form = buildTriggerRuleForm(rule)
-
-	if err := domaintrigger.ValidateRule(rule); err != nil {
-		return domaintrigger.Rule{}, form, err
-	}
-
-	return rule, form, nil
-}
-
-func buildTriggerRuleForm(rule domaintrigger.Rule) TriggerRuleForm {
-	return TriggerRuleForm{
-		Name:      rule.Name,
-		Category:  rule.Category,
-		Pattern:   rule.Pattern,
-		MatchMode: string(rule.MatchMode),
-	}
-}
-
-func buildTriggerRuleFormFromRequest(r *http.Request) *TriggerRuleForm {
-	return &TriggerRuleForm{
-		Name:      strings.TrimSpace(r.FormValue("name")),
-		Category:  strings.TrimSpace(r.FormValue("category")),
-		Pattern:   strings.TrimSpace(r.FormValue("pattern")),
-		MatchMode: strings.TrimSpace(r.FormValue("match_mode")),
-	}
-}
-
-func buildTriggerRuleViews(items []domaintrigger.Rule) []TriggerRuleView {
-	views := make([]TriggerRuleView, 0, len(items))
-	for _, item := range items {
-		view := TriggerRuleView{
-			ID:           item.ID,
-			Name:         item.Name,
-			Category:     item.Category,
-			Pattern:      item.Pattern,
-			MatchMode:    string(item.MatchMode),
-			Enabled:      item.Enabled,
-			ToggleURL:    fmt.Sprintf("/trigger-rules/%d/toggle", item.ID),
-			DeleteURL:    fmt.Sprintf("/trigger-rules/%d/delete", item.ID),
-			EnabledLabel: "Выключено",
-			EnabledTone:  "neutral",
-			ToggleLabel:  "Включить",
-		}
-		if item.Enabled {
-			view.EnabledLabel = "Включено"
-			view.EnabledTone = "success"
-			view.ToggleLabel = "Выключить"
-		}
-		views = append(views, view)
-	}
-
-	return views
-}
-
-func matchModeOptions() []string {
-	options := domaintrigger.SupportedMatchModes()
-	values := make([]string, 0, len(options))
-	for _, option := range options {
-		values = append(values, string(option))
-	}
-	return values
-}
-
-func triggerRuleIDFromRequest(r *http.Request) (int64, error) {
-	raw := strings.TrimSpace(chi.URLParam(r, "ruleID"))
-	if raw == "" {
-		return 0, fmt.Errorf("trigger rule id is required")
-	}
-
-	value, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || value <= 0 {
-		return 0, fmt.Errorf("invalid trigger rule id %q", raw)
-	}
-
-	return value, nil
 }
 
 func buildRuntimeSnapshotJSON(r *http.Request) string {

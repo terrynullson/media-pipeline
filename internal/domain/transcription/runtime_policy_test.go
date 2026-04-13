@@ -70,8 +70,8 @@ func TestEvaluateRuntimePolicy_BlocksUnrealisticSmallCPUScenario(t *testing.T) {
 	if !policy.Blocked {
 		t.Fatal("Blocked = false, want true")
 	}
-	if !strings.Contains(policy.BlockReason, "слишком много времени") {
-		t.Fatalf("BlockReason = %q, want human-readable reason", policy.BlockReason)
+	if policy.BlockReason != "effective_timeout_exceeds_max" {
+		t.Fatalf("BlockReason = %q, want %q", policy.BlockReason, "effective_timeout_exceeds_max")
 	}
 }
 
@@ -99,10 +99,3 @@ func TestBuildRuntimeSettingsWarnings_CPUHeavyModel(t *testing.T) {
 	}
 }
 
-func TestFormatRuntimeDurationRU(t *testing.T) {
-	t.Parallel()
-
-	if got := FormatRuntimeDurationRU(9*time.Hour + 15*time.Minute); got != "9 ч 15 мин" {
-		t.Fatalf("FormatRuntimeDurationRU() = %q, want %q", got, "9 ч 15 мин")
-	}
-}

@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	mediaapp "media-pipeline/internal/app/media"
+	transcriptionapp "media-pipeline/internal/app/transcription"
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/transcript"
@@ -384,9 +385,9 @@ func buildTranscriptRuntimePolicyView(result mediaapp.TranscriptViewResult) Tran
 		Visible:          true,
 		Title:            "Оценка времени запуска",
 		Tone:             "warning",
-		DurationLabel:    transcription.FormatRuntimeDurationRU(policy.MediaDuration),
-		DurationClass:    capitalizeFirst(policy.DurationClassLabelRU()),
-		EffectiveTimeout: transcription.FormatRuntimeDurationRU(policy.EffectiveTimeout),
+		DurationLabel:    transcriptionapp.FormatRuntimeDurationRU(policy.MediaDuration),
+		DurationClass:    capitalizeFirst(transcriptionapp.DurationClassLabelRU(policy.DurationClass)),
+		EffectiveTimeout: transcriptionapp.FormatRuntimeDurationRU(policy.EffectiveTimeout),
 		Warnings:         append([]string(nil), policy.Warnings...),
 	}
 	switch {
@@ -398,7 +399,7 @@ func buildTranscriptRuntimePolicyView(result mediaapp.TranscriptViewResult) Tran
 		view.Summary = fmt.Sprintf("Для этого файла лимит распознавания автоматически увеличен до %s.", view.EffectiveTimeout)
 	default:
 		view.Tone = "success"
-		view.Summary = fmt.Sprintf("Для этого файла достаточно стандартного лимита %s.", transcription.FormatRuntimeDurationRU(policy.BaseTimeout))
+		view.Summary = fmt.Sprintf("Для этого файла достаточно стандартного лимита %s.", transcriptionapp.FormatRuntimeDurationRU(policy.BaseTimeout))
 	}
 
 	return view

@@ -1,7 +1,6 @@
 package transcription
 
 import (
-	"fmt"
 	"strings"
 	"time"
 )
@@ -60,13 +59,7 @@ func EvaluateRuntimePolicy(settings Settings, mediaDuration time.Duration, baseT
 	}
 	if effectiveTimeout > maxAdaptiveTimeout {
 		policy.Blocked = true
-		policy.BlockReason = fmt.Sprintf(
-			"Конфигурация %s на %s для %s обычно требует слишком много времени. Ожидаемый лимит около %s, поэтому задача не запускается автоматически.",
-			modelLabel(normalized.ModelName),
-			deviceLabel(normalized.Device),
-			policy.DurationClassPhraseRU(),
-			FormatRuntimeDurationRU(effectiveTimeout),
-		)
+		policy.BlockReason = "effective_timeout_exceeds_max"
 	}
 
 	return policy
@@ -93,60 +86,8 @@ func BuildRuntimeSettingsWarnings(settings Settings) []string {
 	return warnings
 }
 
-func (p RuntimePolicy) DurationClassLabelRU() string {
-	switch p.DurationClass {
-	case DurationClassShort:
-		return "короткий файл"
-	case DurationClassMedium:
-		return "средний файл"
-	case DurationClassLong:
-		return "длинный файл"
-	case DurationClassVeryLong:
-		return "очень длинный файл"
-	default:
-		return "файл"
-	}
-}
-
-func (p RuntimePolicy) DurationClassPhraseRU() string {
-	switch p.DurationClass {
-	case DurationClassShort:
-		return "короткого файла"
-	case DurationClassMedium:
-		return "файла средней длины"
-	case DurationClassLong:
-		return "длинного файла"
-	case DurationClassVeryLong:
-		return "очень длинного файла"
-	default:
-		return "файла"
-	}
-}
-
 func (p RuntimePolicy) HasAdaptiveTimeout() bool {
 	return p.EffectiveTimeout > p.BaseTimeout
-}
-
-func FormatRuntimeDurationRU(value time.Duration) string {
-	if value <= 0 {
-		return "0 мин"
-	}
-
-	rounded := value.Round(time.Minute)
-	if rounded < time.Minute {
-		rounded = time.Minute
-	}
-
-	hours := rounded / time.Hour
-	minutes := (rounded % time.Hour) / time.Minute
-	switch {
-	case hours > 0 && minutes > 0:
-		return fmt.Sprintf("%d ч %d мин", hours, minutes)
-	case hours > 0:
-		return fmt.Sprintf("%d ч", hours)
-	default:
-		return fmt.Sprintf("%d мин", minutes)
-	}
 }
 
 func classifyDuration(mediaDuration time.Duration) DurationClass {
@@ -231,7 +172,7 @@ func buildRuntimeWarnings(
 	warnings := BuildRuntimeSettingsWarnings(settings)
 
 	if mediaDuration >= mediumMediaLimit && settings.Device == "cpu" {
-		warnings = appendUniqueWarning(warnings, fmt.Sprintf("Для этого файла система увеличит лимит распознавания до %s.", FormatRuntimeDurationRU(effectiveTimeout)))
+		warnings = appendUniqueWarning(warnings, "Для этого файла система увеличит лимит распознавания.")
 	}
 	if effectiveTimeout > baseTimeout && effectiveTimeout >= 6*time.Hour {
 		warnings = appendUniqueWarning(warnings, "Даже без ошибки такая задача может обрабатываться много часов.")
@@ -256,25 +197,3 @@ func appendUniqueWarning(items []string, value string) []string {
 	return append(items, value)
 }
 
-func modelLabel(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "неизвестная модель"
-	}
-	return "модель " + value
-}
-
-func deviceLabel(value string) string {
-	value = strings.TrimSpace(strings.ToLower(value))
-	switch value {
-	case "cpu":
-		return "CPU"
-	case "cuda":
-		return "CUDA"
-	default:
-		if value == "" {
-			return "неизвестном устройстве"
-		}
-		return strings.ToUpper(value)
-	}
-}

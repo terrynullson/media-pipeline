@@ -120,6 +120,15 @@ func (r *statusRecorder) ensureStatus(statusCode int) {
 	r.WriteHeader(statusCode)
 }
 
+// RequestTimeoutMiddleware wraps each request with http.TimeoutHandler so that
+// slow or stalled clients are cut off after timeout. Should NOT be applied to
+// the /upload route, which legitimately takes longer for large files.
+func RequestTimeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.TimeoutHandler(next, timeout, `{"error":"request timeout"}`)
+	}
+}
+
 // MediaTokenMiddleware protects routes with a static shared-secret token.
 // If token is empty the middleware is a no-op (disabled, backward-compatible).
 // Clients must supply the token via:

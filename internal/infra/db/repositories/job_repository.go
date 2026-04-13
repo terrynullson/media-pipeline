@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"media-pipeline/internal/domain/job"
@@ -237,6 +238,78 @@ func (r *JobRepository) ListByMediaID(ctx context.Context, mediaID int64) ([]job
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate jobs by media id: %w", err)
+	}
+
+	return items, nil
+}
+
+func (r *JobRepository) ListPendingCoreJobsWithMediaAge(ctx context.Context, jobTypes []job.Type) ([]job.JobWithMediaAge, error) {
+	if len(jobTypes) == 0 {
+		return nil, nil
+	}
+
+	// Build the IN clause placeholders dynamically.
+	placeholders := make([]any, len(jobTypes))
+	for i, t := range jobTypes {
+		placeholders[i] = t
+	}
+	inClause := "?" + strings.Repeat(",?", len(jobTypes)-1)
+
+	query := `SELECT j.id, j.media_id, j.type, j.payload, j.status, j.attempts, j.error_message,
+	                 j.created_at, j.updated_at, j.started_at, j.finished_at, j.duration_ms,
+	                 j.progress_percent, j.progress_label, j.progress_is_estimate, j.progress_updated_at,
+	                 m.created_at AS media_created_at
+	          FROM jobs j
+	          JOIN media m ON m.id = j.media_id
+	          WHERE j.status = ? AND j.type IN (` + inClause + `)
+	          ORDER BY datetime(m.created_at) ASC, j.id ASC`
+
+	args := make([]any, 0, 1+len(jobTypes))
+	args = append(args, job.StatusPending)
+	args = append(args, placeholders...)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list pending core jobs with media age: %w", err)
+	}
+	defer rows.Close()
+
+	var items []job.JobWithMediaAge
+	for rows.Next() {
+		var j job.Job
+		var createdAt, updatedAt, mediaCreatedAt string
+		var startedAt, finishedAt, progressUpdatedAt sql.NullString
+		var durationMS sql.NullInt64
+		var progressPercent sql.NullFloat64
+		var progressLabel string
+		var progressIsEstimate int
+
+		if err := rows.Scan(
+			&j.ID, &j.MediaID, &j.Type, &j.Payload, &j.Status, &j.Attempts, &j.ErrorMessage,
+			&createdAt, &updatedAt, &startedAt, &finishedAt, &durationMS,
+			&progressPercent, &progressLabel, &progressIsEstimate, &progressUpdatedAt,
+			&mediaCreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan pending core job: %w", err)
+		}
+
+		if parsed, err := time.Parse(time.RFC3339, createdAt); err == nil {
+			j.CreatedAtUTC = parsed
+		}
+		if parsed, err := time.Parse(time.RFC3339, updatedAt); err == nil {
+			j.UpdatedAtUTC = parsed
+		}
+		applyOptionalJobFields(&j, startedAt, finishedAt, durationMS, progressPercent, progressLabel, progressIsEstimate, progressUpdatedAt)
+
+		var mediaAge time.Time
+		if parsed, err := time.Parse(time.RFC3339, mediaCreatedAt); err == nil {
+			mediaAge = parsed
+		}
+
+		items = append(items, job.JobWithMediaAge{Job: j, MediaCreatedAtUTC: mediaAge})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pending core jobs: %w", err)
 	}
 
 	return items, nil

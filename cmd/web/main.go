@@ -113,6 +113,8 @@ func main() {
 		logger.Error("create upload handler", slog.Any("error", err))
 		os.Exit(1)
 	}
+	machineAPIHandler := handlers.NewMachineAPIHandler(transcriptViewUC, logger)
+	triggerRuleHandler := handlers.NewTriggerRuleHandler(triggerRuleService, uploadHandler, logger)
 
 	staticPath, err := infraRuntime.ResolvePath("web/static")
 	if err != nil {
@@ -123,7 +125,7 @@ func main() {
 	if frontendV1Err != nil {
 		frontendV1DistPath = ""
 	}
-	router := httptransport.NewRouter(logger, uploadHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir, cfg.MediaAccessToken, frontendV1DistPath)
+	router := httptransport.NewRouter(logger, uploadHandler, machineAPIHandler, triggerRuleHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir, cfg.MediaAccessToken, cfg.HTTPRequestTimeout(), frontendV1DistPath)
 
 	addr := ":" + cfg.AppPort
 	logger.Info("starting web server",

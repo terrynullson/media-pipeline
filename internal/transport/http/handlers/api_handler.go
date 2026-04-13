@@ -15,7 +15,6 @@ import (
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/ports"
 	"media-pipeline/internal/domain/transcription"
-	domaintrigger "media-pipeline/internal/domain/trigger"
 	"media-pipeline/internal/observability"
 )
 
@@ -94,14 +93,6 @@ type transcriptionSettingsPayload struct {
 
 type uiPreferencePayload struct {
 	UITheme string `json:"uiTheme"`
-}
-
-type triggerRulePayload struct {
-	Name      string `json:"name"`
-	Category  string `json:"category"`
-	Pattern   string `json:"pattern"`
-	MatchMode string `json:"matchMode"`
-	Enabled   *bool  `json:"enabled,omitempty"`
 }
 
 func (h *UploadHandler) APIDashboard(w http.ResponseWriter, r *http.Request) {
@@ -430,89 +421,6 @@ func (h *UploadHandler) APIUpdateUITheme(w http.ResponseWriter, r *http.Request)
 		"uiTheme":         normalizeUITheme(saved.UITheme),
 		"preferredAppURL": preferredAppURL(saved.UITheme),
 	})
-}
-
-func (h *UploadHandler) APITriggerRules(w http.ResponseWriter, r *http.Request) {
-	rules, err := h.triggerRulesSvc.List(r.Context())
-	if err != nil {
-		observability.LoggerFromContext(r.Context(), h.logger).Error("load api trigger rules failed", slog.Any("error", err))
-		http.Error(w, "не удалось загрузить правила", http.StatusInternalServerError)
-		return
-	}
-
-	h.writeJSON(w, http.StatusOK, map[string]any{"items": buildTriggerRuleViews(rules)})
-}
-
-func (h *UploadHandler) APICreateTriggerRule(w http.ResponseWriter, r *http.Request) {
-	var payload triggerRulePayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, "не удалось прочитать JSON правила", http.StatusBadRequest)
-		return
-	}
-
-	rule := domaintrigger.NormalizeRule(domaintrigger.Rule{
-		Name:      payload.Name,
-		Category:  payload.Category,
-		Pattern:   payload.Pattern,
-		MatchMode: domaintrigger.MatchMode(payload.MatchMode),
-		Enabled:   true,
-	})
-	if err := domaintrigger.ValidateRule(rule); err != nil {
-		h.writeJSON(w, http.StatusBadRequest, map[string]any{"status": "error", "message": err.Error()})
-		return
-	}
-
-	created, err := h.triggerRulesSvc.Create(r.Context(), rule)
-	if err != nil {
-		observability.LoggerFromContext(r.Context(), h.logger).Error("create api trigger rule failed", slog.Any("error", err))
-		http.Error(w, "не удалось создать правило", http.StatusInternalServerError)
-		return
-	}
-
-	view := buildTriggerRuleViews([]domaintrigger.Rule{created})
-	h.writeJSON(w, http.StatusCreated, map[string]any{"status": "created", "item": view[0]})
-}
-
-func (h *UploadHandler) APIUpdateTriggerRule(w http.ResponseWriter, r *http.Request) {
-	ruleID, err := triggerRuleIDFromRequest(r)
-	if err != nil {
-		http.Error(w, "invalid trigger rule id", http.StatusBadRequest)
-		return
-	}
-
-	var payload triggerRulePayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, "не удалось прочитать JSON правила", http.StatusBadRequest)
-		return
-	}
-	if payload.Enabled == nil {
-		http.Error(w, "нужно передать enabled", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.triggerRulesSvc.SetEnabled(r.Context(), ruleID, *payload.Enabled); err != nil {
-		observability.LoggerFromContext(r.Context(), h.logger).Error("update api trigger rule failed", slog.Int64("rule_id", ruleID), slog.Any("error", err))
-		http.Error(w, "не удалось обновить правило", http.StatusInternalServerError)
-		return
-	}
-
-	h.writeJSON(w, http.StatusOK, map[string]any{"status": "updated", "ruleId": ruleID, "enabled": *payload.Enabled})
-}
-
-func (h *UploadHandler) APIDeleteTriggerRule(w http.ResponseWriter, r *http.Request) {
-	ruleID, err := triggerRuleIDFromRequest(r)
-	if err != nil {
-		http.Error(w, "invalid trigger rule id", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.triggerRulesSvc.Delete(r.Context(), ruleID); err != nil {
-		observability.LoggerFromContext(r.Context(), h.logger).Error("delete api trigger rule failed", slog.Int64("rule_id", ruleID), slog.Any("error", err))
-		http.Error(w, "не удалось удалить правило", http.StatusInternalServerError)
-		return
-	}
-
-	h.writeJSON(w, http.StatusOK, map[string]any{"status": "deleted", "ruleId": ruleID})
 }
 
 func (h *UploadHandler) buildAPIJobItems(ctx context.Context, viewItems []MediaListItem) ([]apiJobItem, error) {

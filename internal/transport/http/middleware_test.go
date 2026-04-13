@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"media-pipeline/internal/observability"
 )
@@ -119,5 +120,42 @@ func TestRequestIDMiddleware_ReusesIncomingHeader(t *testing.T) {
 	}
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+func TestRequestTimeoutMiddleware_TimeoutTriggered(t *testing.T) {
+	t.Parallel()
+
+	slowHandler := RequestTimeoutMiddleware(50 * time.Millisecond)(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(200 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	rec := httptest.NewRecorder()
+	slowHandler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d (timeout)", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestRequestTimeoutMiddleware_FastHandlerNotAffected(t *testing.T) {
+	t.Parallel()
+
+	handler := RequestTimeoutMiddleware(5 * time.Second)(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }

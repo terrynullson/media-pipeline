@@ -49,6 +49,14 @@ type Job struct {
 	ProgressUpdatedAtUTC *time.Time
 }
 
+// JobWithMediaAge extends Job with the creation time of the associated media
+// record, enabling FIFO scheduling across all pending job types without extra
+// per-job queries.
+type JobWithMediaAge struct {
+	Job
+	MediaCreatedAtUTC time.Time
+}
+
 type TranscribePayload struct {
 	Settings transcription.Settings `json:"settings"`
 }

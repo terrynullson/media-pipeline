@@ -26,7 +26,8 @@ type Config struct {
 	OllamaURL            string
 	OllamaModel          string
 	SummaryProvider      string
-	MediaAccessToken     string // env: MEDIA_ACCESS_TOKEN, default: "" (disabled)
+	MediaAccessToken       string // env: MEDIA_ACCESS_TOKEN, default: "" (disabled)
+	HTTPRequestTimeoutSec int64  // env: HTTP_REQUEST_TIMEOUT_SEC, default: 30
 }
 
 func Load() Config {
@@ -50,7 +51,8 @@ func Load() Config {
 		OllamaURL:            getEnv("OLLAMA_URL", "http://127.0.0.1:11434"),
 		OllamaModel:          getEnv("OLLAMA_MODEL", "phi3:mini"),
 		SummaryProvider:      getEnv("SUMMARY_PROVIDER", "simple"),
-		MediaAccessToken:     getEnv("MEDIA_ACCESS_TOKEN", ""),
+		MediaAccessToken:       getEnv("MEDIA_ACCESS_TOKEN", ""),
+		HTTPRequestTimeoutSec: getEnvInt64("HTTP_REQUEST_TIMEOUT_SEC", 30),
 	}
 	if cfg.MaxUploadSizeMB <= 0 {
 		cfg.MaxUploadSizeMB = 1024
@@ -69,6 +71,9 @@ func Load() Config {
 	}
 	if cfg.TranscribeTimeoutSec <= 0 {
 		cfg.TranscribeTimeoutSec = 300
+	}
+	if cfg.HTTPRequestTimeoutSec <= 0 {
+		cfg.HTTPRequestTimeoutSec = 30
 	}
 	return cfg
 }
@@ -95,6 +100,10 @@ func (c Config) PreviewTimeout() time.Duration {
 
 func (c Config) TranscribeTimeout() time.Duration {
 	return time.Duration(c.TranscribeTimeoutSec) * time.Second
+}
+
+func (c Config) HTTPRequestTimeout() time.Duration {
+	return time.Duration(c.HTTPRequestTimeoutSec) * time.Second
 }
 
 func getEnv(key, fallback string) string {

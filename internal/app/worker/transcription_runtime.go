@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	transcriptionapp "media-pipeline/internal/app/transcription"
 	"media-pipeline/internal/domain/transcription"
 )
 
@@ -13,13 +14,17 @@ func buildTranscriptionTimeoutFailure(settings transcription.Settings, policy tr
 		settings.ModelName,
 		transcriptionDeviceLabel(settings.Device),
 		settings.ComputeType,
-		policy.DurationClassPhraseRU(),
-		transcription.FormatRuntimeDurationRU(policy.EffectiveTimeout),
+		transcriptionapp.DurationClassPhraseRU(policy.DurationClass),
+		transcriptionapp.FormatRuntimeDurationRU(policy.EffectiveTimeout),
 	)
 }
 
 func buildTranscriptionBlockedFailure(policy transcription.RuntimePolicy) string {
-	return "Не удалось распознать текст: " + policy.BlockReason
+	phrase := transcriptionapp.FormatBlockReason(policy)
+	if phrase == "" {
+		return "Не удалось распознать текст: задача заблокирована конфигурацией."
+	}
+	return "Не удалось распознать текст: " + phrase
 }
 
 func transcriptionPolicyLogAttrs(policy transcription.RuntimePolicy) []slog.Attr {

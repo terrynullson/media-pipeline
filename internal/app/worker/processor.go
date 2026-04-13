@@ -29,6 +29,10 @@ type JobRepository interface {
 	UpdateProgress(ctx context.Context, id int64, progressPercent *float64, progressLabel string, isEstimate bool, nowUTC time.Time) error
 	ListByStatus(ctx context.Context, jobType job.Type, status job.Status) ([]job.Job, error)
 	Requeue(ctx context.Context, id int64, errorMessage string, nowUTC time.Time) error
+	// ListPendingCoreJobsWithMediaAge returns all pending core-pipeline jobs joined
+	// with their media record so the scheduler can order by media creation time
+	// without extra per-job GetByID queries.
+	ListPendingCoreJobsWithMediaAge(ctx context.Context, jobTypes []job.Type) ([]job.JobWithMediaAge, error)
 }
 
 type MediaRepository interface {
@@ -149,27 +153,47 @@ func NewProcessor(
 	}
 }
 
+// coreJobTypePriority defines processing order: later stages have higher priority so
+// an in-progress media item finishes completely before a new one starts.
+var coreJobTypePriority = []job.Type{
+	job.TypeGenerateSummary,
+	job.TypePreparePreviewVideo,
+	job.TypeExtractScreenshots,
+	job.TypeAnalyzeTriggers,
+	job.TypeTranscribe,
+	job.TypeExtractAudio,
+}
+
 func (p *Processor) ProcessNext(ctx context.Context) (bool, error) {
-	// Later pipeline stages have higher priority so that an in-progress
-	// media item finishes completely before a new one starts processing.
-	for _, jobType := range []job.Type{
-		job.TypeGenerateSummary,
-		job.TypePreparePreviewVideo,
-		job.TypeExtractScreenshots,
-		job.TypeAnalyzeTriggers,
-		job.TypeTranscribe,
-		job.TypeExtractAudio,
-	} {
-		processed, err := p.processNextByType(ctx, jobType)
-		if err != nil {
-			return false, err
-		}
-		if processed {
-			return true, nil
+	// One JOIN query fetches all pending core jobs with media.created_at so we
+	// can pick the best next type without per-job media.GetByID lookups.
+	pending, err := p.jobs.ListPendingCoreJobsWithMediaAge(ctx, coreJobTypePriority)
+	if err != nil {
+		return false, fmt.Errorf("list pending core jobs: %w", err)
+	}
+	if len(pending) == 0 {
+		return false, nil
+	}
+
+	// Build a priority index: lower index = higher priority.
+	priority := make(map[job.Type]int, len(coreJobTypePriority))
+	for i, t := range coreJobTypePriority {
+		priority[t] = i
+	}
+
+	// Pick the job with the highest priority type; break ties by oldest media.
+	best := pending[0]
+	for _, candidate := range pending[1:] {
+		candPri := priority[candidate.Type]
+		bestPri := priority[best.Type]
+		if candPri < bestPri {
+			best = candidate
+		} else if candPri == bestPri && candidate.MediaCreatedAtUTC.Before(best.MediaCreatedAtUTC) {
+			best = candidate
 		}
 	}
 
-	return false, nil
+	return p.processNextByType(ctx, best.Type)
 }
 
 func (p *Processor) processNextByType(ctx context.Context, jobType job.Type) (bool, error) {

@@ -1317,14 +1317,15 @@ func newTestProcessor(
 }
 
 type stubJobRepository struct {
-	claimByType         map[job.Type]claimResult
-	listByTypeAndStatus map[job.Type][]job.Job
-	createdJobs         []job.Job
-	existsActiveOrDone  map[job.Type]bool
-	markDoneIDs         []int64
-	markFailedCalls     []markFailedCall
-	requeued            []requeueCall
-	progressUpdates     []progressUpdateCall
+	claimByType              map[job.Type]claimResult
+	listByTypeAndStatus      map[job.Type][]job.Job
+	pendingCoreJobsWithAge   []job.JobWithMediaAge
+	createdJobs              []job.Job
+	existsActiveOrDone       map[job.Type]bool
+	markDoneIDs              []int64
+	markFailedCalls          []markFailedCall
+	requeued                 []requeueCall
+	progressUpdates          []progressUpdateCall
 }
 
 type claimResult struct {
@@ -1394,6 +1395,20 @@ func (s *stubJobRepository) ListByStatus(_ context.Context, jobType job.Type, _ 
 func (s *stubJobRepository) Requeue(_ context.Context, id int64, errorMessage string, _ time.Time) error {
 	s.requeued = append(s.requeued, requeueCall{id: id, errorMessage: errorMessage})
 	return nil
+}
+
+func (s *stubJobRepository) ListPendingCoreJobsWithMediaAge(_ context.Context, types []job.Type) ([]job.JobWithMediaAge, error) {
+	if len(s.pendingCoreJobsWithAge) > 0 {
+		return s.pendingCoreJobsWithAge, nil
+	}
+	// Fall back: derive from claimByType so existing tests don't need updating.
+	var result []job.JobWithMediaAge
+	for _, t := range types {
+		if cr, ok := s.claimByType[t]; ok && cr.ok {
+			result = append(result, job.JobWithMediaAge{Job: cr.job})
+		}
+	}
+	return result, nil
 }
 
 type stubMediaRepository struct {
