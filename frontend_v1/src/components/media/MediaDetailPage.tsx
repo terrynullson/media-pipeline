@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, Loader2, AlertCircle, Trash2 } from "lucide-react";
+import { ArrowLeft, Loader2, AlertCircle, Trash2, Timer } from "lucide-react";
 import { api } from "../../api/client";
 import type { MediaDetailResponse } from "../../models/types";
 import { usePolling } from "../../hooks/usePolling";
@@ -150,6 +150,33 @@ export function MediaDetailPage() {
         >
           {media.sizeHuman} &middot; {media.createdAtUtc} &middot; {media.mimeType}
         </p>
+
+        {/* Runtime estimate — shown only before transcription completes */}
+        {!transcript.hasTranscript &&
+          (pipeline.statusTone === "queued" || pipeline.statusTone === "running") &&
+          settingsSnapshot.runtimePolicy?.visible &&
+          settingsSnapshot.runtimePolicy.effectiveTimeout && (
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "var(--sp-2)",
+                marginTop: "var(--sp-2)",
+                color: "var(--text-muted)",
+                fontSize: "var(--text-sm)",
+              }}
+            >
+              <Timer size={13} style={{ flexShrink: 0 }} />
+              <span>Оценка: ~{settingsSnapshot.runtimePolicy.effectiveTimeout} максимум</span>
+              {settingsSnapshot.runtimePolicy.warnings && settingsSnapshot.runtimePolicy.warnings.length > 0 && (
+                <AlertCircle
+                  size={13}
+                  style={{ color: "var(--warning, #ca8a04)", flexShrink: 0 }}
+                  title={settingsSnapshot.runtimePolicy.warnings.join("; ")}
+                />
+              )}
+            </div>
+          )}
       </div>
 
       {/* Summary */}

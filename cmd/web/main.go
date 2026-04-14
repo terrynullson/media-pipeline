@@ -119,7 +119,11 @@ func main() {
 	}
 	mediaStatusUC := mediaapp.NewMediaStatusUseCase(mediaRepo, transcriptRepo, jobRepo)
 	machineAPIHandler := handlers.NewMachineAPIHandler(mediaStatusUC, transcriptViewUC, logger)
-	triggerRuleHandler := handlers.NewTriggerRuleHandler(triggerRuleService, uploadHandler, logger)
+	workerStatusUC := mediaapp.NewWorkerStatusUseCase(jobRepo)
+	workerStatusHandler := handlers.NewWorkerStatusHandler(workerStatusUC, logger)
+	triggerPreviewUC := mediaapp.NewTriggerPreviewUseCase(transcriptRepo)
+	triggerRuleHandler := handlers.NewTriggerRuleHandler(triggerRuleService, uploadHandler, logger).
+		WithPreviewService(triggerPreviewUC)
 
 	staticPath, err := infraRuntime.ResolvePath("web/static")
 	if err != nil {
@@ -130,7 +134,7 @@ func main() {
 	if frontendV1Err != nil {
 		frontendV1DistPath = ""
 	}
-	router := httptransport.NewRouter(logger, uploadHandler, machineAPIHandler, triggerRuleHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir, cfg.MediaAccessToken, cfg.HTTPRequestTimeout(), cfg.UploadRateLimitPerMinute, frontendV1DistPath)
+	router := httptransport.NewRouter(logger, uploadHandler, machineAPIHandler, triggerRuleHandler, workerStatusHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir, cfg.MediaAccessToken, cfg.HTTPRequestTimeout(), cfg.UploadRateLimitPerMinute, frontendV1DistPath)
 
 	addr := ":" + cfg.AppPort
 	logger.Info("starting web server",

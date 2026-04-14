@@ -26,6 +26,12 @@ const translations = {
   "action.yesDelete": { en: "Yes, delete", ru: "Да, удалить" },
   "action.confirmBtn": { en: "Confirm delete", ru: "Подтвердить" },
   "action.cancel": { en: "Cancel", ru: "Отмена" },
+  "action.select": { en: "Select", ru: "Выбрать" },
+  "action.cancelSelect": { en: "Cancel selection", ru: "Отменить выбор" },
+  "action.selectAll": { en: "Select all", ru: "Выбрать все" },
+  "action.selectedCount": { en: "{n} selected", ru: "Выбрано: {n}" },
+  "action.deleteSelected": { en: "Delete selected", ru: "Удалить выбранные" },
+  "action.confirmDeleteN": { en: "Delete {n} items? Cannot be undone.", ru: "Удалить {n} файл(ов)? Это нельзя отменить." },
   "action.back": { en: "Back", ru: "Назад" },
   "action.openDetails": { en: "Open details", ru: "Подробнее" },
   "action.processing": { en: "Processing in progress\u2026", ru: "Обработка в процессе\u2026" },
@@ -78,6 +84,9 @@ const translations = {
   "rules.contains": { en: "Contains", ru: "Содержит" },
   "rules.exact": { en: "Exact", ru: "Точное" },
   "rules.add": { en: "Add rule", ru: "Добавить" },
+  "rules.preview": { en: "Check existing files", ru: "Проверить по файлам" },
+  "rules.previewEmpty": { en: "No matches found in existing transcripts.", ru: "Совпадений в существующих транскриптах не найдено." },
+  "rules.previewResult": { en: "Found {matches} match(es) in {files} file(s).", ru: "Найдено {matches} совпад. в {files} файл(ах)." },
 
   // ── Topbar ──
   "topbar.settings": { en: "Settings", ru: "Настройки" },

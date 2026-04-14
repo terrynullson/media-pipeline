@@ -1272,10 +1272,14 @@ func newTestApp(t *testing.T) testWebApp {
 
 	mediaStatusUC := mediaapp.NewMediaStatusUseCase(mediaRepo, transcriptRepo, jobRepo)
 	machineAPIHandler := handlers.NewMachineAPIHandler(mediaStatusUC, transcriptViewUC, logger)
-	triggerRuleHandler := handlers.NewTriggerRuleHandler(triggerRuleService, handler, logger)
+	workerStatusUC := mediaapp.NewWorkerStatusUseCase(jobRepo)
+	workerStatusHandler := handlers.NewWorkerStatusHandler(workerStatusUC, logger)
+	triggerPreviewUC := mediaapp.NewTriggerPreviewUseCase(transcriptRepo)
+	triggerRuleHandler := handlers.NewTriggerRuleHandler(triggerRuleService, handler, logger).
+		WithPreviewService(triggerPreviewUC)
 
 	return testWebApp{
-		router:         httptransport.NewRouter(logger, handler, machineAPIHandler, triggerRuleHandler, staticPath, uploadDir, audioDir, previewDir, screenshotsDir, "", 30*time.Second, 0),
+		router:         httptransport.NewRouter(logger, handler, machineAPIHandler, triggerRuleHandler, workerStatusHandler, staticPath, uploadDir, audioDir, previewDir, screenshotsDir, "", 30*time.Second, 0),
 		db:             sqlDB,
 		uploadDir:      uploadDir,
 		audioDir:       audioDir,

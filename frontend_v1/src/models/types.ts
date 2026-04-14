@@ -238,3 +238,20 @@ export interface UploadProgress {
   total: number;
   percent: number;
 }
+
+export interface WorkerStatusResponse {
+  workerHeartbeatAge: number;
+  likelyAlive: boolean;
+  currentJob: {
+    id: number;
+    mediaId: number;
+    type: string;
+    startedAt: string;
+    progressPercent?: number;
+    progressLabel?: string;
+  } | null;
+  queue: {
+    pending: number;
+    byType: Record<string, number>;
+  };
+}

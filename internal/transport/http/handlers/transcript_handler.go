@@ -354,6 +354,47 @@ func (h *UploadHandler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/?status=deleted", http.StatusSeeOther)
 }
 
+// BulkDeleteMedia handles POST /api/media/bulk-delete.
+// It deletes each ID sequentially and returns partial-success results.
+func (h *UploadHandler) BulkDeleteMedia(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if len(payload.IDs) == 0 {
+		http.Error(w, "ids is required", http.StatusBadRequest)
+		return
+	}
+
+	type failedItem struct {
+		ID    int64  `json:"id"`
+		Error string `json:"error"`
+	}
+	deleted := make([]int64, 0, len(payload.IDs))
+	failed := make([]failedItem, 0)
+
+	for _, id := range payload.IDs {
+		_, err := h.deleteMediaUC.Delete(r.Context(), id)
+		if err != nil {
+			msg := "не удалось удалить"
+			if errors.Is(err, sql.ErrNoRows) {
+				msg = "файл не найден"
+			}
+			failed = append(failed, failedItem{ID: id, Error: msg})
+		} else {
+			deleted = append(deleted, id)
+		}
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"deleted": deleted,
+		"failed":  failed,
+	})
+}
+
 func mediaIDFromRequest(r *http.Request) (int64, error) {
 	raw := strings.TrimSpace(chi.URLParam(r, "mediaID"))
 	if raw == "" {

@@ -37,6 +37,22 @@ function highlightSearch(text: string, query: string): React.ReactNode {
   return <>{parts}</>;
 }
 
+function confidenceStyle(conf: string | undefined): React.CSSProperties {
+  if (!conf) return {};
+  const v = parseFloat(conf);
+  if (isNaN(v)) return {};
+  if (v >= 0.85) return {};
+  if (v >= 0.65) return { opacity: 0.75 };
+  return { opacity: 0.55, textDecoration: "underline dotted" };
+}
+
+function confidenceBadgeColor(conf: string): { color: string; background: string } {
+  const v = parseFloat(conf);
+  if (isNaN(v) || v >= 0.85) return { color: "var(--success)", background: "var(--success-soft)" };
+  if (v >= 0.65) return { color: "var(--warning, #ca8a04)", background: "var(--warning-soft, rgba(202,138,4,0.12))" };
+  return { color: "var(--error)", background: "rgba(239,68,68,0.1)" };
+}
+
 export const TimelineSegment = forwardRef<HTMLDivElement, TimelineSegmentProps>(
   function TimelineSegment({ segment, isActive, isSearchMatch, searchQuery, onClick }, ref) {
     const highlighted = isActive || isSearchMatch;
@@ -50,6 +66,14 @@ export const TimelineSegment = forwardRef<HTMLDivElement, TimelineSegmentProps>(
       : isSearchMatch
         ? "var(--info-soft)"
         : "transparent";
+
+    const confStyle = confidenceStyle(segment.confidence);
+    const badgeColors = segment.hasConfidence && segment.confidence
+      ? confidenceBadgeColor(segment.confidence)
+      : null;
+    const confTooltip = segment.hasConfidence && segment.confidence
+      ? `Уверенность: ${Math.round(parseFloat(segment.confidence) * 100)}%`
+      : undefined;
 
     return (
       <div
@@ -96,18 +120,20 @@ export const TimelineSegment = forwardRef<HTMLDivElement, TimelineSegmentProps>(
           >
             {segment.startLabel}
           </span>
-          {segment.hasConfidence && segment.confidence && (
+          {badgeColors && segment.confidence && (
             <span
+              title={confTooltip}
               style={{
                 fontSize: "10px",
-                color: "var(--success)",
-                background: "var(--success-soft)",
+                color: badgeColors.color,
+                background: badgeColors.background,
                 borderRadius: "var(--radius-pill)",
                 padding: "1px 6px",
                 fontWeight: 600,
+                cursor: "help",
               }}
             >
-              {segment.confidence}
+              {Math.round(parseFloat(segment.confidence) * 100)}%
             </span>
           )}
         </div>
@@ -118,6 +144,7 @@ export const TimelineSegment = forwardRef<HTMLDivElement, TimelineSegmentProps>(
             fontSize: "var(--text-base)",
             lineHeight: "var(--leading-relaxed)",
             color: highlighted ? "var(--text)" : "var(--text-secondary)",
+            ...confStyle,
           }}
         >
           {searchQuery ? highlightSearch(segment.text, searchQuery) : segment.text}

@@ -243,6 +243,37 @@ func (r *JobRepository) ListByMediaID(ctx context.Context, mediaID int64) ([]job
 	return items, nil
 }
 
+func (r *JobRepository) ListAllByStatus(ctx context.Context, status job.Status) ([]job.Job, error) {
+	rows, err := r.db.QueryContext(
+		ctx,
+		`SELECT id, media_id, type, payload, status, attempts, error_message, created_at, updated_at,
+		        started_at, finished_at, duration_ms, progress_percent, progress_label, progress_is_estimate, progress_updated_at
+		 FROM jobs
+		 WHERE status = ?
+		 ORDER BY datetime(created_at) ASC, id ASC`,
+		status,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list all jobs by status: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]job.Job, 0)
+	for rows.Next() {
+		item, err := scanJobRows(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan job row: %w", err)
+		}
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate all jobs by status: %w", err)
+	}
+
+	return items, nil
+}
+
 func (r *JobRepository) ListPendingCoreJobsWithMediaAge(ctx context.Context, jobTypes []job.Type) ([]job.JobWithMediaAge, error) {
 	if len(jobTypes) == 0 {
 		return nil, nil

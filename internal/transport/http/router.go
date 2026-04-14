@@ -20,6 +20,7 @@ func NewRouter(
 	uploadHandler *handlers.UploadHandler,
 	machineAPIHandler *handlers.MachineAPIHandler,
 	triggerRuleHandler *handlers.TriggerRuleHandler,
+	workerStatusHandler *handlers.WorkerStatusHandler,
 	staticDir string,
 	uploadsDir string,
 	audioDir string,
@@ -44,12 +45,14 @@ func NewRouter(
 	r.With(timeout).Get("/api/media/{mediaID}", uploadHandler.APIMediaDetail)
 	r.With(timeout).Get("/api/media/{mediaID}/transcript/export", uploadHandler.ExportTranscript)
 	r.With(timeout).Post("/api/media/{mediaID}/retry", uploadHandler.RetryJob)
+	r.With(timeout).Post("/api/media/bulk-delete", uploadHandler.BulkDeleteMedia)
 	r.With(timeout).Get("/api/settings/transcription", uploadHandler.APITranscriptionSettings)
 	r.With(timeout).Put("/api/settings/transcription", uploadHandler.APIUpdateTranscriptionSettings)
 	r.With(timeout).Get("/api/ui-config", uploadHandler.APIUIConfig)
 	r.With(timeout).Put("/api/ui-preference", uploadHandler.APIUpdateUITheme)
 	r.With(timeout).Get("/api/trigger-rules", triggerRuleHandler.APITriggerRules)
 	r.With(timeout).Post("/api/trigger-rules", triggerRuleHandler.APICreateTriggerRule)
+	r.With(timeout).Post("/api/trigger-rules/preview", triggerRuleHandler.APIPreviewTriggerRule)
 	r.With(timeout).Patch("/api/trigger-rules/{ruleID}", triggerRuleHandler.APIUpdateTriggerRule)
 	r.With(timeout).Delete("/api/trigger-rules/{ruleID}", triggerRuleHandler.APIDeleteTriggerRule)
 
@@ -57,6 +60,7 @@ func NewRouter(
 
 	r.With(timeout, mediaToken).Get("/api/media/{mediaID}/status", machineAPIHandler.APIMediaStatus)
 	r.With(timeout, mediaToken).Get("/api/media/{mediaID}/result", machineAPIHandler.APIMediaResult)
+	r.With(timeout).Get("/api/worker/status", workerStatusHandler.APIWorkerStatus)
 
 	r.With(timeout).Get("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/app-v1", http.StatusSeeOther)

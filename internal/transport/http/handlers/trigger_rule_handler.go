@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	mediaapp "media-pipeline/internal/app/media"
 	domaintrigger "media-pipeline/internal/domain/trigger"
 	"media-pipeline/internal/observability"
 )
@@ -21,10 +23,16 @@ type triggerRulePageRenderer interface {
 	renderTriggerRuleError(w http.ResponseWriter, r *http.Request, errMsg string, form *TriggerRuleForm)
 }
 
+// TriggerPreviewService runs a dry-run trigger match against existing transcripts.
+type TriggerPreviewService interface {
+	Preview(ctx context.Context, req mediaapp.TriggerPreviewRequest) (mediaapp.TriggerPreviewResult, error)
+}
+
 // TriggerRuleHandler handles both the legacy HTML form endpoints
 // (/trigger-rules/...) and the JSON API endpoints (/api/trigger-rules/...).
 type TriggerRuleHandler struct {
 	triggerRulesSvc TriggerRulesService
+	previewSvc      TriggerPreviewService
 	pageRenderer    triggerRulePageRenderer
 	logger          *slog.Logger
 }
@@ -35,6 +43,12 @@ func NewTriggerRuleHandler(svc TriggerRulesService, pageRenderer triggerRulePage
 		pageRenderer:    pageRenderer,
 		logger:          logger,
 	}
+}
+
+// WithPreviewService attaches the trigger preview use case to the handler.
+func (h *TriggerRuleHandler) WithPreviewService(svc TriggerPreviewService) *TriggerRuleHandler {
+	h.previewSvc = svc
+	return h
 }
 
 func (h *TriggerRuleHandler) writeJSON(w http.ResponseWriter, statusCode int, payload any) {
@@ -319,3 +333,50 @@ func triggerRuleIDFromRequest(r *http.Request) (int64, error) {
 
 	return value, nil
 }
+
+// APIPreviewTriggerRule runs a dry-run trigger match against existing transcripts.
+// POST /api/trigger-rules/preview
+func (h *TriggerRuleHandler) APIPreviewTriggerRule(w http.ResponseWriter, r *http.Request) {
+	if h.previewSvc == nil {
+		http.Error(w, "preview not available", http.StatusNotImplemented)
+		return
+	}
+
+	var payload struct {
+		Pattern   string `json:"pattern"`
+		MatchMode string `json:"matchMode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	payload.Pattern = strings.TrimSpace(payload.Pattern)
+	if payload.Pattern == "" {
+		http.Error(w, "pattern is required", http.StatusBadRequest)
+		return
+	}
+	switch domaintrigger.MatchMode(payload.MatchMode) {
+	case domaintrigger.MatchModeContains, domaintrigger.MatchModeExact:
+	default:
+		http.Error(w, "matchMode must be 'contains' or 'exact'", http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.previewSvc.Preview(r.Context(), mediaapp.TriggerPreviewRequest{
+		Pattern:   payload.Pattern,
+		MatchMode: payload.MatchMode,
+	})
+	if err != nil {
+		observability.LoggerFromContext(r.Context(), h.logger).Error(
+			"trigger preview failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"totalMatches": result.TotalMatches,
+		"mediaMatches": result.MediaMatches,
+		"limited":      result.Limited,
+	})
+}
+

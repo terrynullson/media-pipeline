@@ -107,6 +107,73 @@ func (r *TranscriptRepository) ExistsByMediaID(ctx context.Context, mediaID int6
 	return false, fmt.Errorf("check transcript exists for media %d: %w", mediaID, err)
 }
 
+// ListRecentWithSegments returns the most-recent `limit` transcripts with their segments,
+// ordered newest-first. Used for trigger rule preview.
+func (r *TranscriptRepository) ListRecentWithSegments(ctx context.Context, limit int) ([]transcript.Transcript, error) {
+	rows, err := r.db.QueryContext(
+		ctx,
+		`SELECT id, media_id, language, full_text, created_at, updated_at
+		 FROM transcripts
+		 ORDER BY datetime(created_at) DESC, id DESC
+		 LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list recent transcripts: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]transcript.Transcript, 0)
+	for rows.Next() {
+		var item transcript.Transcript
+		var createdAt, updatedAt string
+		if err := rows.Scan(&item.ID, &item.MediaID, &item.Language, &item.FullText, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan transcript: %w", err)
+		}
+		if parsed, err := time.Parse(time.RFC3339, createdAt); err == nil {
+			item.CreatedAtUTC = parsed
+		}
+		if parsed, err := time.Parse(time.RFC3339, updatedAt); err == nil {
+			item.UpdatedAtUTC = parsed
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate recent transcripts: %w", err)
+	}
+
+	// Load segments for each transcript.
+	for i := range items {
+		segRows, err := r.db.QueryContext(
+			ctx,
+			`SELECT start_sec, end_sec, text, confidence
+			 FROM transcript_segments
+			 WHERE transcript_id = ?
+			 ORDER BY segment_index ASC, id ASC`,
+			items[i].ID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("query segments for transcript %d: %w", items[i].ID, err)
+		}
+		segs := make([]transcript.Segment, 0)
+		for segRows.Next() {
+			var seg transcript.Segment
+			if err := segRows.Scan(&seg.StartSec, &seg.EndSec, &seg.Text, &seg.Confidence); err != nil {
+				segRows.Close()
+				return nil, fmt.Errorf("scan segment: %w", err)
+			}
+			segs = append(segs, seg)
+		}
+		segRows.Close()
+		if err := segRows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate segments: %w", err)
+		}
+		items[i].Segments = segs
+	}
+
+	return items, nil
+}
+
 func (r *TranscriptRepository) GetByMediaID(ctx context.Context, mediaID int64) (transcript.Transcript, bool, error) {
 	row := r.db.QueryRowContext(
 		ctx,

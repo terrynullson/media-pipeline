@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent } from "react";
-import { UploadCloud, AlertCircle, CheckCircle, FileAudio } from "lucide-react";
+import { UploadCloud, AlertCircle, CheckCircle, X } from "lucide-react";
 import type { UIConfigResponse, UploadProgress } from "../../models/types";
 import { api } from "../../api/client";
 import { useTranslation } from "../../i18n";
@@ -54,6 +54,7 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const processingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const cancelRef = useRef<(() => void) | null>(null);
 
   const accept = config?.acceptedFormats.join(",") ?? DEFAULT_ACCEPT;
   const busy = queue.some((q) => q.status === "uploading" || q.status === "pending");
@@ -71,17 +72,31 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
       setQueue([...remaining]);
 
       try {
-        await api.uploadWithProgress(remaining[i].file, (p) => {
-          remaining[i] = { ...remaining[i], progress: p };
-          setQueue([...remaining]);
-        });
+        await api.uploadWithProgress(
+          remaining[i].file,
+          (p) => {
+            remaining[i] = { ...remaining[i], progress: p };
+            setQueue([...remaining]);
+          },
+          (cancel) => { cancelRef.current = cancel; }
+        );
+        cancelRef.current = null;
         remaining[i] = { ...remaining[i], status: "done", progress: null, error: null };
       } catch (err) {
+        cancelRef.current = null;
+        const msg = err instanceof Error ? err.message : t("upload.error.generic");
+        if (msg === "cancelled") {
+          // Remove cancelled item from queue silently
+          remaining.splice(i, 1);
+          i--;
+          setQueue([...remaining]);
+          continue;
+        }
         remaining[i] = {
           ...remaining[i],
           status: "error",
           progress: null,
-          error: err instanceof Error ? err.message : t("upload.error.generic"),
+          error: msg,
         };
       }
 
@@ -179,19 +194,42 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
-                  maxWidth: "70%",
+                  maxWidth: "60%",
                 }}
               >
                 {activeItem.file.name}
               </span>
-              <span style={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
-                {activeItem.progress?.percent ?? 0}%
-                {queue.filter((q) => q.status === "pending").length > 0 && (
-                  <span style={{ marginLeft: 8, fontSize: "var(--text-xs)" }}>
-                    +{queue.filter((q) => q.status === "pending").length}
-                  </span>
-                )}
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+                <span style={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
+                  {activeItem.progress?.percent ?? 0}%
+                  {queue.filter((q) => q.status === "pending").length > 0 && (
+                    <span style={{ marginLeft: 8, fontSize: "var(--text-xs)" }}>
+                      +{queue.filter((q) => q.status === "pending").length}
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  title="Отменить загрузку"
+                  onClick={(e) => { e.preventDefault(); cancelRef.current?.(); }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 20,
+                    height: 20,
+                    borderRadius: "50%",
+                    border: "none",
+                    background: "var(--border-strong)",
+                    color: "var(--text-muted)",
+                    cursor: "pointer",
+                    padding: 0,
+                    flexShrink: 0,
+                  }}
+                >
+                  <X size={12} />
+                </button>
+              </div>
             </div>
             <Progress percent={activeItem.progress?.percent ?? 0} height={6} animate />
           </div>

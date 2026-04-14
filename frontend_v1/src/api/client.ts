@@ -6,7 +6,8 @@ import type {
   SettingsResponse,
   TriggerRule,
   UIConfigResponse,
-  UploadProgress
+  UploadProgress,
+  WorkerStatusResponse
 } from "../models/types";
 
 const defaultUIConfig: UIConfigResponse = {
@@ -118,12 +119,20 @@ export const api = {
   },
   uploadWithProgress: (
     file: File,
-    onProgress: (p: UploadProgress) => void
+    onProgress: (p: UploadProgress) => void,
+    onCancelReady?: (cancel: () => void) => void
   ): Promise<{ mediaId: number; status: string; message: string }> =>
     new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       const form = new FormData();
       form.append("media", file);
+
+      if (onCancelReady) {
+        onCancelReady(() => {
+          xhr.abort();
+          reject(new Error("cancelled"));
+        });
+      }
 
       xhr.upload.addEventListener("progress", (e) => {
         if (e.lengthComputable) {
@@ -149,10 +158,24 @@ export const api = {
       });
 
       xhr.addEventListener("error", () => reject(new Error("Upload failed")));
+      xhr.addEventListener("abort", () => reject(new Error("cancelled")));
       xhr.open("POST", "/upload");
       xhr.setRequestHeader("Accept", "application/json");
       xhr.send(form);
     }),
   deleteMedia: (mediaId: number) =>
-    requestJSON<{ status: string }>(`/media/${mediaId}/delete`, { method: "POST" })
+    requestJSON<{ status: string }>(`/media/${mediaId}/delete`, { method: "POST" }),
+  workerStatus: () => requestJSON<WorkerStatusResponse>("/api/worker/status"),
+  previewTriggerRule: (payload: { pattern: string; matchMode: string }) =>
+    requestJSON<{ totalMatches: number; mediaMatches: { mediaId: number; matchCount: number; firstMatchAt: number }[]; limited: boolean }>("/api/trigger-rules/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  bulkDeleteMedia: (ids: number[]) =>
+    requestJSON<{ deleted: number[]; failed: { id: number; error: string }[] }>("/api/media/bulk-delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    })
 };
