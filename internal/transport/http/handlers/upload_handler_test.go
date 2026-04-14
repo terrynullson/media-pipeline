@@ -1252,6 +1252,7 @@ func newTestApp(t *testing.T) testWebApp {
 	)
 	requestSummaryUC := mediaapp.NewRequestSummaryUseCase(mediaRepo, transcriptRepo, jobRepo)
 	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, uploadStorage, audioStorage, previewStorage, screenshotStorage, logger)
+	retryJobUC := mediaapp.NewRetryJobUseCase(mediaRepo, jobRepo, jobRepo, mediaRepo)
 	handler, err := handlers.NewUploadHandler(
 		uploadUC,
 		profileService,
@@ -1259,6 +1260,7 @@ func newTestApp(t *testing.T) testWebApp {
 		transcriptViewUC,
 		requestSummaryUC,
 		deleteMediaUC,
+		retryJobUC,
 		jobRepo,
 		templatesDir,
 		10*1024*1024,

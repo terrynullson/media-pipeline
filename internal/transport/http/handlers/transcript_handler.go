@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -265,6 +266,40 @@ func (h *UploadHandler) RequestSummary(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/media/%d/transcript?summary_status=%s", mediaID, status), http.StatusSeeOther)
 }
 
+// RetryJob requeues the latest failed job for the given media item so the
+// worker picks it up again on the next poll cycle.
+func (h *UploadHandler) RetryJob(w http.ResponseWriter, r *http.Request) {
+	mediaID, err := mediaIDFromRequest(r)
+	if err != nil {
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "некорректный media id"})
+		return
+	}
+
+	result, err := h.retryJobUC.Retry(r.Context(), mediaID)
+	if err != nil {
+		if errors.Is(err, mediaapp.ErrNoFailedJobs) {
+			h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "нет упавших задач для повтора"})
+			return
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			h.writeJSON(w, http.StatusNotFound, map[string]string{"error": "медиафайл не найден"})
+			return
+		}
+		observability.LoggerFromContext(r.Context(), h.logger).Error(
+			"retry job failed",
+			slog.Int64("media_id", mediaID),
+			slog.Any("error", err),
+		)
+		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "не удалось поставить задачу в очередь повторно"})
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"status": "requeued",
+		"jobId":  result.JobID,
+	})
+}
+
 func (h *UploadHandler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 	mediaID, err := mediaIDFromRequest(r)
 	if err != nil {
@@ -331,6 +366,144 @@ func mediaIDFromRequest(r *http.Request) (int64, error) {
 	}
 
 	return value, nil
+}
+
+// ExportTranscript serves the transcript in one of three downloadable formats:
+//
+//	?format=srt  — SubRip subtitle file
+//	?format=txt  — plain text (full_text, newline-separated segments)
+//	?format=json — JSON matching the /result API response shape
+func (h *UploadHandler) ExportTranscript(w http.ResponseWriter, r *http.Request) {
+	mediaID, err := mediaIDFromRequest(r)
+	if err != nil {
+		http.Error(w, "некорректный media id", http.StatusBadRequest)
+		return
+	}
+
+	format := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("format")))
+	if format == "" {
+		format = "txt"
+	}
+
+	result, err := h.transcriptViewUC.Load(r.Context(), mediaID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.writeJSON(w, http.StatusNotFound, map[string]string{"error": "транскрипт не найден"})
+			return
+		}
+		observability.LoggerFromContext(r.Context(), h.logger).Error(
+			"export transcript load failed",
+			slog.Int64("media_id", mediaID),
+			slog.Any("error", err),
+		)
+		http.Error(w, "не удалось загрузить транскрипт", http.StatusInternalServerError)
+		return
+	}
+
+	if !result.HasTranscript {
+		h.writeJSON(w, http.StatusNotFound, map[string]string{"error": "транскрипт не найден"})
+		return
+	}
+
+	baseName := strings.TrimSuffix(result.Media.OriginalName, filepath.Ext(result.Media.OriginalName))
+	baseName = sanitizeFilename(baseName)
+
+	switch format {
+	case "srt":
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.srt"`, baseName))
+		_, _ = fmt.Fprint(w, formatSRT(result.Transcript.Segments))
+
+	case "txt":
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.txt"`, baseName))
+		_, _ = fmt.Fprint(w, formatTXT(result.Transcript))
+
+	case "json":
+		type segmentJSON struct {
+			Index     int     `json:"index"`
+			StartSec  float64 `json:"startSec"`
+			EndSec    float64 `json:"endSec"`
+			Text      string  `json:"text"`
+		}
+		segs := make([]segmentJSON, 0, len(result.Transcript.Segments))
+		for i, s := range result.Transcript.Segments {
+			segs = append(segs, segmentJSON{Index: i, StartSec: s.StartSec, EndSec: s.EndSec, Text: s.Text})
+		}
+		payload := map[string]any{
+			"mediaId":  result.Media.ID,
+			"name":     result.Media.OriginalName,
+			"language": result.Transcript.Language,
+			"fullText": result.Transcript.FullText,
+			"segments": segs,
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s_transcript.json"`, baseName))
+		_ = json.NewEncoder(w).Encode(payload)
+
+	default:
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неизвестный формат; допустимые значения: srt, txt, json"})
+	}
+}
+
+// formatSRT converts transcript segments to SubRip (.srt) text.
+func formatSRT(segments []transcript.Segment) string {
+	if len(segments) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for i, s := range segments {
+		text := strings.TrimSpace(s.Text)
+		if text == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "%d\n%s --> %s\n%s\n\n",
+			i+1,
+			FormatSRTTimestamp(s.StartSec),
+			FormatSRTTimestamp(s.EndSec),
+			text,
+		)
+	}
+	return b.String()
+}
+
+// formatTXT returns plain text: each segment on its own line.
+// Falls back to FullText when no segments are available.
+func formatTXT(t transcript.Transcript) string {
+	if len(t.Segments) == 0 {
+		return strings.TrimSpace(t.FullText)
+	}
+
+	var b strings.Builder
+	for _, s := range t.Segments {
+		text := strings.TrimSpace(s.Text)
+		if text == "" {
+			continue
+		}
+		b.WriteString(text)
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// sanitizeFilename removes or replaces characters that are unsafe in filenames.
+func sanitizeFilename(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r == '/' || r == '\\' || r == ':' || r == '*' ||
+			r == '?' || r == '"' || r == '<' || r == '>' || r == '|':
+			b.WriteByte('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	result := strings.TrimSpace(b.String())
+	if result == "" {
+		return "transcript"
+	}
+	return result
 }
 
 func buildTranscriptSettings(settings *transcription.Settings) []TranscriptSettingItem {

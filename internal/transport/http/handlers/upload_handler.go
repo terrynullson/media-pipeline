@@ -31,6 +31,7 @@ type UploadHandler struct {
 	transcriptViewUC TranscriptViewService
 	summaryRequestUC SummaryRequestService
 	deleteMediaUC    MediaDeletionService
+	retryJobUC       RetryJobService
 	jobReader        MediaJobReader
 	tmpl             *template.Template
 	maxUploadSizeB   int64
@@ -67,6 +68,10 @@ type MediaDeletionService interface {
 
 type MediaJobReader interface {
 	ListByMediaID(ctx context.Context, mediaID int64) ([]job.Job, error)
+}
+
+type RetryJobService interface {
+	Retry(ctx context.Context, mediaID int64) (mediaapp.RetryJobResult, error)
 }
 
 type MediaListItem struct {
@@ -141,6 +146,7 @@ func NewUploadHandler(
 	transcriptViewUC TranscriptViewService,
 	summaryRequestUC SummaryRequestService,
 	deleteMediaUC MediaDeletionService,
+	retryJobUC RetryJobService,
 	jobReader MediaJobReader,
 	templatesDir string,
 	maxUploadSizeB int64,
@@ -162,6 +168,7 @@ func NewUploadHandler(
 		transcriptViewUC: transcriptViewUC,
 		summaryRequestUC: summaryRequestUC,
 		deleteMediaUC:    deleteMediaUC,
+		retryJobUC:       retryJobUC,
 		jobReader:        jobReader,
 		tmpl:             tmpl,
 		maxUploadSizeB:   maxUploadSizeB,

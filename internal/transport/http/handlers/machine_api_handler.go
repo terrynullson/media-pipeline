@@ -85,9 +85,10 @@ func (h *MachineAPIHandler) APIMediaResult(w http.ResponseWriter, r *http.Reques
 	}
 
 	h.writeJSON(w, http.StatusOK, apiMediaResultResponse{
-		MediaID:    result.Media.ID,
-		Name:       result.Media.OriginalName,
-		Transcript: result.Transcript.FullText,
-		Language:   result.Transcript.Language,
+		MediaID:       result.Media.ID,
+		Name:          result.Media.OriginalName,
+		Transcript:    result.Transcript.FullText,
+		Language:      result.Transcript.Language,
+		LanguageLabel: languageLabel(result.Transcript.Language),
 	})
 }

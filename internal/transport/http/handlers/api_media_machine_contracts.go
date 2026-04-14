@@ -7,6 +7,7 @@ package handlers
 
 import (
 	"fmt"
+	"strings"
 
 	mediaapp "media-pipeline/internal/app/media"
 	"media-pipeline/internal/domain/job"
@@ -24,10 +25,11 @@ type apiMediaStatusResponse struct {
 
 // apiMediaResultResponse is returned by the /result endpoint.
 type apiMediaResultResponse struct {
-	MediaID    int64  `json:"mediaId"`
-	Name       string `json:"name"`
-	Transcript string `json:"transcript"`
-	Language   string `json:"language"`
+	MediaID       int64  `json:"mediaId"`
+	Name          string `json:"name"`
+	Transcript    string `json:"transcript"`
+	Language      string `json:"language"`
+	LanguageLabel string `json:"languageLabel"`
 }
 
 // buildTranscriptAutomationStatus builds the status response for the machine API.
@@ -142,4 +144,37 @@ func currentStageIndex(result mediaapp.MediaStatusResult, audioOnly bool) (int, 
 
 func isActive(j *job.Job) bool {
 	return j.Status == job.StatusPending || j.Status == job.StatusRunning
+}
+
+// languageLabel returns a human-readable name for a BCP-47 language code.
+// Unknown codes are returned as-is.
+func languageLabel(code string) string {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "ru":
+		return "Русский"
+	case "en":
+		return "English"
+	case "de":
+		return "Deutsch"
+	case "fr":
+		return "Français"
+	case "es":
+		return "Español"
+	case "zh":
+		return "中文"
+	case "ja":
+		return "日本語"
+	case "it":
+		return "Italiano"
+	case "pt":
+		return "Português"
+	case "pl":
+		return "Polski"
+	case "uk":
+		return "Українська"
+	case "":
+		return ""
+	default:
+		return code
+	}
 }

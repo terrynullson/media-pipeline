@@ -493,3 +493,106 @@ func TestAPIMachineResult_NotFound(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
+
+func TestRetryJob_RequeuesFailedJob(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	ctx := context.Background()
+	mediaRepo := repositories.NewMediaRepository(app.db)
+	jobRepo := repositories.NewJobRepository(app.db)
+
+	now := time.Now().UTC()
+	mediaID, err := mediaRepo.Create(ctx, media.Media{
+		OriginalName: "video.mp4",
+		StoredName:   "video.mp4",
+		Extension:    ".mp4",
+		MIMEType:     "video/mp4",
+		SizeBytes:    1024,
+		StoragePath:  "2026-04-14/video.mp4",
+		Status:       media.StatusFailed,
+		CreatedAtUTC: now,
+		UpdatedAtUTC: now,
+	})
+	if err != nil {
+		t.Fatalf("Create(media) error = %v", err)
+	}
+
+	jobID, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeExtractAudio,
+		Status:       job.StatusFailed,
+		ErrorMessage: "ffmpeg завершился с ошибкой",
+		CreatedAtUTC: now,
+		UpdatedAtUTC: now,
+	})
+	if err != nil {
+		t.Fatalf("Create(job) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/media/%d/retry", mediaID), nil)
+	rec := httptest.NewRecorder()
+	app.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Status string `json:"status"`
+		JobID  int64  `json:"jobId"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Status != "requeued" {
+		t.Errorf("status = %q, want requeued", payload.Status)
+	}
+	if payload.JobID != jobID {
+		t.Errorf("jobId = %d, want %d", payload.JobID, jobID)
+	}
+
+	// Verify the job is now pending in the database.
+	j, ok, err := jobRepo.FindLatestByMediaAndType(ctx, mediaID, job.TypeExtractAudio)
+	if err != nil {
+		t.Fatalf("FindLatestByMediaAndType() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("FindLatestByMediaAndType() ok = false, want true")
+	}
+	if j.Status != job.StatusPending {
+		t.Errorf("job status = %q, want pending", j.Status)
+	}
+}
+
+func TestRetryJob_NoFailedJobReturns400(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	ctx := context.Background()
+	mediaRepo := repositories.NewMediaRepository(app.db)
+
+	now := time.Now().UTC()
+	mediaID, err := mediaRepo.Create(ctx, media.Media{
+		OriginalName: "audio.wav",
+		StoredName:   "audio.wav",
+		Extension:    ".wav",
+		MIMEType:     "audio/wav",
+		SizeBytes:    512,
+		StoragePath:  "2026-04-14/audio.wav",
+		Status:       media.StatusUploaded,
+		CreatedAtUTC: now,
+		UpdatedAtUTC: now,
+	})
+	if err != nil {
+		t.Fatalf("Create(media) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/media/%d/retry", mediaID), nil)
+	rec := httptest.NewRecorder()
+	app.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}

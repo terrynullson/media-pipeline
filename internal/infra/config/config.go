@@ -42,7 +42,7 @@ func Load() Config {
 		FFmpegBinary:         getEnv("FFMPEG_BINARY", "ffmpeg"),
 		PythonBinary:         getEnv("PYTHON_BINARY", "python"),
 		TranscribeScript:     getEnv("TRANSCRIBE_SCRIPT", "./scripts/transcribe.py"),
-		TranscribeLanguage:   getEnv("TRANSCRIBE_LANGUAGE", ""),
+		TranscribeLanguage:   getEnv("TRANSCRIBE_LANGUAGE", "ru"),
 		MaxUploadSizeMB:      getEnvInt64("MAX_UPLOAD_SIZE_MB", 1024),
 		WorkerPollIntervalMS: getEnvInt64("WORKER_POLL_INTERVAL_MS", 2000),
 		FFmpegTimeoutSec:     getEnvInt64("FFMPEG_TIMEOUT_SEC", 120),

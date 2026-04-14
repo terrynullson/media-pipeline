@@ -42,6 +42,8 @@ func NewRouter(
 	r.With(timeout).Get("/api/media", uploadHandler.APIMediaList)
 	r.With(timeout).Get("/api/jobs", uploadHandler.APIJobsList)
 	r.With(timeout).Get("/api/media/{mediaID}", uploadHandler.APIMediaDetail)
+	r.With(timeout).Get("/api/media/{mediaID}/transcript/export", uploadHandler.ExportTranscript)
+	r.With(timeout).Post("/api/media/{mediaID}/retry", uploadHandler.RetryJob)
 	r.With(timeout).Get("/api/settings/transcription", uploadHandler.APITranscriptionSettings)
 	r.With(timeout).Put("/api/settings/transcription", uploadHandler.APIUpdateTranscriptionSettings)
 	r.With(timeout).Get("/api/ui-config", uploadHandler.APIUIConfig)

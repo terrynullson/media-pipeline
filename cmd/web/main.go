@@ -92,6 +92,7 @@ func main() {
 	)
 	requestSummaryUC := mediaapp.NewRequestSummaryUseCase(mediaRepo, transcriptRepo, jobRepo)
 	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, fileStorage, audioStorage, previewStorage, screenshotStorage, logger)
+	retryJobUC := mediaapp.NewRetryJobUseCase(mediaRepo, jobRepo, jobRepo, mediaRepo)
 
 	uploadUC := command.NewUploadMediaUseCase(mediaRepo, jobRepo, fileStorage, cfg.MaxUploadSizeBytes(), logger)
 	templatesDir, err := infraRuntime.ResolvePath("internal/transport/http/views/templates")
@@ -106,6 +107,7 @@ func main() {
 		transcriptViewUC,
 		requestSummaryUC,
 		deleteMediaUC,
+		retryJobUC,
 		jobRepo,
 		templatesDir,
 		cfg.MaxUploadSizeBytes(),
