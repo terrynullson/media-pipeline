@@ -170,47 +170,24 @@ function MediaRow({ item, onDeleted, selectMode, selected, onToggleSelect }: {
         </div>
       )}
 
-      {/* Main row */}
+      {/* Main row — background fills with accent when running and collapsed (пункт 2) */}
       <div
-        style={{ ...rowStyle, background: (hovered || selected) ? "var(--bg-card-hover)" : "transparent" }}
+        style={{
+          ...rowStyle,
+          background: (hovered || selected)
+            ? "var(--bg-card-hover)"
+            : isRunning && !expanded
+              ? `linear-gradient(to right,
+                  rgba(255,197,112,0.06) 0%,
+                  rgba(255,197,112,0.06) ${item.stagePercent}%,
+                  transparent ${item.stagePercent}%)`
+              : "transparent",
+          transition: "background var(--duration-slow) var(--ease)",
+        }}
         onClick={() => selectMode ? onToggleSelect?.(item.id) : setExpanded(!expanded)}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
-        {/* ── Trash icon slides in from the left (пункт 5) ── */}
-        {!selectMode && (
-          <div
-            style={{
-              maxWidth: hovered ? 30 : 0,
-              overflow: "hidden",
-              flexShrink: 0,
-              transition: "max-width var(--duration-normal) var(--ease)",
-            }}
-          >
-            <button
-              type="button"
-              title={t("action.delete")}
-              onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 26,
-                height: 26,
-                marginRight: 4,
-                borderRadius: "var(--radius-sm)",
-                border: "none",
-                background: "rgba(239,68,68,0.10)",
-                color: "var(--error)",
-                cursor: "pointer",
-                flexShrink: 0,
-              }}
-            >
-              <Trash2 size={13} />
-            </button>
-          </div>
-        )}
-
         {/* Chevron / checkbox */}
         {selectMode ? (
           <span style={{ flexShrink: 0, color: selected ? "var(--accent)" : "var(--text-muted)" }}>
@@ -246,6 +223,41 @@ function MediaRow({ item, onDeleted, selectMode, selected, onToggleSelect }: {
         <span style={{ flexShrink: 0, width: 100, display: "flex", justifyContent: "center" }}>
           <StatusChip label={item.statusLabel} tone={item.statusTone} />
         </span>
+
+        {/* ── Trash icon slides in from the RIGHT (пункт 1) ── */}
+        {!selectMode && (
+          <div
+            style={{
+              maxWidth: hovered ? 30 : 0,
+              overflow: "hidden",
+              flexShrink: 0,
+              transition: "max-width var(--duration-normal) var(--ease)",
+              display: "flex",
+              justifyContent: "flex-end",
+            }}
+          >
+            <button
+              type="button"
+              title={t("action.delete")}
+              onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 26,
+                height: 26,
+                borderRadius: "var(--radius-sm)",
+                border: "none",
+                background: "rgba(239,68,68,0.10)",
+                color: "var(--error)",
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── Expanded panel ── */}
