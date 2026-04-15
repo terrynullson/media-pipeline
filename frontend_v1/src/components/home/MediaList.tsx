@@ -46,10 +46,9 @@ function parseRuDate(s: string): number {
 
 const tabBarStyle: React.CSSProperties = {
   display: "flex",
-  alignItems: "stretch",   // stretch so marginBottom overlap works correctly
+  alignItems: "stretch",
   gap: 0,
-  borderBottom: "1px solid var(--border)",
-  marginBottom: 0,
+  // No border here — each button owns its own bottom line
 };
 
 const tabBase: React.CSSProperties = {
@@ -58,8 +57,8 @@ const tabBase: React.CSSProperties = {
   fontWeight: 500,
   background: "none",
   border: "none",
-  borderBottom: "2px solid transparent",
-  marginBottom: "-1px",   // overlap container's 1px border so active 2px is clean
+  // Inactive tabs show the same subtle line as a divider
+  borderBottom: "2px solid var(--border)",
   cursor: "pointer",
   color: "var(--text-muted)",
   transition: "color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease)",
