@@ -145,118 +145,86 @@ function MediaRow({ item, onDeleted, selectMode, selected, onToggleSelect }: {
 
   return (
     <div>
-      {/* Inline quick-delete confirmation */}
-      {confirmDelete && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--sp-3)",
-            padding: "8px 14px",
-            background: "rgba(239,68,68,0.06)",
-            borderBottom: "1px solid rgba(239,68,68,0.2)",
-            fontSize: "var(--text-sm)",
-          }}
-        >
-          <span style={{ flex: 1, color: "var(--error)", fontWeight: 500 }}>
-            {t("action.confirmDelete")} «{item.name}»
-          </span>
-          <Button variant="danger" size="sm" loading={deleting} onClick={handleDelete}>
-            {t("action.yesDelete")}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)} disabled={deleting}>
-            {t("action.cancel")}
-          </Button>
-        </div>
-      )}
-
-      {/* Main row — background fills with accent when running and collapsed (пункт 2) */}
+      {/* ── Main row: normal view OR inline delete confirmation ── */}
       <div
         style={{
           ...rowStyle,
-          background: (hovered || selected)
-            ? "var(--bg-card-hover)"
-            : isRunning && !expanded
-              ? `linear-gradient(to right,
-                  rgba(255,197,112,0.06) 0%,
-                  rgba(255,197,112,0.06) ${item.stagePercent}%,
-                  transparent ${item.stagePercent}%)`
-              : "transparent",
-          transition: "background var(--duration-slow) var(--ease)",
+          background: confirmDelete
+            ? "rgba(239,68,68,0.06)"
+            : (hovered || selected)
+              ? "var(--bg-card-hover)"
+              : isRunning && !expanded
+                ? `linear-gradient(to right,
+                    rgba(255,197,112,0.06) 0%,
+                    rgba(255,197,112,0.06) ${item.stagePercent}%,
+                    transparent ${item.stagePercent}%)`
+                : "transparent",
+          borderBottom: confirmDelete ? "1px solid rgba(239,68,68,0.18)" : rowStyle.borderBottom,
+          transition: "background var(--duration-normal) var(--ease)",
+          cursor: confirmDelete ? "default" : "pointer",
         }}
-        onClick={() => selectMode ? onToggleSelect?.(item.id) : setExpanded(!expanded)}
+        onClick={() => {
+          if (confirmDelete) return;
+          selectMode ? onToggleSelect?.(item.id) : setExpanded(!expanded);
+        }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
-        {/* Chevron / checkbox */}
-        {selectMode ? (
-          <span style={{ flexShrink: 0, color: selected ? "var(--accent)" : "var(--text-muted)" }}>
-            {selected ? <CheckSquare size={14} /> : <Square size={14} />}
-          </span>
-        ) : expanded ? (
-          <ChevronDown size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
+        {confirmDelete ? (
+          /* ── Confirmation replaces row content ── */
+          <>
+            <Trash2 size={14} style={{ color: "var(--error)", flexShrink: 0 }} />
+            <span style={{ flex: 1, fontSize: "var(--text-sm)", color: "var(--error)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {t("action.confirmDelete")} «{item.name}»
+            </span>
+            <Button variant="danger" size="sm" loading={deleting} onClick={(e) => { e.stopPropagation(); handleDelete(); }}>
+              {t("action.yesDelete")}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }} disabled={deleting}>
+              {t("action.cancel")}
+            </Button>
+          </>
         ) : (
-          <ChevronRight size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-        )}
+          /* ── Normal row content ── */
+          <>
+            {selectMode ? (
+              <span style={{ flexShrink: 0, color: selected ? "var(--accent)" : "var(--text-muted)" }}>
+                {selected ? <CheckSquare size={14} /> : <Square size={14} />}
+              </span>
+            ) : expanded ? (
+              <ChevronDown size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
+            ) : (
+              <ChevronRight size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+            )}
 
-        <span
-          style={{
-            flex: 1,
-            fontWeight: 600,
-            fontSize: "var(--text-base)",
-            color: "var(--text)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            minWidth: 0,
-          }}
-        >
-          {item.name}
-        </span>
+            <span style={{ flex: 1, fontWeight: 600, fontSize: "var(--text-base)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+              {item.name}
+            </span>
 
-        <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", flexShrink: 0, width: 80, textAlign: "right" }}>
-          {item.sizeHuman}
-        </span>
-        <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", flexShrink: 0, width: 140, textAlign: "right" }}>
-          {item.createdAtUtc}
-        </span>
-        <span style={{ flexShrink: 0, width: 100, display: "flex", justifyContent: "center" }}>
-          <StatusChip label={item.statusLabel} tone={item.statusTone} />
-        </span>
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", flexShrink: 0, width: 80, textAlign: "right" }}>
+              {item.sizeHuman}
+            </span>
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", flexShrink: 0, width: 140, textAlign: "right" }}>
+              {item.createdAtUtc}
+            </span>
+            <span style={{ flexShrink: 0, width: 100, display: "flex", justifyContent: "center" }}>
+              <StatusChip label={item.statusLabel} tone={item.statusTone} />
+            </span>
 
-        {/* ── Trash icon slides in from the RIGHT (пункт 1) ── */}
-        {!selectMode && (
-          <div
-            style={{
-              maxWidth: hovered ? 30 : 0,
-              overflow: "hidden",
-              flexShrink: 0,
-              transition: "max-width var(--duration-normal) var(--ease)",
-              display: "flex",
-              justifyContent: "flex-end",
-            }}
-          >
-            <button
-              type="button"
-              title={t("action.delete")}
-              onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 26,
-                height: 26,
-                borderRadius: "var(--radius-sm)",
-                border: "none",
-                background: "rgba(239,68,68,0.10)",
-                color: "var(--error)",
-                cursor: "pointer",
-                flexShrink: 0,
-              }}
-            >
-              <Trash2 size={13} />
-            </button>
-          </div>
+            {/* Trash slides in from the right */}
+            {!selectMode && (
+              <div style={{ maxWidth: hovered ? 30 : 0, overflow: "hidden", flexShrink: 0, transition: "max-width var(--duration-normal) var(--ease)" }}>
+                <button
+                  type="button"
+                  title={t("action.delete")}
+                  onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: "var(--radius-sm)", border: "none", background: "rgba(239,68,68,0.10)", color: "var(--error)", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -366,23 +334,9 @@ function MediaRow({ item, onDeleted, selectMode, selected, onToggleSelect }: {
           {/* Footer actions */}
           <div style={{ marginTop: "var(--sp-3)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
-              {!confirmDelete ? (
-                <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => setConfirmDelete(true)}>
-                  {t("action.delete")}
-                </Button>
-              ) : (
-                <>
-                  <span style={{ fontSize: "var(--text-xs)", color: "var(--error)", fontWeight: 500 }}>
-                    {t("action.confirmDelete")}
-                  </span>
-                  <Button variant="danger" size="sm" loading={deleting} onClick={handleDelete}>
-                    {t("action.yesDelete")}
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)} disabled={deleting}>
-                    {t("action.cancel")}
-                  </Button>
-                </>
-              )}
+              <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => setConfirmDelete(true)}>
+                {t("action.delete")}
+              </Button>
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
