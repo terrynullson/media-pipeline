@@ -193,6 +193,11 @@ func describeUploadStep(mediaItem media.Media, currentJob *job.Job, nowUTC time.
 
 func describeExtractAudioStep(mediaItem media.Media, currentJob *job.Job, unlocked bool, nowUTC time.Time) pipelineStepState {
 	if currentJob != nil {
+		// If preview isn't done yet, suppress a pending extract-audio job — it can't
+		// actually start until preview finishes, so show it as blocked.
+		if !unlocked && currentJob.Status == job.StatusPending {
+			return pipelineStepState{label: "Извлечение аудио", statusLabel: "Не начато", tone: "neutral", kind: "blocked", timingText: "Не запускалось"}
+		}
 		return describeJobBackedStep("Извлечение аудио", currentJob, nowUTC)
 	}
 	if !unlocked {

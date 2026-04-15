@@ -269,14 +269,7 @@ function MediaRow({ item, onDeleted, selectMode, selected, onToggleSelect }: {
             borderBottom: "1px solid var(--border)",
             position: "relative",
             overflow: "hidden",
-            // ── Background fill = progress (пункт 3) ──
-            background: isRunning
-              ? `linear-gradient(to right,
-                  rgba(255,197,112,0.055) 0%,
-                  rgba(255,197,112,0.055) ${item.stagePercent}%,
-                  var(--bg-surface) ${item.stagePercent}%)`
-              : "var(--bg-surface)",
-            transition: "background var(--duration-slow) var(--ease)",
+            background: "var(--bg-surface)",
           }}
         >
           {/* Stage label + percent row */}
