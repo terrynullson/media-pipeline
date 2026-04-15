@@ -60,9 +60,20 @@ func TestFormatTimestamp(t *testing.T) {
 func TestFormatDateTimeUTC(t *testing.T) {
 	t.Parallel()
 
-	value := time.Date(2026, 4, 3, 12, 34, 56, 0, time.FixedZone("MSK", 3*60*60))
-	if got := FormatDateTimeUTC(value); got != "2026-04-03 09:34:56" {
-		t.Fatalf("FormatDateTimeUTC() = %q, want %q", got, "2026-04-03 09:34:56")
+	// Input: 2026-04-03 09:34:56 UTC → expected MSK output: 03.04.2026 12:34:56
+	value := time.Date(2026, 4, 3, 9, 34, 56, 0, time.UTC)
+	if got := FormatDateTimeUTC(value); got != "03.04.2026 12:34:56" {
+		t.Fatalf("FormatDateTimeUTC() = %q, want %q", got, "03.04.2026 12:34:56")
+	}
+}
+
+func TestFormatClockUTC(t *testing.T) {
+	t.Parallel()
+
+	// Input: 2026-04-14 21:00:00 UTC → expected MSK output: 15.04.2026 00:00:00
+	value := time.Date(2026, 4, 14, 21, 0, 0, 0, time.UTC)
+	if got := FormatClockUTC(value); got != "15.04.2026 00:00:00" {
+		t.Fatalf("FormatClockUTC() = %q, want %q", got, "15.04.2026 00:00:00")
 	}
 }
 

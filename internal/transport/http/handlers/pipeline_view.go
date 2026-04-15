@@ -333,10 +333,10 @@ func describeJobBackedStep(label string, currentJob *job.Job, nowUTC time.Time) 
 func buildTimingText(startedAt string, finishedAt string, status string, duration string) string {
 	parts := make([]string, 0, 4)
 	if strings.TrimSpace(startedAt) != "" {
-		parts = append(parts, "Старт "+startedAt)
+		parts = append(parts, "Начало "+startedAt)
 	}
 	if strings.TrimSpace(finishedAt) != "" {
-		parts = append(parts, "Финиш "+finishedAt)
+		parts = append(parts, "Завершено "+finishedAt)
 	}
 	if strings.TrimSpace(status) != "" {
 		if duration != "" && strings.HasPrefix(status, "Готово") {

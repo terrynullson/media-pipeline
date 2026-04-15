@@ -53,7 +53,7 @@ func TestBuildMediaPipelineView_FailedTranscribeShowsStageAndReason(t *testing.T
 	if got := view.Steps[2].TimingText; !strings.Contains(got, "Ошибка через") {
 		t.Fatalf("TimingText = %q, want failed duration label", got)
 	}
-	if got := view.Steps[2].TimingText; !strings.Contains(got, "Старт ") || !strings.Contains(got, "Финиш ") {
+	if got := view.Steps[2].TimingText; !strings.Contains(got, "Начало ") || !strings.Contains(got, "Завершено ") {
 		t.Fatalf("TimingText = %q, want start and finish labels", got)
 	}
 }
@@ -125,7 +125,7 @@ func TestBuildMediaPipelineView_UsesEstimatedProgressForRunningTranscription(t *
 	if step.ProgressLabel != "Оценка по сегментам: 62%" {
 		t.Fatalf("ProgressLabel = %q, want estimated label", step.ProgressLabel)
 	}
-	if got := step.TimingText; !strings.Contains(got, "Старт ") || !strings.Contains(got, "В работе") {
+	if got := step.TimingText; !strings.Contains(got, "Начало ") || !strings.Contains(got, "В работе") {
 		t.Fatalf("TimingText = %q, want running start label", got)
 	}
 }
