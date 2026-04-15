@@ -169,11 +169,12 @@ export function MediaDetailPage() {
               <Timer size={13} style={{ flexShrink: 0 }} />
               <span>Оценка: ~{settingsSnapshot.runtimePolicy.effectiveTimeout} максимум</span>
               {settingsSnapshot.runtimePolicy.warnings && settingsSnapshot.runtimePolicy.warnings.length > 0 && (
-                <AlertCircle
-                  size={13}
-                  style={{ color: "var(--warning, #ca8a04)", flexShrink: 0 }}
-                  title={settingsSnapshot.runtimePolicy.warnings.join("; ")}
-                />
+                <span title={settingsSnapshot.runtimePolicy.warnings.join("; ")} style={{ display: "flex" }}>
+                  <AlertCircle
+                    size={13}
+                    style={{ color: "var(--warning, #ca8a04)", flexShrink: 0 }}
+                  />
+                </span>
               )}
             </div>
           )}

@@ -64,7 +64,18 @@ func buildMediaPipelineView(mediaItem media.Media, jobs []job.Job) MediaPipeline
 	jobsByType := latestJobByType(jobs)
 
 	uploadStep := describeUploadStep(mediaItem, jobsByType[job.TypeUpload], nowUTC)
-	extractStep := describeExtractAudioStep(mediaItem, jobsByType[job.TypeExtractAudio], nowUTC)
+
+	// For video files, preview must complete before audio extraction can begin.
+	// Compute preview first so we can pass its completion state to extractStep.
+	extractUnlocked := true
+	var insertPreviewStep *pipelineStepState
+	if !mediaItem.IsAudioOnly() {
+		ps := describePreviewStep(mediaItem, jobsByType[job.TypePreparePreviewVideo], nowUTC)
+		insertPreviewStep = &ps
+		extractUnlocked = ps.kind == "done"
+	}
+
+	extractStep := describeExtractAudioStep(mediaItem, jobsByType[job.TypeExtractAudio], extractUnlocked, nowUTC)
 	transcribeStep := describeTranscribeStep(mediaItem, jobsByType[job.TypeTranscribe], nowUTC)
 	analyzeStep := describeQueuedStep(
 		"Анализ триггеров",
@@ -79,19 +90,11 @@ func buildMediaPipelineView(mediaItem media.Media, jobs []job.Job) MediaPipeline
 		nowUTC,
 	)
 
-	steps := []pipelineStepState{
-		uploadStep,
-		extractStep,
-		transcribeStep,
-		analyzeStep,
-		screenshotStep,
-	}
+	steps := []pipelineStepState{uploadStep, extractStep, transcribeStep, analyzeStep, screenshotStep}
 
-	// For video files, insert the preview-preparation step after upload.
-	if !mediaItem.IsAudioOnly() {
-		previewStep := describePreviewStep(mediaItem, jobsByType[job.TypePreparePreviewVideo], nowUTC)
+	if insertPreviewStep != nil {
 		// Insert at position 1 (after upload).
-		steps = append(steps[:1], append([]pipelineStepState{previewStep}, steps[1:]...)...)
+		steps = append(steps[:1], append([]pipelineStepState{*insertPreviewStep}, steps[1:]...)...)
 	}
 
 	failedIndex := firstStepIndexByKind(steps, "failed")
@@ -188,9 +191,12 @@ func describeUploadStep(mediaItem media.Media, currentJob *job.Job, nowUTC time.
 	}
 }
 
-func describeExtractAudioStep(mediaItem media.Media, currentJob *job.Job, nowUTC time.Time) pipelineStepState {
+func describeExtractAudioStep(mediaItem media.Media, currentJob *job.Job, unlocked bool, nowUTC time.Time) pipelineStepState {
 	if currentJob != nil {
 		return describeJobBackedStep("Извлечение аудио", currentJob, nowUTC)
+	}
+	if !unlocked {
+		return pipelineStepState{label: "Извлечение аудио", statusLabel: "Не начато", tone: "neutral", kind: "blocked", timingText: "Не запускалось"}
 	}
 
 	switch mediaItem.Status {
