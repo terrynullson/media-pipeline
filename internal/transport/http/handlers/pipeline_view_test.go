@@ -18,8 +18,9 @@ func TestBuildMediaPipelineView_FailedTranscribeShowsStageAndReason(t *testing.T
 
 	view := buildMediaPipelineView(
 		media.Media{
-			ID:     10,
-			Status: media.StatusFailed,
+			ID:       10,
+			Status:   media.StatusFailed,
+			MIMEType: "audio/mpeg",
 		},
 		[]job.Job{
 			{ID: 100, MediaID: 10, Type: job.TypeUpload, Status: job.StatusDone},
@@ -95,8 +96,9 @@ func TestBuildMediaPipelineView_UsesEstimatedProgressForRunningTranscription(t *
 
 	view := buildMediaPipelineView(
 		media.Media{
-			ID:     12,
-			Status: media.StatusTranscribing,
+			ID:       12,
+			Status:   media.StatusTranscribing,
+			MIMEType: "audio/mpeg",
 		},
 		[]job.Job{
 			{ID: 100, MediaID: 12, Type: job.TypeUpload, Status: job.StatusDone},

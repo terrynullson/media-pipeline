@@ -10,8 +10,7 @@ import (
 )
 
 const (
-	pipelineStageTotal = 5
-	workerLogHintRU    = "Подробности смотрите в логах worker."
+	workerLogHintRU = "Подробности смотрите в логах worker."
 )
 
 type PipelineStepView struct {
@@ -88,13 +87,20 @@ func buildMediaPipelineView(mediaItem media.Media, jobs []job.Job) MediaPipeline
 		screenshotStep,
 	}
 
+	// For video files, insert the preview-preparation step after upload.
+	if !mediaItem.IsAudioOnly() {
+		previewStep := describePreviewStep(mediaItem, jobsByType[job.TypePreparePreviewVideo], nowUTC)
+		// Insert at position 1 (after upload).
+		steps = append(steps[:1], append([]pipelineStepState{previewStep}, steps[1:]...)...)
+	}
+
 	failedIndex := firstStepIndexByKind(steps, "failed")
 	runningIndex := firstStepIndexByKind(steps, "running")
 	pendingIndex := firstPendingIndex(steps)
 	lastCompletedIndex := lastCompletedIndex(steps)
 
 	view := MediaPipelineView{
-		StageTotal: pipelineStageTotal,
+		StageTotal: len(steps),
 		Steps:      make([]PipelineStepView, 0, len(steps)),
 	}
 
@@ -222,6 +228,26 @@ func describeQueuedStep(label string, currentJob *job.Job, unlocked bool, nowUTC
 		return pipelineStepState{label: label, statusLabel: "Ждёт", tone: "ready", kind: "pending", timingText: "Ждёт запуска"}
 	}
 	return pipelineStepState{label: label, statusLabel: "Не начато", tone: "neutral", kind: "blocked", timingText: "Не запускалось"}
+}
+
+func describePreviewStep(mediaItem media.Media, currentJob *job.Job, nowUTC time.Time) pipelineStepState {
+	label := "Подготовка превью"
+	if currentJob != nil {
+		return describeJobBackedStep(label, currentJob, nowUTC)
+	}
+	// No job record yet — infer from media status.
+	switch mediaItem.Status {
+	case media.StatusUploaded, media.StatusQueued:
+		return pipelineStepState{label: label, statusLabel: "Ждёт", tone: "ready", kind: "pending", timingText: "Ждёт запуска"}
+	case media.StatusProcessing,
+		media.StatusAudioExtracted,
+		media.StatusTranscribing,
+		media.StatusTranscribed:
+		// If audio is already extracted the preview was likely done; show it as done.
+		return pipelineStepState{label: label, statusLabel: "Готово", tone: "success", kind: "done", timingText: "Готово"}
+	default:
+		return pipelineStepState{label: label, statusLabel: "Не начато", tone: "neutral", kind: "blocked", timingText: "Не запускалось"}
+	}
 }
 
 func describeScreenshotStep(mediaItem media.Media, currentJob *job.Job, unlocked bool, nowUTC time.Time) pipelineStepState {
