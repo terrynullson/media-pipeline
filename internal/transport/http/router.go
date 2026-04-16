@@ -62,9 +62,6 @@ func NewRouter(
 	r.With(timeout, mediaToken).Get("/api/media/{mediaID}/result", machineAPIHandler.APIMediaResult)
 	r.With(timeout).Get("/api/worker/status", workerStatusHandler.APIWorkerStatus)
 
-	r.With(timeout).Get("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/app-v1", http.StatusSeeOther)
-	})
 	r.With(timeout).Get("/workspace", uploadHandler.Workspace)
 	uploadRateLimit := UploadRateLimitMiddleware(uploadRateLimitPerMinute)
 	r.With(uploadRateLimit).Post("/upload", uploadHandler.Upload) // no timeout — large file uploads
@@ -104,9 +101,14 @@ func NewRouter(
 		frontendDir = frontendDirs[0]
 	}
 	if strings.TrimSpace(frontendDir) != "" {
+		r.With(timeout).Get("/", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/app-v1", http.StatusSeeOther)
+		})
 		spaHandler := newSPAHandler(frontendDir, "/app-v1")
 		r.Get("/app-v1", spaHandler)
 		r.Get("/app-v1/*", spaHandler)
+	} else {
+		r.With(timeout).Get("/", uploadHandler.Index)
 	}
 
 	return r

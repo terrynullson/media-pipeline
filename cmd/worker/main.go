@@ -8,15 +8,19 @@ import (
 	"path/filepath"
 	"syscall"
 
+	autouploadapp "media-pipeline/internal/app/autoupload"
+	"media-pipeline/internal/app/command"
 	transcriptionapp "media-pipeline/internal/app/transcription"
 	appworker "media-pipeline/internal/app/worker"
 	"media-pipeline/internal/domain/ports"
 	domaintranscription "media-pipeline/internal/domain/transcription"
+	infraAutoUpload "media-pipeline/internal/infra/autoupload"
 	"media-pipeline/internal/infra/config"
 	"media-pipeline/internal/infra/db"
 	"media-pipeline/internal/infra/db/repositories"
 	infraMedia "media-pipeline/internal/infra/media"
 	infraRuntime "media-pipeline/internal/infra/runtime"
+	"media-pipeline/internal/infra/storage"
 	infraSummary "media-pipeline/internal/infra/summary"
 	infraTranscription "media-pipeline/internal/infra/transcription"
 	"media-pipeline/internal/observability"
@@ -70,6 +74,7 @@ func main() {
 	summaryRepo := repositories.NewSummaryRepository(sqlDB)
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
+	fileStorage := storage.NewLocalStorage(cfg.UploadDir)
 	audioExtractor := infraMedia.NewFFmpegExtractor(cfg.FFmpegBinary)
 	previewGenerator := infraMedia.NewFFmpegPreviewGenerator(cfg.FFmpegBinary)
 	audioDurationReader := infraMedia.NewWAVDurationReader()
@@ -88,6 +93,9 @@ func main() {
 		os.Exit(1)
 	}
 	transcriber := infraTranscription.NewPythonTranscriber(cfg.PythonBinary, transcribeScriptPath, logger)
+	uploadUC := command.NewUploadMediaUseCase(mediaRepo, jobRepo, fileStorage, cfg.MaxUploadSizeBytes(), logger)
+	autoUploadSource := infraAutoUpload.NewLocalSource(cfg.AutoUploadDir, cfg.AutoUploadArchiveDir, cfg.AutoUploadMinAge())
+	autoUploadService := autouploadapp.NewService(autoUploadSource, uploadUC, logger)
 
 	processor := appworker.NewProcessor(
 		jobRepo,
@@ -114,11 +122,13 @@ func main() {
 		cfg.TranscribeTimeout(),
 		logger,
 	)
-	runner := appworker.NewRunner(processor, cfg.WorkerPollInterval(), logger)
+	runner := appworker.NewRunner(processor, autoUploadService, cfg.WorkerPollInterval(), logger)
 
 	logger.Info("starting worker",
 		slog.String("db_path", cfg.DBPath),
 		slog.String("upload_dir", cfg.UploadDir),
+		slog.String("auto_upload_dir", cfg.AutoUploadDir),
+		slog.String("auto_upload_archive_dir", cfg.AutoUploadArchiveDir),
 		slog.String("audio_dir", cfg.AudioDir),
 		slog.String("preview_dir", cfg.PreviewDir),
 		slog.String("screenshots_dir", cfg.ScreenshotsDir),
@@ -126,6 +136,7 @@ func main() {
 		slog.String("python_binary", cfg.PythonBinary),
 		slog.String("transcribe_script", transcribeScriptPath),
 		slog.Duration("poll_interval", cfg.WorkerPollInterval()),
+		slog.Duration("auto_upload_min_age", cfg.AutoUploadMinAge()),
 		slog.Duration("ffmpeg_timeout", cfg.FFmpegTimeout()),
 		slog.Duration("preview_timeout", cfg.PreviewTimeout()),
 		slog.Duration("screenshot_timeout", cfg.ScreenshotTimeout()),

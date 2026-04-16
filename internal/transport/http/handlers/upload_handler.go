@@ -462,7 +462,7 @@ func (h *UploadHandler) buildMediaListItems(ctx context.Context) ([]MediaListIte
 			ErrorSummary:      pipelineView.ErrorSummary,
 			ErrorLocation:     pipelineView.ErrorLocation,
 			Steps:             pipelineView.Steps,
-			CreatedAtUTC:      item.CreatedAtUTC.UTC().Format("2006-01-02 15:04:05"),
+			CreatedAtUTC:      FormatDateTimeUTC(item.CreatedAtUTC),
 			HasTranscript:     strings.TrimSpace(item.TranscriptText) != "",
 			CanOpenTranscript: canOpenTranscript(item),
 			TranscriptURL:     fmt.Sprintf("/media/%d/transcript", item.ID),

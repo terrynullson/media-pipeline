@@ -7,53 +7,59 @@ import (
 )
 
 type Config struct {
-	AppPort              string
-	DBPath               string
-	UploadDir            string
-	AudioDir             string
-	PreviewDir           string
-	ScreenshotsDir       string
-	FFmpegBinary         string
-	PythonBinary         string
-	TranscribeScript     string
-	TranscribeLanguage   string
-	MaxUploadSizeMB      int64
-	WorkerPollIntervalMS int64
-	FFmpegTimeoutSec     int64
-	PreviewTimeoutSec    int64
-	ScreenshotTimeoutSec int64
-	TranscribeTimeoutSec int64
-	OllamaURL            string
-	OllamaModel          string
-	SummaryProvider      string
+	AppPort                  string
+	DBPath                   string
+	UploadDir                string
+	AutoUploadDir            string
+	AutoUploadArchiveDir     string
+	AudioDir                 string
+	PreviewDir               string
+	ScreenshotsDir           string
+	FFmpegBinary             string
+	PythonBinary             string
+	TranscribeScript         string
+	TranscribeLanguage       string
+	MaxUploadSizeMB          int64
+	WorkerPollIntervalMS     int64
+	AutoUploadMinAgeSec      int64
+	FFmpegTimeoutSec         int64
+	PreviewTimeoutSec        int64
+	ScreenshotTimeoutSec     int64
+	TranscribeTimeoutSec     int64
+	OllamaURL                string
+	OllamaModel              string
+	SummaryProvider          string
 	MediaAccessToken         string // env: MEDIA_ACCESS_TOKEN, default: "" (disabled)
-	HTTPRequestTimeoutSec   int64  // env: HTTP_REQUEST_TIMEOUT_SEC, default: 30
+	HTTPRequestTimeoutSec    int64  // env: HTTP_REQUEST_TIMEOUT_SEC, default: 30
 	UploadRateLimitPerMinute int64  // env: UPLOAD_RATE_LIMIT_PER_MINUTE, default: 0 (disabled)
 }
 
 func Load() Config {
 	cfg := Config{
-		AppPort:              getEnv("APP_PORT", "8080"),
-		DBPath:               getEnv("DB_PATH", "./data/app.db"),
-		UploadDir:            getEnv("UPLOAD_DIR", "./data/uploads"),
-		AudioDir:             getEnv("AUDIO_DIR", "./data/audio"),
-		PreviewDir:           getEnv("PREVIEW_DIR", "./data/previews"),
-		ScreenshotsDir:       getEnv("SCREENSHOTS_DIR", "./data/screenshots"),
-		FFmpegBinary:         getEnv("FFMPEG_BINARY", "ffmpeg"),
-		PythonBinary:         getEnv("PYTHON_BINARY", "python"),
-		TranscribeScript:     getEnv("TRANSCRIBE_SCRIPT", "./scripts/transcribe.py"),
-		TranscribeLanguage:   getEnv("TRANSCRIBE_LANGUAGE", "ru"),
-		MaxUploadSizeMB:      getEnvInt64("MAX_UPLOAD_SIZE_MB", 1024),
-		WorkerPollIntervalMS: getEnvInt64("WORKER_POLL_INTERVAL_MS", 2000),
-		FFmpegTimeoutSec:     getEnvInt64("FFMPEG_TIMEOUT_SEC", 120),
-		PreviewTimeoutSec:    getEnvInt64("PREVIEW_TIMEOUT_SEC", 600),
-		ScreenshotTimeoutSec: getEnvInt64("SCREENSHOT_TIMEOUT_SEC", 60),
-		TranscribeTimeoutSec: getEnvInt64("TRANSCRIBE_TIMEOUT_SEC", 300),
-		OllamaURL:            getEnv("OLLAMA_URL", "http://127.0.0.1:11434"),
-		OllamaModel:          getEnv("OLLAMA_MODEL", "phi3:mini"),
-		SummaryProvider:      getEnv("SUMMARY_PROVIDER", "simple"),
+		AppPort:                  getEnv("APP_PORT", "8080"),
+		DBPath:                   getEnv("DB_PATH", "./data/app.db"),
+		UploadDir:                getEnv("UPLOAD_DIR", "./data/uploads"),
+		AutoUploadDir:            getEnv("AUTO_UPLOAD_DIR", "./data/auto_uploads"),
+		AutoUploadArchiveDir:     getEnv("AUTO_UPLOAD_ARCHIVE_DIR", "./data/auto_uploads_imported"),
+		AudioDir:                 getEnv("AUDIO_DIR", "./data/audio"),
+		PreviewDir:               getEnv("PREVIEW_DIR", "./data/previews"),
+		ScreenshotsDir:           getEnv("SCREENSHOTS_DIR", "./data/screenshots"),
+		FFmpegBinary:             getEnv("FFMPEG_BINARY", "ffmpeg"),
+		PythonBinary:             getEnv("PYTHON_BINARY", "python"),
+		TranscribeScript:         getEnv("TRANSCRIBE_SCRIPT", "./scripts/transcribe.py"),
+		TranscribeLanguage:       getEnv("TRANSCRIBE_LANGUAGE", "ru"),
+		MaxUploadSizeMB:          getEnvInt64("MAX_UPLOAD_SIZE_MB", 1024),
+		WorkerPollIntervalMS:     getEnvInt64("WORKER_POLL_INTERVAL_MS", 2000),
+		AutoUploadMinAgeSec:      getEnvInt64("AUTO_UPLOAD_MIN_AGE_SEC", 60),
+		FFmpegTimeoutSec:         getEnvInt64("FFMPEG_TIMEOUT_SEC", 120),
+		PreviewTimeoutSec:        getEnvInt64("PREVIEW_TIMEOUT_SEC", 600),
+		ScreenshotTimeoutSec:     getEnvInt64("SCREENSHOT_TIMEOUT_SEC", 60),
+		TranscribeTimeoutSec:     getEnvInt64("TRANSCRIBE_TIMEOUT_SEC", 300),
+		OllamaURL:                getEnv("OLLAMA_URL", "http://127.0.0.1:11434"),
+		OllamaModel:              getEnv("OLLAMA_MODEL", "phi3:mini"),
+		SummaryProvider:          getEnv("SUMMARY_PROVIDER", "simple"),
 		MediaAccessToken:         getEnv("MEDIA_ACCESS_TOKEN", ""),
-		HTTPRequestTimeoutSec:   getEnvInt64("HTTP_REQUEST_TIMEOUT_SEC", 30),
+		HTTPRequestTimeoutSec:    getEnvInt64("HTTP_REQUEST_TIMEOUT_SEC", 30),
 		UploadRateLimitPerMinute: getEnvInt64("UPLOAD_RATE_LIMIT_PER_MINUTE", 0),
 	}
 	if cfg.MaxUploadSizeMB <= 0 {
@@ -61,6 +67,9 @@ func Load() Config {
 	}
 	if cfg.WorkerPollIntervalMS <= 0 {
 		cfg.WorkerPollIntervalMS = 2000
+	}
+	if cfg.AutoUploadMinAgeSec < 0 {
+		cfg.AutoUploadMinAgeSec = 60
 	}
 	if cfg.FFmpegTimeoutSec <= 0 {
 		cfg.FFmpegTimeoutSec = 120
@@ -86,6 +95,10 @@ func (c Config) MaxUploadSizeBytes() int64 {
 
 func (c Config) WorkerPollInterval() time.Duration {
 	return time.Duration(c.WorkerPollIntervalMS) * time.Millisecond
+}
+
+func (c Config) AutoUploadMinAge() time.Duration {
+	return time.Duration(c.AutoUploadMinAgeSec) * time.Second
 }
 
 func (c Config) FFmpegTimeout() time.Duration {
