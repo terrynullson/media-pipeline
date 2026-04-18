@@ -236,3 +236,20 @@ func newRequestID() string {
 
 	return fmt.Sprintf("%d-%s", time.Now().UTC().UnixNano(), hex.EncodeToString(randomBytes[:]))
 }
+
+// LimitRequestBody wraps the request body with http.MaxBytesReader so that
+// reads beyond maxBytes fail immediately instead of buffering arbitrary data
+// into memory. When the limit is exceeded, json.Decoder returns an error and
+// http.MaxBytesReader marks the ResponseWriter so the server returns 413.
+//
+// Use this on every JSON API endpoint that accepts a request body
+// (POST / PUT / PATCH). File-upload endpoints manage their own limit via
+// http.MaxBytesReader directly on the multipart reader.
+func LimitRequestBody(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
+	}
+}

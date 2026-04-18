@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -235,5 +236,52 @@ func TestUploadRateLimitMiddleware_DifferentIPsAreIndependent(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 for unrelated IP", rec.Code)
+	}
+}
+
+func TestLimitRequestBody_AllowsBodyWithinLimit(t *testing.T) {
+	t.Parallel()
+
+	handler := LimitRequestBody(16)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read error", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/test", strings.NewReader(`{"ok":true}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for body within limit", rec.Code)
+	}
+}
+
+func TestLimitRequestBody_RejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+
+	const limit = 8
+
+	// Handler that reads the full body and reports success; should not be reached.
+	handler := LimitRequestBody(limit)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.ReadAll(r.Body); err != nil {
+			// MaxBytesReader returned an error — the request is too large.
+			http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	body := strings.NewReader(`{"data":"this is longer than 8 bytes"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/test", body)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 for oversized body", rec.Code)
 	}
 }

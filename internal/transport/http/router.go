@@ -39,23 +39,27 @@ func NewRouter(
 	// Apply request timeout to all routes except /upload (large file transfers).
 	timeout := RequestTimeoutMiddleware(requestTimeout)
 
+	// Limit JSON request bodies to 1 MB on all write endpoints.
+	// File uploads manage their own limit via MaxBytesReader on the multipart reader.
+	limitJSON := LimitRequestBody(1 << 20) // 1 MiB
+
 	r.With(timeout).Get("/api/dashboard", uploadHandler.APIDashboard)
 	r.With(timeout).Get("/api/media", uploadHandler.APIMediaList)
 	r.With(timeout).Get("/api/jobs", uploadHandler.APIJobsList)
 	r.With(timeout).Get("/api/media/{mediaID}", uploadHandler.APIMediaDetail)
 	r.With(timeout).Get("/api/media/{mediaID}/transcript/export", uploadHandler.ExportTranscript)
 	r.With(timeout).Post("/api/media/{mediaID}/retry", uploadHandler.RetryJob)
-	r.With(timeout).Post("/api/media/bulk-delete", uploadHandler.BulkDeleteMedia)
+	r.With(timeout, limitJSON).Post("/api/media/bulk-delete", uploadHandler.BulkDeleteMedia)
 	r.With(timeout).Get("/api/settings/transcription", uploadHandler.APITranscriptionSettings)
-	r.With(timeout).Put("/api/settings/transcription", uploadHandler.APIUpdateTranscriptionSettings)
+	r.With(timeout, limitJSON).Put("/api/settings/transcription", uploadHandler.APIUpdateTranscriptionSettings)
 	r.With(timeout).Get("/api/settings/runtime", uploadHandler.APIRuntimeSettings)
-	r.With(timeout).Put("/api/settings/runtime", uploadHandler.APIUpdateRuntimeSettings)
+	r.With(timeout, limitJSON).Put("/api/settings/runtime", uploadHandler.APIUpdateRuntimeSettings)
 	r.With(timeout).Get("/api/ui-config", uploadHandler.APIUIConfig)
-	r.With(timeout).Put("/api/ui-preference", uploadHandler.APIUpdateUITheme)
+	r.With(timeout, limitJSON).Put("/api/ui-preference", uploadHandler.APIUpdateUITheme)
 	r.With(timeout).Get("/api/trigger-rules", triggerRuleHandler.APITriggerRules)
-	r.With(timeout).Post("/api/trigger-rules", triggerRuleHandler.APICreateTriggerRule)
-	r.With(timeout).Post("/api/trigger-rules/preview", triggerRuleHandler.APIPreviewTriggerRule)
-	r.With(timeout).Patch("/api/trigger-rules/{ruleID}", triggerRuleHandler.APIUpdateTriggerRule)
+	r.With(timeout, limitJSON).Post("/api/trigger-rules", triggerRuleHandler.APICreateTriggerRule)
+	r.With(timeout, limitJSON).Post("/api/trigger-rules/preview", triggerRuleHandler.APIPreviewTriggerRule)
+	r.With(timeout, limitJSON).Patch("/api/trigger-rules/{ruleID}", triggerRuleHandler.APIUpdateTriggerRule)
 	r.With(timeout).Delete("/api/trigger-rules/{ruleID}", triggerRuleHandler.APIDeleteTriggerRule)
 
 	mediaToken := MediaTokenMiddleware(mediaAccessToken)
