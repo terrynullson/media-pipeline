@@ -87,6 +87,24 @@ type MediaCancellationReader interface {
 	Delete(ctx context.Context, mediaID int64) error
 }
 
+// CommitTranscribeInput carries all data needed to atomically finalize a
+// transcription job: save the transcript, update media status, enqueue the
+// next pipeline stage, and mark the current job done.
+type CommitTranscribeInput struct {
+	JobID       int64
+	MediaID     int64
+	Transcript  transcript.Transcript
+	NextJobType job.Type
+	NowUTC      time.Time
+}
+
+// TranscriptionCommitter atomically commits the four writes that complete
+// a transcription job. Implementations must execute all writes inside a
+// single database transaction.
+type TranscriptionCommitter interface {
+	CommitTranscribeJob(ctx context.Context, in CommitTranscribeInput) error
+}
+
 type Processor struct {
 	jobs                  JobRepository
 	media                 MediaRepository
@@ -113,6 +131,9 @@ type Processor struct {
 	cancelRequests        MediaCancellationReader
 	screenshotTimeout     time.Duration
 	transcribeBaseTimeout time.Duration
+	// transcriptionCommitter, when set, wraps the four post-transcription
+	// writes in a single transaction. Falls back to sequential writes if nil.
+	transcriptionCommitter TranscriptionCommitter
 }
 
 func NewProcessor(
@@ -174,6 +195,14 @@ func (p *Processor) WithRuntimeSettings(provider RuntimeSettingsProvider) *Proce
 
 func (p *Processor) WithCancellationReader(reader MediaCancellationReader) *Processor {
 	p.cancelRequests = reader
+	return p
+}
+
+// WithTranscriptionCommitter enables atomic completion of transcription jobs.
+// When set, all four post-transcription writes (transcript save, media status,
+// next job enqueue, job done) execute inside a single database transaction.
+func (p *Processor) WithTranscriptionCommitter(c TranscriptionCommitter) *Processor {
+	p.transcriptionCommitter = c
 	return p
 }
 
@@ -481,38 +510,61 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 	)
 
 	nowUTC := time.Now().UTC()
-	// NOTE: The three operations below (Save transcript в†’ MarkTranscribed в†’ MarkDone) are
-	// not wrapped in a single transaction. If the process crashes between them, the job
-	// stays StatusRunning and RecoverInterruptedJobs will handle it on next startup:
-	// it detects that the transcript already exists and calls MarkDone directly instead
-	// of resetting state and re-running transcription. The acceptable risk window is the
-	// brief interval between these three sequential DB writes.
-	if err := p.transcripts.Save(ctx, transcript.Transcript{
+	transcriptItem := transcript.Transcript{
 		MediaID:      mediaItem.ID,
 		Language:     settings.Language,
 		FullText:     result.FullText,
 		Segments:     toTranscriptSegments(result.Segments),
 		CreatedAtUTC: nowUTC,
 		UpdatedAtUTC: nowUTC,
-	}); err != nil {
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("?? ??????? ????????? ??????????? ? ?????????", err), true, jobLog, slog.Any("error", err))
-		return
-	}
-	jobLog.logger.Info("transcript persisted successfully", slog.Int64("media_id", mediaItem.ID))
-
-	if err := p.media.MarkTranscribed(ctx, mediaItem.ID, result.FullText, time.Now().UTC()); err != nil {
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("?? ??????? ???????? ?????? ????? ????? ???????????", err), true, jobLog, slog.Any("error", err))
-		return
 	}
 
-	if err := p.enqueueNextJob(ctx, mediaItem.ID, job.TypeAnalyzeTriggers); err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????????? ???? ??????? ?????????", err), false, jobLog, slog.Any("error", err))
-		return
-	}
+	if p.transcriptionCommitter != nil {
+		// Preferred path: all four writes in one transaction.
+		// A crash between them is no longer possible — either all succeed or none do.
+		if err := p.transcriptionCommitter.CommitTranscribeJob(ctx, CommitTranscribeInput{
+			JobID:       claimedJob.ID,
+			MediaID:     mediaItem.ID,
+			Transcript:  transcriptItem,
+			NextJobType: job.TypeAnalyzeTriggers,
+			NowUTC:      nowUTC,
+		}); err != nil {
+			p.failJob(ctx, claimedJob, mediaItem.ID,
+				buildInternalFailureMessage("не удалось атомарно завершить задачу транскрипции", err),
+				true, jobLog, slog.Any("error", err))
+			return
+		}
+	} else {
+		// Fallback path (no committer wired): sequential writes with the same
+		// recovery guarantee as before — RecoverInterruptedJobs handles crashes.
+		if err := p.transcripts.Save(ctx, transcriptItem); err != nil {
+			p.failJob(ctx, claimedJob, mediaItem.ID,
+				buildInternalFailureMessage("не удалось сохранить транскрипцию в базу данных", err),
+				true, jobLog, slog.Any("error", err))
+			return
+		}
+		jobLog.logger.Info("transcript persisted successfully", slog.Int64("media_id", mediaItem.ID))
 
-	if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ?????? ???????????", err), false, jobLog, slog.Any("error", err))
-		return
+		if err := p.media.MarkTranscribed(ctx, mediaItem.ID, result.FullText, time.Now().UTC()); err != nil {
+			p.failJob(ctx, claimedJob, mediaItem.ID,
+				buildInternalFailureMessage("не удалось обновить статус медиа после транскрипции", err),
+				true, jobLog, slog.Any("error", err))
+			return
+		}
+
+		if err := p.enqueueNextJob(ctx, mediaItem.ID, job.TypeAnalyzeTriggers); err != nil {
+			p.failJob(ctx, claimedJob, 0,
+				buildInternalFailureMessage("не удалось запланировать этап анализа триггеров", err),
+				false, jobLog, slog.Any("error", err))
+			return
+		}
+
+		if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
+			p.failJob(ctx, claimedJob, 0,
+				buildInternalFailureMessage("не удалось завершить задачу транскрипции", err),
+				false, jobLog, slog.Any("error", err))
+			return
+		}
 	}
 
 	jobLog.Success(slog.Int("segments", len(result.Segments)))

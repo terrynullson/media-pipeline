@@ -133,7 +133,10 @@ func main() {
 		cfg.ScreenshotTimeout(),
 		cfg.TranscribeTimeout(),
 		logger,
-	).WithRuntimeSettings(runtimeSettingsSvc).WithCancellationReader(cancelRequestRepo)
+	).
+		WithRuntimeSettings(runtimeSettingsSvc).
+		WithCancellationReader(cancelRequestRepo).
+		WithTranscriptionCommitter(repositories.NewTranscriptionCommitRepository(sqlDB))
 	runner := appworker.NewRunner(processor, autoUploadService, cfg.WorkerPollInterval(), logger)
 
 	logger.Info("starting worker",
