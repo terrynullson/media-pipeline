@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"media-pipeline/internal/domain/job"
@@ -38,10 +39,11 @@ type retryMediaStatusWriter interface {
 // RetryJobUseCase finds the latest failed job for a media item and requeues it,
 // resetting the media status to the appropriate state so the worker picks it up.
 type RetryJobUseCase struct {
-	mediaRepo retryMediaReader
-	jobRepo   retryJobReader
-	jobWriter retryJobWriter
+	mediaRepo   retryMediaReader
+	jobRepo     retryJobReader
+	jobWriter   retryJobWriter
 	mediaWriter retryMediaStatusWriter
+	logger      *slog.Logger
 }
 
 func NewRetryJobUseCase(
@@ -49,12 +51,14 @@ func NewRetryJobUseCase(
 	jobRepo retryJobReader,
 	jobWriter retryJobWriter,
 	mediaWriter retryMediaStatusWriter,
+	logger *slog.Logger,
 ) *RetryJobUseCase {
 	return &RetryJobUseCase{
 		mediaRepo:   mediaRepo,
 		jobRepo:     jobRepo,
 		jobWriter:   jobWriter,
 		mediaWriter: mediaWriter,
+		logger:      logger,
 	}
 }
 
@@ -86,9 +90,16 @@ func (u *RetryJobUseCase) Retry(ctx context.Context, mediaID int64) (RetryJobRes
 	}
 
 	// Reset media status so the worker recognises it as ready for processing again.
+	// This is non-fatal: the job is already requeued, so processing will proceed.
+	// But a failure here means the worker's precondition check may not match,
+	// which can silently prevent the job from being claimed — log it as a warning.
 	if resetErr := resetMediaStatusForJob(ctx, failedJob.Type, mediaID, nowUTC, u.mediaWriter); resetErr != nil {
-		// Non-fatal: the job is already requeued; log via error wrapping but don't fail.
-		_ = resetErr
+		u.logger.Warn("retry: reset media status failed after successful requeue",
+			slog.Int64("media_id", mediaID),
+			slog.Int64("job_id", failedJob.ID),
+			slog.String("job_type", string(failedJob.Type)),
+			slog.Any("error", resetErr),
+		)
 	}
 
 	return RetryJobResult{JobID: failedJob.ID}, nil
@@ -117,4 +128,3 @@ func resetMediaStatusForJob(
 		return nil
 	}
 }
-

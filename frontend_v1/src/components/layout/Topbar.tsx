@@ -1,13 +1,10 @@
 import { Settings, Waves, Sun, Moon } from "lucide-react";
+import { useNavigate, useMatch } from "react-router-dom";
 import { useTranslation, type Locale } from "../../i18n";
 import { useTheme } from "../../theme";
 import { api } from "../../api/client";
 import { usePolling } from "../../hooks/usePolling";
 import type { WorkerStatusResponse } from "../../models/types";
-
-interface TopbarProps {
-  onSettingsClick: () => void;
-}
 
 const iconBtn: React.CSSProperties = {
   width: 32,
@@ -19,7 +16,8 @@ const iconBtn: React.CSSProperties = {
   border: "1px solid var(--border)",
   background: "none",
   cursor: "pointer",
-  transition: "color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease)",
+  transition:
+    "color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease)",
 };
 
 function hoverIn(e: React.MouseEvent<HTMLButtonElement>) {
@@ -32,7 +30,11 @@ function hoverOut(e: React.MouseEvent<HTMLButtonElement>) {
   e.currentTarget.style.borderColor = "var(--border)";
 }
 
-function WorkerStatusChip({ status }: { status: WorkerStatusResponse | null | undefined }) {
+function WorkerStatusChip({
+  status,
+}: {
+  status: WorkerStatusResponse | null | undefined;
+}) {
   if (!status) return null;
 
   const { likelyAlive, currentJob, queue } = status;
@@ -49,7 +51,10 @@ function WorkerStatusChip({ status }: { status: WorkerStatusResponse | null | un
     label = "Воркер не отвечает";
   } else if (currentJob) {
     dot = "var(--success)";
-    const pct = currentJob.progressPercent != null ? ` · ${currentJob.progressPercent}%` : "";
+    const pct =
+      currentJob.progressPercent != null
+        ? ` · ${currentJob.progressPercent}%`
+        : "";
     label = `Воркер активен${pct}`;
   } else {
     dot = "var(--warning, #ca8a04)";
@@ -66,7 +71,11 @@ function WorkerStatusChip({ status }: { status: WorkerStatusResponse | null | un
         color: "var(--text-muted)",
         whiteSpace: "nowrap",
       }}
-      title={currentJob ? `${currentJob.type} · media ${currentJob.mediaId}` : `Ожидает: ${queue.pending}`}
+      title={
+        currentJob
+          ? `${currentJob.type} · media ${currentJob.mediaId}`
+          : `Ожидает: ${queue.pending}`
+      }
     >
       <span
         style={{
@@ -75,7 +84,8 @@ function WorkerStatusChip({ status }: { status: WorkerStatusResponse | null | un
           borderRadius: "50%",
           background: dot,
           flexShrink: 0,
-          boxShadow: likelyAlive && hasWork ? `0 0 5px ${dot}` : "none",
+          boxShadow:
+            likelyAlive && hasWork ? `0 0 5px ${dot}` : "none",
         }}
       />
       <span>{label}</span>
@@ -83,9 +93,17 @@ function WorkerStatusChip({ status }: { status: WorkerStatusResponse | null | un
   );
 }
 
-export function Topbar({ onSettingsClick }: TopbarProps) {
+/**
+ * Topbar — верхняя панель приложения.
+ * Кнопка настроек теперь выполняет navigate("/settings"),
+ * открывая полноценную страницу вместо drawer.
+ */
+export function Topbar() {
   const { t, locale, setLocale } = useTranslation();
   const { theme, toggleTheme } = useTheme();
+  const navigate = useNavigate();
+  const onSettingsPage = Boolean(useMatch("/settings"));
+
   const { data: workerStatus } = usePolling(api.workerStatus, 5000, true);
 
   const nextLocale: Locale = locale === "ru" ? "en" : "ru";
@@ -169,8 +187,11 @@ export function Topbar({ onSettingsClick }: TopbarProps) {
         </button>
 
         {/* Right: worker status + lang + settings */}
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
+        <div
+          style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}
+        >
           <WorkerStatusChip status={workerStatus} />
+
           <button
             onClick={() => setLocale(nextLocale)}
             aria-label="Switch language"
@@ -178,17 +199,35 @@ export function Topbar({ onSettingsClick }: TopbarProps) {
             onMouseEnter={hoverIn}
             onMouseLeave={hoverOut}
           >
-            <span style={{ fontSize: "var(--text-xs)", fontWeight: 700, letterSpacing: "0.02em" }}>
+            <span
+              style={{
+                fontSize: "var(--text-xs)",
+                fontWeight: 700,
+                letterSpacing: "0.02em",
+              }}
+            >
               {locale === "ru" ? "EN" : "RU"}
             </span>
           </button>
 
+          {/* Кнопка настроек → переход на /app-v1/settings */}
           <button
-            onClick={onSettingsClick}
+            onClick={() => navigate("/settings")}
             aria-label={t("topbar.settings")}
-            style={iconBtn}
-            onMouseEnter={hoverIn}
-            onMouseLeave={hoverOut}
+            aria-current={onSettingsPage ? "page" : undefined}
+            style={{
+              ...iconBtn,
+              // Подсвечиваем кнопку, когда мы уже на странице настроек
+              ...(onSettingsPage
+                ? {
+                    color: "var(--accent)",
+                    borderColor: "var(--accent)",
+                    background: "var(--accent-soft)",
+                  }
+                : {}),
+            }}
+            onMouseEnter={onSettingsPage ? undefined : hoverIn}
+            onMouseLeave={onSettingsPage ? undefined : hoverOut}
           >
             <Settings size={15} />
           </button>
