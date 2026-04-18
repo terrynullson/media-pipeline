@@ -642,16 +642,16 @@ func TestUploadHandler_TranscriptPageShowsPlayerFallbackWhenSourceMissing(t *tes
 	if err := transcriptRepo.Save(ctx, transcript.Transcript{
 		MediaID:      mediaID,
 		Language:     "ru",
-		FullText:     "С„Р°Р№Р» Р±РµР· РёСЃС…РѕРґРЅРёРєР°",
+		FullText:     "файл без исходника",
 		CreatedAtUTC: nowUTC,
 		UpdatedAtUTC: nowUTC,
 		Segments: []transcript.Segment{
-			{StartSec: 0, EndSec: 1.5, Text: "С„Р°Р№Р» Р±РµР· РёСЃС…РѕРґРЅРёРєР°"},
+			{StartSec: 0, EndSec: 1.5, Text: "файл без исходника"},
 		},
 	}); err != nil {
 		t.Fatalf("Save(transcript) error = %v", err)
 	}
-	if err := mediaRepo.MarkTranscribed(ctx, mediaID, "С„Р°Р№Р» Р±РµР· РёСЃС…РѕРґРЅРёРєР°", nowUTC); err != nil {
+	if err := mediaRepo.MarkTranscribed(ctx, mediaID, "файл без исходника", nowUTC); err != nil {
 		t.Fatalf("MarkTranscribed() error = %v", err)
 	}
 
@@ -669,7 +669,7 @@ func TestUploadHandler_TranscriptPageShowsPlayerFallbackWhenSourceMissing(t *tes
 		}
 		return
 	}
-	if !strings.Contains(body, "Р’РёРґРµРѕС„Р°Р№Р» СЃРµР№С‡Р°СЃ РЅРµРґРѕСЃС‚СѓРїРµРЅ РґР»СЏ РІСЃС‚СЂРѕРµРЅРЅРѕРіРѕ РїСЂРѕРёРіСЂС‹РІР°С‚РµР»СЏ") {
+	if !strings.Contains(body, "Видеофайл сейчас недоступен для встроенного проигрывателя") {
 		t.Fatalf("transcript page body missing player fallback: %s", body)
 	}
 	if strings.Contains(body, "data-media-player") {
@@ -704,11 +704,11 @@ func TestUploadHandler_RequestSummaryCreatesJobAndRedirects(t *testing.T) {
 	if err := transcriptRepo.Save(ctx, transcript.Transcript{
 		MediaID:      mediaID,
 		Language:     "ru",
-		FullText:     "РљРѕСЂРѕС‚РєРёР№ С‚РµРєСЃС‚ РґР»СЏ СЃР°РјРјР°СЂРё.",
+		FullText:     "Короткий текст для саммари.",
 		CreatedAtUTC: nowUTC,
 		UpdatedAtUTC: nowUTC,
 		Segments: []transcript.Segment{
-			{StartSec: 0, EndSec: 1, Text: "РљРѕСЂРѕС‚РєРёР№ С‚РµРєСЃС‚ РґР»СЏ СЃР°РјРјР°СЂРё."},
+			{StartSec: 0, EndSec: 1, Text: "Короткий текст для саммари."},
 		},
 	}); err != nil {
 		t.Fatalf("Save(transcript) error = %v", err)
@@ -1069,8 +1069,8 @@ func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 	}
 	if err := summaryRepo.Save(ctx, domainsummary.Summary{
 		MediaID:      mediaID,
-		SummaryText:  "РљРѕСЂРѕС‚РєРѕРµ СЃР°РјРјР°СЂРё РґР»СЏ СѓРґР°Р»РµРЅРёСЏ.",
-		Highlights:   []string{"РўРµР·РёСЃ 1"},
+		SummaryText:  "Короткое саммари для удаления.",
+		Highlights:   []string{"Тезис 1"},
 		Provider:     "simple-summary-v1",
 		CreatedAtUTC: nowUTC,
 		UpdatedAtUTC: nowUTC,
@@ -1252,7 +1252,7 @@ func newTestApp(t *testing.T) testWebApp {
 	)
 	requestSummaryUC := mediaapp.NewRequestSummaryUseCase(mediaRepo, transcriptRepo, jobRepo)
 	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, uploadStorage, audioStorage, previewStorage, screenshotStorage, logger)
-	retryJobUC := mediaapp.NewRetryJobUseCase(mediaRepo, jobRepo, jobRepo, mediaRepo)
+	retryJobUC := mediaapp.NewRetryJobUseCase(mediaRepo, jobRepo, jobRepo, mediaRepo, logger)
 	handler, err := handlers.NewUploadHandler(
 		uploadUC,
 		profileService,

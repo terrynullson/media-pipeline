@@ -1,14 +1,18 @@
-import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import { Topbar } from "./Topbar";
-import { SettingsDrawer } from "../settings/SettingsDrawer";
 
+/**
+ * Shell — общая обёртка для всех страниц SPA.
+ * Рендерит Topbar вверху и дочерний роут через <Outlet />.
+ *
+ * Настройки больше не открываются как Drawer — у них теперь
+ * отдельная страница /app-v1/settings.
+ * Кнопка шестерёнки в Topbar делает navigate("/settings").
+ */
 export function Shell() {
-  const [settingsOpen, setSettingsOpen] = useState(false);
-
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      <Topbar onSettingsClick={() => setSettingsOpen(true)} />
+      <Topbar />
       <main
         style={{
           flex: 1,
@@ -20,7 +24,6 @@ export function Shell() {
       >
         <Outlet />
       </main>
-      <SettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

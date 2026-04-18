@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 
 	"media-pipeline/internal/app/command"
 	mediaapp "media-pipeline/internal/app/media"
@@ -92,7 +97,7 @@ func main() {
 	)
 	requestSummaryUC := mediaapp.NewRequestSummaryUseCase(mediaRepo, transcriptRepo, jobRepo)
 	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, fileStorage, audioStorage, previewStorage, screenshotStorage, logger)
-	retryJobUC := mediaapp.NewRetryJobUseCase(mediaRepo, jobRepo, jobRepo, mediaRepo)
+	retryJobUC := mediaapp.NewRetryJobUseCase(mediaRepo, jobRepo, jobRepo, mediaRepo, logger)
 
 	uploadUC := command.NewUploadMediaUseCase(mediaRepo, jobRepo, fileStorage, cfg.MaxUploadSizeBytes(), logger)
 	templatesDir, err := infraRuntime.ResolvePath("internal/transport/http/views/templates")
@@ -136,7 +141,20 @@ func main() {
 	}
 	router := httptransport.NewRouter(logger, uploadHandler, machineAPIHandler, triggerRuleHandler, workerStatusHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir, cfg.MediaAccessToken, cfg.HTTPRequestTimeout(), cfg.UploadRateLimitPerMinute, frontendV1DistPath)
 
+	// Signal-aware context: SIGINT (Ctrl-C) and SIGTERM (systemd / Docker stop)
+	// both trigger a clean drain of in-flight requests before exit.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	addr := ":" + cfg.AppPort
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: router,
+		// Guard against Slowloris: limit time to read request headers.
+		// Per-request body/response timeouts are applied by the router middleware.
+		ReadHeaderTimeout: 30 * time.Second,
+	}
+
 	logger.Info("starting web server",
 		slog.String("addr", addr),
 		slog.String("db_path", cfg.DBPath),
@@ -144,8 +162,33 @@ func main() {
 		slog.String("preview_dir", cfg.PreviewDir),
 		slog.Int64("max_upload_bytes", cfg.MaxUploadSizeBytes()),
 	)
-	if err = http.ListenAndServe(addr, router); err != nil {
+
+	// ListenAndServe blocks, so run it in a goroutine and report startup failures.
+	serveErr := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- err
+		}
+	}()
+
+	// Wait for a shutdown signal or a fatal server error.
+	select {
+	case err := <-serveErr:
 		logger.Error("listen and serve", slog.Any("error", err), slog.String("addr", addr))
 		os.Exit(1)
+	case <-ctx.Done():
+		stop() // release signal resources immediately
 	}
+
+	logger.Info("shutdown signal received, draining active connections")
+
+	// Give in-flight requests up to 30 s to finish before forcibly closing.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Error("graceful shutdown failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	logger.Info("web server stopped cleanly")
 }

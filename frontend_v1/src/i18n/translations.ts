@@ -62,9 +62,8 @@ const translations = {
   "tech.runtimePolicy": { en: "Runtime Policy", ru: "Политика среды" },
   "tech.warnings": { en: "Warnings", ru: "Предупреждения" },
 
-  // ── Settings drawer ──
+  // ── Settings page ──
   "settings.title": { en: "Settings", ru: "Настройки" },
-  "settings.close": { en: "Close", ru: "Закрыть" },
   "settings.transcription": { en: "Transcription", ru: "Транскрипция" },
   "settings.backend": { en: "Backend", ru: "Бэкенд" },
   "settings.model": { en: "Model", ru: "Модель" },
@@ -75,6 +74,9 @@ const translations = {
   "settings.auto": { en: "auto", ru: "авто" },
   "settings.vadFilter": { en: "VAD filter", ru: "VAD фильтр" },
   "settings.save": { en: "Save settings", ru: "Сохранить" },
+  "settings.saved": { en: "Saved", ru: "Сохранено" },
+  "settings.loading": { en: "Loading settings\u2026", ru: "Загрузка настроек\u2026" },
+  "settings.loadError": { en: "Could not load settings. Check server connection.", ru: "Не удалось загрузить настройки. Проверьте соединение с сервером." },
 
   // ── Trigger rules ──
   "rules.title": { en: "Trigger Rules", ru: "Правила триггеров" },

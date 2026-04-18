@@ -1,0 +1,31 @@
+# EditorConfig — единый стиль для всех редакторов в этом проекте.
+# Документация: https://editorconfig.org
+
+root = true
+
+# Все файлы — UTF-8, Unix-переносы строк, без BOM, без лишних пробелов на концах строк
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = tab
+indent_size = 4
+
+# Go: стандартный стиль — табы, ширина 4
+[*.go]
+indent_style = tab
+indent_size = 4
+
+# TypeScript / React / JSON — двойные пробелы (как в большинстве TS-проектов)
+[*.{ts,tsx,js,jsx,json,css,html,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# Makefile требует строго табы
+[Makefile]
+indent_style = tab
+
+# Markdown — не трогаем конечные пробелы (они используются как <br>)
+[*.md]
+trim_trailing_whitespace = false
