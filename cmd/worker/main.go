@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"syscall"
 
+	appsettingsapp "media-pipeline/internal/app/appsettings"
 	autouploadapp "media-pipeline/internal/app/autoupload"
 	"media-pipeline/internal/app/command"
 	transcriptionapp "media-pipeline/internal/app/transcription"
 	appworker "media-pipeline/internal/app/worker"
+	appsettings "media-pipeline/internal/domain/appsettings"
 	"media-pipeline/internal/domain/ports"
 	domaintranscription "media-pipeline/internal/domain/transcription"
 	infraAutoUpload "media-pipeline/internal/infra/autoupload"
@@ -73,7 +75,15 @@ func main() {
 	triggerScreenshotRepo := repositories.NewTriggerScreenshotRepository(sqlDB)
 	summaryRepo := repositories.NewSummaryRepository(sqlDB)
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
+	runtimeSettingsRepo := repositories.NewRuntimeSettingsRepository(sqlDB)
+	cancelRequestRepo := repositories.NewMediaCancelRequestRepository(sqlDB)
+	autoUploadImportRepo := repositories.NewAutoUploadImportRepository(sqlDB)
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
+	runtimeSettingsSvc := appsettingsapp.NewService(runtimeSettingsRepo, appsettings.Settings{
+		AutoUploadMinAgeSec: cfg.AutoUploadMinAgeSec,
+		PreviewTimeoutSec:   cfg.PreviewTimeoutSec,
+		MaxUploadSizeMB:     cfg.MaxUploadSizeMB,
+	})
 	fileStorage := storage.NewLocalStorage(cfg.UploadDir)
 	audioExtractor := infraMedia.NewFFmpegExtractor(cfg.FFmpegBinary)
 	previewGenerator := infraMedia.NewFFmpegPreviewGenerator(cfg.FFmpegBinary)
@@ -94,8 +104,10 @@ func main() {
 	}
 	transcriber := infraTranscription.NewPythonTranscriber(cfg.PythonBinary, transcribeScriptPath, logger)
 	uploadUC := command.NewUploadMediaUseCase(mediaRepo, jobRepo, fileStorage, cfg.MaxUploadSizeBytes(), logger)
-	autoUploadSource := infraAutoUpload.NewLocalSource(cfg.AutoUploadDir, cfg.AutoUploadArchiveDir, cfg.AutoUploadMinAge())
-	autoUploadService := autouploadapp.NewService(autoUploadSource, uploadUC, logger)
+	autoUploadSource := infraAutoUpload.NewLocalSource(cfg.AutoUploadDir, cfg.AutoUploadArchiveDir, cfg.AutoUploadMinAge()).
+		WithMinAgeProvider(runtimeSettingsSvc)
+	autoUploadService := autouploadapp.NewService(autoUploadSource, uploadUC, logger).
+		WithImportTracker(autoUploadImportRepo)
 
 	processor := appworker.NewProcessor(
 		jobRepo,
@@ -121,7 +133,7 @@ func main() {
 		cfg.ScreenshotTimeout(),
 		cfg.TranscribeTimeout(),
 		logger,
-	)
+	).WithRuntimeSettings(runtimeSettingsSvc).WithCancellationReader(cancelRequestRepo)
 	runner := appworker.NewRunner(processor, autoUploadService, cfg.WorkerPollInterval(), logger)
 
 	logger.Info("starting worker",

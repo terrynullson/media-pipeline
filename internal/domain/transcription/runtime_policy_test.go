@@ -98,4 +98,3 @@ func TestBuildRuntimeSettingsWarnings_CPUHeavyModel(t *testing.T) {
 		}
 	}
 }
-

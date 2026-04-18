@@ -28,6 +28,7 @@ type UploadMediaInput struct {
 	OriginalName        string
 	MIMEType            string
 	SizeBytes           int64
+	MaxUploadBytes      int64
 	Content             io.Reader
 	StartedAtUTC        time.Time
 	FinishedAtUTC       time.Time
@@ -69,7 +70,11 @@ func (u *UploadMediaUseCase) Upload(ctx context.Context, in UploadMediaInput) (U
 	)
 	logger.Info("upload started")
 
-	ext, bufferedContent, detectedMIMEType, err := validateUploadInput(in, u.maxUploadBytes)
+	maxUploadBytes := u.maxUploadBytes
+	if in.MaxUploadBytes > 0 {
+		maxUploadBytes = in.MaxUploadBytes
+	}
+	ext, bufferedContent, detectedMIMEType, err := validateUploadInput(in, maxUploadBytes)
 	if err != nil {
 		logger.Warn("upload validation failed", slog.Any("error", err))
 		return UploadMediaResult{}, err

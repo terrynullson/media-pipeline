@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"media-pipeline/internal/domain/job"
+	"media-pipeline/internal/domain/media"
 )
 
 type JobRepository struct {
@@ -387,6 +388,72 @@ func (r *JobRepository) FindLatestByMediaAndType(ctx context.Context, mediaID in
 	}
 
 	return item, ok, nil
+}
+
+func (r *JobRepository) ListRecentHistoricalSamples(ctx context.Context, jobTypes []job.Type, limit int) ([]job.HistoricalSample, error) {
+	if len(jobTypes) == 0 || limit <= 0 {
+		return nil, nil
+	}
+
+	placeholders := "?" + strings.Repeat(",?", len(jobTypes)-1)
+	args := make([]any, 0, len(jobTypes)+2)
+	args = append(args, job.StatusDone)
+	for _, currentType := range jobTypes {
+		args = append(args, currentType)
+	}
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(
+		ctx,
+		`SELECT j.type, j.media_id, m.size_bytes, m.extension, m.mime_type, j.duration_ms, j.finished_at
+		 FROM jobs j
+		 JOIN media m ON m.id = j.media_id
+		 WHERE j.status = ?
+		   AND j.type IN (`+placeholders+`)
+		   AND j.duration_ms IS NOT NULL
+		   AND j.finished_at IS NOT NULL
+		 ORDER BY datetime(j.finished_at) DESC, j.id DESC
+		 LIMIT ?`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list recent historical samples: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]job.HistoricalSample, 0)
+	for rows.Next() {
+		var (
+			item       job.HistoricalSample
+			extension  string
+			mimeType   string
+			finishedAt string
+		)
+		if err := rows.Scan(
+			&item.JobType,
+			&item.MediaID,
+			&item.MediaSizeBytes,
+			&extension,
+			&mimeType,
+			&item.DurationMS,
+			&finishedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan recent historical sample: %w", err)
+		}
+
+		parsedFinishedAt, err := time.Parse(time.RFC3339, finishedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse historical sample finished_at: %w", err)
+		}
+		item.FinishedAtUTC = parsedFinishedAt
+		item.IsAudioOnly = media.Media{Extension: extension, MIMEType: mimeType}.IsAudioOnly()
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate recent historical samples: %w", err)
+	}
+
+	return items, nil
 }
 
 func scanJobRow(row *sql.Row) (job.Job, bool, error) {

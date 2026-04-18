@@ -70,9 +70,9 @@ func (u *TriggerPreviewUseCase) Preview(ctx context.Context, req TriggerPreviewR
 
 	for _, t := range transcripts {
 		events := trigger.DetectEvents(trigger.MatchInput{
-			MediaID:  t.MediaID,
-			Segments: t.Segments,
-			Rules:    []trigger.Rule{rule},
+			MediaID:      t.MediaID,
+			Segments:     t.Segments,
+			Rules:        []trigger.Rule{rule},
 			CreatedAtUTC: time.Now().UTC(),
 		})
 		if len(events) == 0 {

@@ -42,13 +42,18 @@ function WorkerStatusChip({
 
   let dot: string;
   let label: string;
+  let title: string;
 
   if (!hasWork && !likelyAlive) {
     dot = "var(--text-muted)";
     label = "Воркер простаивает";
+    title = "Сейчас активных задач нет.";
   } else if (!likelyAlive) {
-    dot = "var(--error)";
-    label = "Воркер не отвечает";
+    dot = "var(--warning, #ca8a04)";
+    label = "Статус воркера не обновляется";
+    title = currentJob
+      ? `${currentJob.type} · media ${currentJob.mediaId}. Нет свежего heartbeat, проверь логи worker.`
+      : `В очереди ${queue.pending} задач(и), но heartbeat давно не обновлялся. Проверь логи worker.`;
   } else if (currentJob) {
     dot = "var(--success)";
     const pct =
@@ -56,9 +61,11 @@ function WorkerStatusChip({
         ? ` · ${currentJob.progressPercent}%`
         : "";
     label = `Воркер активен${pct}`;
+    title = `${currentJob.type} · media ${currentJob.mediaId}`;
   } else {
     dot = "var(--warning, #ca8a04)";
     label = `В очереди: ${queue.pending}`;
+    title = `Ожидает: ${queue.pending}`;
   }
 
   return (
@@ -71,11 +78,7 @@ function WorkerStatusChip({
         color: "var(--text-muted)",
         whiteSpace: "nowrap",
       }}
-      title={
-        currentJob
-          ? `${currentJob.type} · media ${currentJob.mediaId}`
-          : `Ожидает: ${queue.pending}`
-      }
+      title={title}
     >
       <span
         style={{
@@ -236,3 +239,4 @@ export function Topbar() {
     </header>
   );
 }
+

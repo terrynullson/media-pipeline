@@ -379,4 +379,3 @@ func (h *TriggerRuleHandler) APIPreviewTriggerRule(w http.ResponseWriter, r *htt
 		"limited":      result.Limited,
 	})
 }
-

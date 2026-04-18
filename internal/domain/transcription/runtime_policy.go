@@ -196,4 +196,3 @@ func appendUniqueWarning(items []string, value string) []string {
 	}
 	return append(items, value)
 }
-

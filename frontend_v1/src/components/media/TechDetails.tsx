@@ -77,6 +77,16 @@ export function TechDetails({ pipeline, settingsSnapshot }: TechDetailsProps) {
             <span style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>
               {step.timingText}
             </span>
+            {step.etaLabel && (
+              <span style={{ color: "var(--accent)", fontSize: "var(--text-xs)" }}>
+                {step.etaLabel}
+              </span>
+            )}
+            {step.progressLabel && (
+              <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>
+                {step.progressLabel}
+              </span>
+            )}
             {step.durationLabel && (
               <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>
                 {step.durationLabel}

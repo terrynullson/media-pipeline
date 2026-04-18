@@ -1318,15 +1318,15 @@ func newTestProcessor(
 }
 
 type stubJobRepository struct {
-	claimByType              map[job.Type]claimResult
-	listByTypeAndStatus      map[job.Type][]job.Job
-	pendingCoreJobsWithAge   []job.JobWithMediaAge
-	createdJobs              []job.Job
-	existsActiveOrDone       map[job.Type]bool
-	markDoneIDs              []int64
-	markFailedCalls          []markFailedCall
-	requeued                 []requeueCall
-	progressUpdates          []progressUpdateCall
+	claimByType            map[job.Type]claimResult
+	listByTypeAndStatus    map[job.Type][]job.Job
+	pendingCoreJobsWithAge []job.JobWithMediaAge
+	createdJobs            []job.Job
+	existsActiveOrDone     map[job.Type]bool
+	markDoneIDs            []int64
+	markFailedCalls        []markFailedCall
+	requeued               []requeueCall
+	progressUpdates        []progressUpdateCall
 }
 
 type claimResult struct {

@@ -18,7 +18,7 @@ func TestCheckWorkerDependencies_ValidDirs(t *testing.T) {
 	}
 
 	cfg := config.Config{
-		FFmpegBinary:     "ffmpeg",   // may not be installed; only dirs are asserted below
+		FFmpegBinary:     "ffmpeg", // may not be installed; only dirs are asserted below
 		PythonBinary:     "python",
 		TranscribeScript: scriptPath,
 		UploadDir:        filepath.Join(base, "uploads"),

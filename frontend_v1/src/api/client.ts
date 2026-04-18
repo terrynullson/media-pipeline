@@ -3,6 +3,7 @@ import type {
   JobItem,
   MediaDetailResponse,
   MediaListItem,
+  RuntimeSettingsResponse,
   SettingsResponse,
   TriggerRule,
   UIConfigResponse,
@@ -26,6 +27,11 @@ function normalizeSettingsResponse(raw: SettingsResponse): SettingsResponse {
     profile: {
       ...raw.profile,
       uiTheme: raw.profile?.uiTheme ?? raw.ui?.theme ?? "new"
+    },
+    runtime: {
+      autoUploadMinAgeSec: raw.runtime?.autoUploadMinAgeSec ?? 60,
+      previewTimeoutSec: raw.runtime?.previewTimeoutSec ?? 600,
+      maxUploadSizeMB: raw.runtime?.maxUploadSizeMB ?? 1024
     },
     warnings: Array.isArray(raw.warnings) ? raw.warnings : [],
     ui: {
@@ -69,8 +75,15 @@ export const api = {
   jobs: async () => (await requestJSON<{ items: JobItem[] }>("/api/jobs")).items,
   mediaDetail: (mediaId: string) => requestJSON<MediaDetailResponse>(`/api/media/${mediaId}`),
   settings: async () => normalizeSettingsResponse(await requestJSON<SettingsResponse>("/api/settings/transcription")),
+  runtimeSettings: () => requestJSON<RuntimeSettingsResponse>("/api/settings/runtime"),
   updateSettings: (payload: SettingsResponse["profile"]) =>
     requestJSON<{ status: string; preferredAppURL?: string }>("/api/settings/transcription", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }),
+  updateRuntimeSettings: (payload: RuntimeSettingsResponse["runtime"]) =>
+    requestJSON<{ status: string; runtime: RuntimeSettingsResponse["runtime"] }>("/api/settings/runtime", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -151,8 +164,12 @@ export const api = {
           let msg = `Ошибка загрузки (HTTP ${xhr.status})`;
           try {
             const body = JSON.parse(xhr.responseText);
-            if (body.message) msg = body.message;
-          } catch { /* ignore parse errors */ }
+            if (body.message) {
+              msg = body.message;
+            }
+          } catch {
+            // ignore parse errors
+          }
           reject(new Error(msg));
         }
       });

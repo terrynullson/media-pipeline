@@ -148,7 +148,9 @@ export function MediaDetailPage() {
             marginBottom: 0,
           }}
         >
-          {media.sizeHuman} &middot; {media.createdAtUtc} &middot; {media.mimeType}
+          {media.sizeHuman} &middot; Загружено: {media.createdAtUtc}
+          {media.completedAtUtc ? ` · Обработка завершена: ${media.completedAtUtc}` : ""}
+          {` · ${media.mimeType}`}
         </p>
 
         {/* Runtime estimate — shown only before transcription completes */}

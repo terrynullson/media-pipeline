@@ -35,13 +35,6 @@ function countTab(items: MediaListItem[], tab: FilterTab): number {
 }
 
 /** Parse "DD.MM.YYYY HH:MM:SS" to timestamp for correct sorting */
-function parseRuDate(s: string): number {
-  if (!s) return 0;
-  const [datePart, timePart = "00:00:00"] = s.split(" ");
-  const [dd, mm, yyyy] = datePart.split(".");
-  return new Date(`${yyyy}-${mm}-${dd}T${timePart}`).getTime();
-}
-
 // ── Styles ──────────────────────────────────────────────────────────
 
 const tabBarStyle: React.CSSProperties = {
@@ -114,6 +107,19 @@ function isReady(item: MediaListItem): boolean {
   return item.statusTone === "success" || item.statusTone === "error";
 }
 
+function overallProgressPercent(item: MediaListItem): number {
+  const steps = item.pipelineSteps ?? [];
+  if (steps.length === 0) return item.stagePercent;
+
+  const completedSteps = steps.filter((step) => step.statusLabel === "Готово" || step.statusLabel === "Не требуется").length;
+  const runningStep = steps.find((step) => step.isCurrent || step.tone === "running");
+  if (!runningStep || runningStep.progressPercent == null) {
+    return item.stagePercent;
+  }
+
+  return Math.max(item.stagePercent, Math.min(100, Math.round(((completedSteps + runningStep.progressPercent / 100) / steps.length) * 100)));
+}
+
 // ── MediaRow ─────────────────────────────────────────────────────────
 
 function MediaRow({ item, onDeleted, selectMode, selected, onToggleSelect }: {
@@ -131,6 +137,7 @@ function MediaRow({ item, onDeleted, selectMode, selected, onToggleSelect }: {
   const [hovered, setHovered] = useState(false);
   const steps = item.pipelineSteps ?? [];
   const isRunning = item.statusTone === "running" || item.statusTone === "queued";
+  const overallPercent = overallProgressPercent(item);
 
   async function handleDelete() {
     setDeleting(true);
@@ -155,8 +162,8 @@ function MediaRow({ item, onDeleted, selectMode, selected, onToggleSelect }: {
               : isRunning && !expanded
                 ? `linear-gradient(to right,
                     rgba(255,197,112,0.06) 0%,
-                    rgba(255,197,112,0.06) ${item.stagePercent}%,
-                    transparent ${item.stagePercent}%)`
+                    rgba(255,197,112,0.06) ${overallPercent}%,
+                    transparent ${overallPercent}%)`
                 : "transparent",
           borderBottom: confirmDelete ? "1px solid rgba(239,68,68,0.18)" : rowStyle.borderBottom,
           transition: "background var(--duration-normal) var(--ease)",
@@ -253,7 +260,7 @@ function MediaRow({ item, onDeleted, selectMode, selected, onToggleSelect }: {
             </span>
             {isRunning && (
               <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--accent)", fontVariantNumeric: "tabular-nums" }}>
-                {item.stagePercent}%
+                {overallPercent}%
               </span>
             )}
           </div>
@@ -294,8 +301,8 @@ function MediaRow({ item, onDeleted, selectMode, selected, onToggleSelect }: {
 
                   <StatusChip label={step.statusLabel} tone={step.tone} />
 
-                  <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginLeft: "auto" }}>
-                    {step.durationLabel || step.timingText}
+                  <span style={{ fontSize: "var(--text-xs)", color: step.etaLabel ? "var(--accent)" : "var(--text-muted)", marginLeft: "auto" }}>
+                    {step.etaLabel || step.durationLabel || step.timingText}
                   </span>
 
                   {/* ── Per-step live progress (пункт 1) ── */}
@@ -310,6 +317,21 @@ function MediaRow({ item, onDeleted, selectMode, selected, onToggleSelect }: {
                   ) : null}
                 </div>
               ))}
+            </div>
+          )}
+
+          {(item.currentEtaLabel || item.completedAtUtc) && (
+            <div style={{ marginTop: "var(--sp-2)", display: "flex", flexDirection: "column", gap: "var(--sp-1)" }}>
+              {item.currentEtaLabel && (
+                <span style={{ fontSize: "var(--text-xs)", color: "var(--accent)" }}>
+                  {item.currentEtaLabel}
+                </span>
+              )}
+              {item.completedAtUtc && (
+                <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+                  Обработка завершена: {item.completedAtUtc}
+                </span>
+              )}
             </div>
           )}
 
@@ -386,10 +408,7 @@ export function MediaList({ items, onDeleted }: MediaListProps) {
     { key: "failed",     labelKey: "filter.failed" },
   ];
 
-  const sorted = useMemo(
-    () => [...items].sort((a, b) => parseRuDate(b.createdAtUtc) - parseRuDate(a.createdAtUtc)),
-    [items],
-  );
+  const sorted = useMemo(() => [...items], [items]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();

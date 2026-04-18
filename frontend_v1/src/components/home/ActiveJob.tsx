@@ -75,6 +75,12 @@ export function ActiveJob({ item }: ActiveJobProps) {
               <span>{item.currentTimingText}</span>
             </>
           )}
+          {item.currentEtaLabel && (
+            <>
+              <span style={{ opacity: 0.4 }}>&middot;</span>
+              <span style={{ color: "var(--accent)" }}>{item.currentEtaLabel}</span>
+            </>
+          )}
         </div>
       </div>
 

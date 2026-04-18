@@ -14,7 +14,7 @@ type workerJobReader interface {
 
 // WorkerStatusResult holds the full worker status snapshot.
 type WorkerStatusResult struct {
-	WorkerHeartbeatAge int64              // seconds since last running-job update
+	WorkerHeartbeatAge int64 // seconds since last running-job update
 	LikelyAlive        bool
 	CurrentJob         *WorkerCurrentJob
 	Queue              WorkerQueue

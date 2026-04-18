@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	appsettings "media-pipeline/internal/domain/appsettings"
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/ports"
 	"media-pipeline/internal/domain/transcription"
@@ -37,6 +38,7 @@ type apiMediaItem struct {
 	Extension          string             `json:"extension"`
 	SizeHuman          string             `json:"sizeHuman"`
 	CreatedAtUTC       string             `json:"createdAtUtc"`
+	CompletedAtUTC     string             `json:"completedAtUtc,omitempty"`
 	Status             string             `json:"status"`
 	StatusLabel        string             `json:"statusLabel"`
 	StatusTone         string             `json:"statusTone"`
@@ -46,6 +48,7 @@ type apiMediaItem struct {
 	StagePercent       int                `json:"stagePercent"`
 	CurrentStage       string             `json:"currentStage"`
 	CurrentTimingText  string             `json:"currentTimingText"`
+	CurrentEtaLabel    string             `json:"currentEtaLabel,omitempty"`
 	ErrorSummary       string             `json:"errorSummary,omitempty"`
 	HasTranscript      bool               `json:"hasTranscript"`
 	IsAudioOnly        bool               `json:"isAudioOnly"`
@@ -89,6 +92,12 @@ type transcriptionSettingsPayload struct {
 	BeamSize    int    `json:"beamSize"`
 	VADEnabled  bool   `json:"vadEnabled"`
 	UITheme     string `json:"uiTheme"`
+}
+
+type runtimeSettingsPayload struct {
+	AutoUploadMinAgeSec int64 `json:"autoUploadMinAgeSec"`
+	PreviewTimeoutSec   int64 `json:"previewTimeoutSec"`
+	MaxUploadSizeMB     int64 `json:"maxUploadSizeMB"`
 }
 
 type uiPreferencePayload struct {
@@ -246,7 +255,7 @@ func (h *UploadHandler) APIMediaDetail(w http.ResponseWriter, r *http.Request) {
 			jobs = append(jobs, *current)
 		}
 	}
-	pipelineView := buildMediaPipelineView(result.Media, jobs)
+	pipelineView := h.buildPipelineView(r.Context(), result.Media, jobs)
 	playerView := buildTranscriptPlayerView(result)
 	triggerViews := buildTriggerEventViews(result.TriggerEvents, result.TriggerScreenshots, result.Media, result.ScreenshotJob)
 	triggerStatusLabel, triggerStatusTone, triggerNotice, triggerNoticeTone := describeTriggerAnalysis(result.AnalyzeJob, len(triggerViews))
@@ -255,13 +264,14 @@ func (h *UploadHandler) APIMediaDetail(w http.ResponseWriter, r *http.Request) {
 
 	h.writeJSON(w, http.StatusOK, map[string]any{
 		"media": map[string]any{
-			"id":           result.Media.ID,
-			"name":         result.Media.OriginalName,
-			"extension":    result.Media.Extension,
-			"mimeType":     result.Media.MIMEType,
-			"sizeHuman":    HumanSize(result.Media.SizeBytes),
-			"createdAtUtc": FormatDateTimeUTC(result.Media.CreatedAtUTC),
-			"isAudioOnly":  result.Media.IsAudioOnly(),
+			"id":             result.Media.ID,
+			"name":           result.Media.OriginalName,
+			"extension":      result.Media.Extension,
+			"mimeType":       result.Media.MIMEType,
+			"sizeHuman":      HumanSize(result.Media.SizeBytes),
+			"createdAtUtc":   FormatDateTimeUTC(result.Media.CreatedAtUTC),
+			"completedAtUtc": formatOptionalDateTime(latestCompletedCoreJobTime(jobs)),
+			"isAudioOnly":    result.Media.IsAudioOnly(),
 		},
 		"pipeline": pipelineView,
 		"player":   playerView,
@@ -317,6 +327,7 @@ func (h *UploadHandler) APITranscriptionSettings(w http.ResponseWriter, r *http.
 	h.writeJSON(w, http.StatusOK, map[string]any{
 		"profile":  form,
 		"warnings": buildSettingsWarnings(form),
+		"runtime":  h.buildAPIRuntimeSettings(r.Context()),
 		"ui": map[string]any{
 			"theme":        form.UITheme,
 			"appURL":       "/app-v1",
@@ -368,11 +379,45 @@ func (h *UploadHandler) APIUpdateTranscriptionSettings(w http.ResponseWriter, r 
 		"status":   "saved",
 		"profile":  form,
 		"warnings": buildSettingsWarnings(form),
+		"runtime":  h.buildAPIRuntimeSettings(r.Context()),
 		"ui": map[string]any{
 			"theme":        form.UITheme,
 			"appURL":       "/app-v1",
 			"workspaceURL": "/workspace",
 		},
+	})
+}
+
+func (h *UploadHandler) APIRuntimeSettings(w http.ResponseWriter, r *http.Request) {
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"runtime": h.buildAPIRuntimeSettings(r.Context()),
+	})
+}
+
+func (h *UploadHandler) APIUpdateRuntimeSettings(w http.ResponseWriter, r *http.Request) {
+	var payload runtimeSettingsPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "не удалось прочитать JSON runtime settings", http.StatusBadRequest)
+		return
+	}
+
+	saved, err := h.runtimeSvc.SaveCurrent(r.Context(), appsettings.Settings{
+		AutoUploadMinAgeSec: payload.AutoUploadMinAgeSec,
+		PreviewTimeoutSec:   payload.PreviewTimeoutSec,
+		MaxUploadSizeMB:     payload.MaxUploadSizeMB,
+	})
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			http.Error(w, "request canceled", http.StatusRequestTimeout)
+			return
+		}
+		h.writeJSON(w, http.StatusBadRequest, map[string]any{"status": "error", "message": err.Error()})
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "saved",
+		"runtime": runtimeSettingsResponse(saved),
 	})
 }
 
@@ -385,8 +430,8 @@ func (h *UploadHandler) APIUIConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, map[string]any{
-		"maxUploadBytes":  h.maxUploadSizeB,
-		"maxUploadHuman":  HumanSize(h.maxUploadSizeB),
+		"maxUploadBytes":  h.currentMaxUploadSizeBytes(r.Context()),
+		"maxUploadHuman":  HumanSize(h.currentMaxUploadSizeBytes(r.Context())),
 		"acceptedFormats": []string{".mp4", ".mov", ".mkv", ".avi", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".flac"},
 		"uiTheme":         normalizeUITheme(profile.UITheme),
 		"appURL":          "/app-v1",
@@ -483,6 +528,7 @@ func apiMediaFromView(item MediaListItem) apiMediaItem {
 		Extension:         item.Extension,
 		SizeHuman:         item.SizeHuman,
 		CreatedAtUTC:      item.CreatedAtUTC,
+		CompletedAtUTC:    item.CompletedAtUTC,
 		Status:            string(item.Status),
 		StatusLabel:       item.StatusLabel,
 		StatusTone:        item.StatusTone,
@@ -492,6 +538,7 @@ func apiMediaFromView(item MediaListItem) apiMediaItem {
 		StagePercent:      item.StagePercent,
 		CurrentStage:      item.CurrentStage,
 		CurrentTimingText: item.CurrentTimingText,
+		CurrentEtaLabel:   item.CurrentEtaLabel,
 		ErrorSummary:      item.ErrorSummary,
 		HasTranscript:     item.HasTranscript,
 		IsAudioOnly:       extension == ".wav" || extension == ".mp3" || extension == ".m4a" || extension == ".aac" || extension == ".flac",
@@ -545,6 +592,39 @@ func minInt(a int, b int) int {
 	return b
 }
 
+func latestCompletedCoreJobTime(jobs []job.Job) *time.Time {
+	coreTypes := map[job.Type]struct{}{
+		job.TypePreparePreviewVideo: {},
+		job.TypeExtractAudio:        {},
+		job.TypeTranscribe:          {},
+		job.TypeAnalyzeTriggers:     {},
+		job.TypeExtractScreenshots:  {},
+	}
+
+	var latest *time.Time
+	for _, current := range jobs {
+		if _, ok := coreTypes[current.Type]; !ok || current.Status != job.StatusDone || current.FinishedAtUTC == nil {
+			continue
+		}
+
+		finishedAt := current.FinishedAtUTC.UTC()
+		if latest == nil || finishedAt.After(*latest) {
+			copyValue := finishedAt
+			latest = &copyValue
+		}
+	}
+
+	return latest
+}
+
+func formatOptionalDateTime(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+
+	return FormatDateTimeUTC(*value)
+}
+
 func normalizeUITheme(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "new", "v1", "modern":
@@ -556,4 +636,34 @@ func normalizeUITheme(value string) string {
 
 func preferredAppURL(_ string) string {
 	return "/app-v1"
+}
+
+func (h *UploadHandler) buildAPIRuntimeSettings(ctx context.Context) map[string]any {
+	if h.runtimeSvc == nil {
+		return map[string]any{
+			"autoUploadMinAgeSec": int64(60),
+			"previewTimeoutSec":   int64(600),
+			"maxUploadSizeMB":     int64(1024),
+		}
+	}
+
+	settings, err := h.runtimeSvc.GetCurrent(ctx)
+	if err != nil {
+		observability.LoggerFromContext(ctx, h.logger).Warn("load runtime settings failed", slog.Any("error", err))
+		return map[string]any{
+			"autoUploadMinAgeSec": int64(60),
+			"previewTimeoutSec":   int64(600),
+			"maxUploadSizeMB":     int64(1024),
+		}
+	}
+
+	return runtimeSettingsResponse(settings)
+}
+
+func runtimeSettingsResponse(settings appsettings.Settings) map[string]any {
+	return map[string]any{
+		"autoUploadMinAgeSec": settings.AutoUploadMinAgeSec,
+		"previewTimeoutSec":   settings.PreviewTimeoutSec,
+		"maxUploadSizeMB":     settings.MaxUploadSizeMB,
+	}
 }

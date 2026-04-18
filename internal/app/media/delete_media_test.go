@@ -6,7 +6,9 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
+	"media-pipeline/internal/domain/job"
 	domainmedia "media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/ports"
 )
@@ -24,6 +26,8 @@ func TestDeleteMediaUseCase_DeleteRemovesRecordAndCollectsWarnings(t *testing.T)
 	}
 	uc := NewDeleteMediaUseCase(
 		repo,
+		repo,
+		&stubMediaCancellationRequester{},
 		stubScreenshotPathReader{},
 		stubDeleteStorage{err: errors.New("disk busy")},
 		stubDeleteStorage{},
@@ -49,6 +53,8 @@ func TestDeleteMediaUseCase_DeleteReturnsNotFound(t *testing.T) {
 
 	uc := NewDeleteMediaUseCase(
 		&stubMediaDeletionRepository{getErr: ports.ErrNotFound},
+		&stubMediaDeletionRepository{getErr: ports.ErrNotFound},
+		&stubMediaCancellationRequester{},
 		stubScreenshotPathReader{},
 		stubDeleteStorage{},
 		stubDeleteStorage{},
@@ -62,11 +68,80 @@ func TestDeleteMediaUseCase_DeleteReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestDeleteMediaUseCase_DeleteReturnsBusyWhenJobIsRunningAndCancellationUnavailable(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubMediaDeletionRepository{
+		item: domainmedia.Media{ID: 12},
+		jobs: []job.Job{{ID: 99, MediaID: 12, Status: job.StatusRunning, Type: job.TypePreparePreviewVideo}},
+	}
+
+	uc := NewDeleteMediaUseCase(
+		repo,
+		repo,
+		nil,
+		stubScreenshotPathReader{},
+		stubDeleteStorage{},
+		stubDeleteStorage{},
+		stubDeleteStorage{},
+		stubDeleteStorage{},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	if _, err := uc.Delete(context.Background(), 12); !errors.Is(err, ErrMediaBusy) {
+		t.Fatalf("Delete() error = %v, want ErrMediaBusy", err)
+	}
+}
+
+func TestDeleteMediaUseCase_DeleteRequestsCancellationBeforeRemovingRecord(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubMediaDeletionRepository{
+		item: domainmedia.Media{ID: 15, StoragePath: "uploads/demo.mp4"},
+		jobs: []job.Job{
+			{ID: 101, MediaID: 15, Status: job.StatusRunning, Type: job.TypePreparePreviewVideo},
+			{ID: 102, MediaID: 15, Status: job.StatusDone, Type: job.TypeUpload},
+		},
+	}
+	cancelRequester := &stubMediaCancellationRequester{}
+
+	uc := NewDeleteMediaUseCase(
+		repo,
+		repo,
+		cancelRequester,
+		stubScreenshotPathReader{},
+		stubDeleteStorage{},
+		stubDeleteStorage{},
+		stubDeleteStorage{},
+		stubDeleteStorage{},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	result, err := uc.Delete(context.Background(), 15)
+	if err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if result.MediaID != 15 {
+		t.Fatalf("MediaID = %d, want 15", result.MediaID)
+	}
+	if !repo.deleted {
+		t.Fatal("DeleteWithAssociations() was not called")
+	}
+	if len(cancelRequester.requested) != 1 || cancelRequester.requested[0] != 15 {
+		t.Fatalf("requested = %#v, want [15]", cancelRequester.requested)
+	}
+	if len(cancelRequester.deleted) != 1 || cancelRequester.deleted[0] != 15 {
+		t.Fatalf("deleted = %#v, want [15]", cancelRequester.deleted)
+	}
+}
+
 type stubMediaDeletionRepository struct {
 	item    domainmedia.Media
 	getErr  error
 	delErr  error
 	deleted bool
+	jobs    []job.Job
+	polls   int
 }
 
 func (s *stubMediaDeletionRepository) GetByID(context.Context, int64) (domainmedia.Media, error) {
@@ -81,8 +156,38 @@ func (s *stubMediaDeletionRepository) DeleteWithAssociations(context.Context, in
 	return s.delErr
 }
 
+func (s *stubMediaDeletionRepository) ListByMediaID(context.Context, int64) ([]job.Job, error) {
+	s.polls++
+	if s.polls > 1 {
+		items := make([]job.Job, 0, len(s.jobs))
+		for _, current := range s.jobs {
+			if current.Status == job.StatusRunning {
+				current.Status = job.StatusDone
+			}
+			items = append(items, current)
+		}
+		return items, nil
+	}
+	return s.jobs, nil
+}
+
 type stubDeleteStorage struct {
 	err error
+}
+
+type stubMediaCancellationRequester struct {
+	requested []int64
+	deleted   []int64
+}
+
+func (s *stubMediaCancellationRequester) Request(_ context.Context, mediaID int64, _ time.Time) error {
+	s.requested = append(s.requested, mediaID)
+	return nil
+}
+
+func (s *stubMediaCancellationRequester) Delete(_ context.Context, mediaID int64) error {
+	s.deleted = append(s.deleted, mediaID)
+	return nil
 }
 
 type stubScreenshotPathReader struct {

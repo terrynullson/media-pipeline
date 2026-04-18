@@ -10,7 +10,7 @@ import (
 	autouploadapp "media-pipeline/internal/app/autoupload"
 )
 
-func TestLocalSourceFindNextReturnsOldestSupportedFile(t *testing.T) {
+func TestLocalSourceFindNextReturnsOldestSupportedStableFile(t *testing.T) {
 	t.Parallel()
 
 	baseDir := t.TempDir()
@@ -23,28 +23,27 @@ func TestLocalSourceFindNextReturnsOldestSupportedFile(t *testing.T) {
 	mustWriteFile(t, ignoredFile, []byte("ignored"))
 
 	nowUTC := time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)
-	if err := os.Chtimes(oldFile, nowUTC.Add(-3*time.Hour), nowUTC.Add(-3*time.Hour)); err != nil {
-		t.Fatalf("Chtimes(oldFile) error = %v", err)
-	}
-	if err := os.Chtimes(newFile, nowUTC.Add(-2*time.Hour), nowUTC.Add(-2*time.Hour)); err != nil {
-		t.Fatalf("Chtimes(newFile) error = %v", err)
-	}
-
 	source := NewLocalSource(baseDir, archiveDir, time.Minute)
 
-	candidate, ok, err := source.FindNext(context.Background(), nowUTC)
+	if _, ok, err := source.FindNext(context.Background(), nowUTC); err != nil {
+		t.Fatalf("FindNext(first pass) error = %v", err)
+	} else if ok {
+		t.Fatal("FindNext(first pass) ok = true, want false until file stability is observed")
+	}
+
+	candidate, ok, err := source.FindNext(context.Background(), nowUTC.Add(11*time.Second))
 	if err != nil {
-		t.Fatalf("FindNext() error = %v", err)
+		t.Fatalf("FindNext(second pass) error = %v", err)
 	}
 	if !ok {
-		t.Fatal("FindNext() ok = false, want true")
+		t.Fatal("FindNext(second pass) ok = false, want true")
 	}
 	if candidate.RelativePath != "2026-02-10/Recorder_1_25.02.10_09.00.00.00.mp4" {
 		t.Fatalf("RelativePath = %q, want oldest mp4", candidate.RelativePath)
 	}
 }
 
-func TestLocalSourceFindNextSkipsYoungFiles(t *testing.T) {
+func TestLocalSourceFindNextWaitsForQuietPeriodAfterFileGrowth(t *testing.T) {
 	t.Parallel()
 
 	baseDir := t.TempDir()
@@ -53,18 +52,49 @@ func TestLocalSourceFindNextSkipsYoungFiles(t *testing.T) {
 	mustWriteFile(t, filePath, []byte("demo"))
 
 	nowUTC := time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)
-	if err := os.Chtimes(filePath, nowUTC.Add(-20*time.Second), nowUTC.Add(-20*time.Second)); err != nil {
-		t.Fatalf("Chtimes(filePath) error = %v", err)
-	}
-
 	source := NewLocalSource(baseDir, archiveDir, time.Minute)
 
-	_, ok, err := source.FindNext(context.Background(), nowUTC)
-	if err != nil {
-		t.Fatalf("FindNext() error = %v", err)
+	if _, ok, err := source.FindNext(context.Background(), nowUTC); err != nil {
+		t.Fatalf("FindNext(first pass) error = %v", err)
+	} else if ok {
+		t.Fatal("FindNext(first pass) ok = true, want false")
 	}
-	if ok {
-		t.Fatal("FindNext() ok = true, want false for young file")
+
+	if _, ok, err := source.FindNext(context.Background(), nowUTC.Add(11*time.Second)); err != nil {
+		t.Fatalf("FindNext(stable pass) error = %v", err)
+	} else if !ok {
+		t.Fatal("FindNext(stable pass) ok = false, want true")
+	}
+
+	if err := os.WriteFile(filePath, []byte("demo-demo"), 0o644); err != nil {
+		t.Fatalf("WriteFile(grow) error = %v", err)
+	}
+	growthTime := nowUTC.Add(20 * time.Second)
+	if err := os.Chtimes(filePath, growthTime, growthTime); err != nil {
+		t.Fatalf("Chtimes(grow) error = %v", err)
+	}
+
+	if _, ok, err := source.FindNext(context.Background(), growthTime); err != nil {
+		t.Fatalf("FindNext(growth pass) error = %v", err)
+	} else if ok {
+		t.Fatal("FindNext(growth pass) ok = true, want false right after growth")
+	}
+
+	if _, ok, err := source.FindNext(context.Background(), growthTime.Add(59*time.Second)); err != nil {
+		t.Fatalf("FindNext(before quiet period) error = %v", err)
+	} else if ok {
+		t.Fatal("FindNext(before quiet period) ok = true, want false")
+	}
+
+	candidate, ok, err := source.FindNext(context.Background(), growthTime.Add(61*time.Second))
+	if err != nil {
+		t.Fatalf("FindNext(after quiet period) error = %v", err)
+	}
+	if !ok {
+		t.Fatal("FindNext(after quiet period) ok = false, want true")
+	}
+	if candidate.RelativePath != "2026-02-10/Recorder_1_25.02.10_09.00.00.00.mp4" {
+		t.Fatalf("RelativePath = %q, want updated file", candidate.RelativePath)
 	}
 }
 

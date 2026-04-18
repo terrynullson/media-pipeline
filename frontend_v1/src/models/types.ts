@@ -8,6 +8,7 @@ export interface PipelineStep {
   startedAtLabel?: string;
   finishedAtLabel?: string;
   durationLabel?: string;
+  etaLabel?: string;
   progressLabel?: string;
   progressPercent?: number;
   progressVisible?: boolean;
@@ -19,6 +20,7 @@ export interface MediaListItem {
   extension: string;
   sizeHuman: string;
   createdAtUtc: string;
+  completedAtUtc?: string;
   status: string;
   statusLabel: string;
   statusTone: string;
@@ -28,6 +30,7 @@ export interface MediaListItem {
   stagePercent: number;
   currentStage: string;
   currentTimingText: string;
+  currentEtaLabel?: string;
   errorSummary?: string;
   hasTranscript: boolean;
   isAudioOnly: boolean;
@@ -103,6 +106,7 @@ export interface MediaDetailResponse {
     mimeType: string;
     sizeHuman: string;
     createdAtUtc: string;
+    completedAtUtc?: string;
     isAudioOnly: boolean;
   };
   pipeline: {
@@ -204,6 +208,11 @@ export interface SettingsResponse {
     vadEnabled: boolean;
     uiTheme: string;
   };
+  runtime: {
+    autoUploadMinAgeSec: number;
+    previewTimeoutSec: number;
+    maxUploadSizeMB: number;
+  };
   warnings: string[];
   ui: {
     theme: string;
@@ -219,6 +228,14 @@ export interface SettingsResponse {
     cpu: string[];
     cuda: string[];
     themes: string[];
+  };
+}
+
+export interface RuntimeSettingsResponse {
+  runtime: {
+    autoUploadMinAgeSec: number;
+    previewTimeoutSec: number;
+    maxUploadSizeMB: number;
   };
 }
 

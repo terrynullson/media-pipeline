@@ -11,10 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	appsettingsapp "media-pipeline/internal/app/appsettings"
 	"media-pipeline/internal/app/command"
 	mediaapp "media-pipeline/internal/app/media"
 	transcriptionapp "media-pipeline/internal/app/transcription"
 	triggerapp "media-pipeline/internal/app/trigger"
+	appsettings "media-pipeline/internal/domain/appsettings"
 	domaintranscription "media-pipeline/internal/domain/transcription"
 	"media-pipeline/internal/infra/config"
 	"media-pipeline/internal/infra/db"
@@ -75,12 +77,19 @@ func main() {
 	triggerScreenshotRepo := repositories.NewTriggerScreenshotRepository(sqlDB)
 	summaryRepo := repositories.NewSummaryRepository(sqlDB)
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
+	runtimeSettingsRepo := repositories.NewRuntimeSettingsRepository(sqlDB)
+	cancelRequestRepo := repositories.NewMediaCancelRequestRepository(sqlDB)
 	fileStorage := storage.NewLocalStorage(cfg.UploadDir)
 	audioStorage := storage.NewLocalStorage(cfg.AudioDir)
 	previewStorage := storage.NewLocalStorage(cfg.PreviewDir)
 	screenshotStorage := storage.NewLocalStorage(cfg.ScreenshotsDir)
 	audioDurationReader := inframedia.NewWAVDurationReader()
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
+	runtimeSettingsSvc := appsettingsapp.NewService(runtimeSettingsRepo, appsettings.Settings{
+		AutoUploadMinAgeSec: cfg.AutoUploadMinAgeSec,
+		PreviewTimeoutSec:   cfg.PreviewTimeoutSec,
+		MaxUploadSizeMB:     cfg.MaxUploadSizeMB,
+	})
 	triggerRuleService := triggerapp.NewService(triggerRuleRepo)
 	transcriptViewUC := mediaapp.NewTranscriptViewUseCase(
 		mediaRepo,
@@ -96,8 +105,9 @@ func main() {
 		cfg.TranscribeTimeout(),
 	)
 	requestSummaryUC := mediaapp.NewRequestSummaryUseCase(mediaRepo, transcriptRepo, jobRepo)
-	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, fileStorage, audioStorage, previewStorage, screenshotStorage, logger)
+	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, jobRepo, cancelRequestRepo, triggerScreenshotRepo, fileStorage, audioStorage, previewStorage, screenshotStorage, logger)
 	retryJobUC := mediaapp.NewRetryJobUseCase(mediaRepo, jobRepo, jobRepo, mediaRepo, logger)
+	historicalETA := mediaapp.NewHistoricalEstimator(jobRepo)
 
 	uploadUC := command.NewUploadMediaUseCase(mediaRepo, jobRepo, fileStorage, cfg.MaxUploadSizeBytes(), logger)
 	templatesDir, err := infraRuntime.ResolvePath("internal/transport/http/views/templates")
@@ -108,12 +118,14 @@ func main() {
 	uploadHandler, err := handlers.NewUploadHandler(
 		uploadUC,
 		profileService,
+		runtimeSettingsSvc,
 		triggerRuleService,
 		transcriptViewUC,
 		requestSummaryUC,
 		deleteMediaUC,
 		retryJobUC,
 		jobRepo,
+		historicalETA,
 		templatesDir,
 		cfg.MaxUploadSizeBytes(),
 		logger,

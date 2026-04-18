@@ -57,6 +57,15 @@ type JobWithMediaAge struct {
 	MediaCreatedAtUTC time.Time
 }
 
+type HistoricalSample struct {
+	JobType        Type
+	MediaID        int64
+	MediaSizeBytes int64
+	IsAudioOnly    bool
+	DurationMS     int64
+	FinishedAtUTC  time.Time
+}
+
 type TranscribePayload struct {
 	Settings transcription.Settings `json:"settings"`
 }

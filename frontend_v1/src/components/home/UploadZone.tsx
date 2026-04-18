@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+﻿import { useCallback, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent } from "react";
 import { UploadCloud, AlertCircle, CheckCircle, X } from "lucide-react";
 import type { UIConfigResponse, UploadProgress } from "../../models/types";
@@ -12,10 +12,12 @@ interface UploadZoneProps {
 }
 
 interface QueueItem {
+  id: string;
   file: File;
-  status: "pending" | "uploading" | "done" | "error";
+  status: "queued" | "uploading" | "done" | "error";
   progress: UploadProgress | null;
   error: string | null;
+  startedAtMs: number;
 }
 
 const DEFAULT_ACCEPT = ".mp4,.mov,.mkv,.avi,.webm,.mp3,.wav,.m4a,.aac,.flac";
@@ -43,95 +45,152 @@ const zoneDragOver: React.CSSProperties = {
 };
 
 const zoneBusy: React.CSSProperties = {
-  cursor: "default",
   borderStyle: "solid",
   borderColor: "var(--border)",
 };
+
+function formatRemaining(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  if (seconds < 60) return `Осталось ~${Math.max(1, Math.round(seconds))} сек`;
+  const minutes = Math.floor(seconds / 60);
+  const restSeconds = Math.round(seconds % 60);
+  if (minutes < 60) return `Осталось ~${minutes} мин ${restSeconds} сек`;
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  return `Осталось ~${hours} ч ${restMinutes} мин`;
+}
+
+function humanSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 Б";
+  const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const digits = value >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[unitIndex]}`;
+}
 
 export function UploadZone({ config, onUploaded }: UploadZoneProps) {
   const { t } = useTranslation();
   const [dragOver, setDragOver] = useState(false);
   const [queue, setQueue] = useState<QueueItem[]>([]);
-  const processingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const cancelRef = useRef<(() => void) | null>(null);
+  const cancelMapRef = useRef<Record<string, () => void>>({});
 
   const accept = config?.acceptedFormats.join(",") ?? DEFAULT_ACCEPT;
-  const busy = queue.some((q) => q.status === "uploading" || q.status === "pending");
+  const acceptedFormats = useMemo(
+    () => new Set((config?.acceptedFormats ?? DEFAULT_ACCEPT.split(",")).map((item) => item.toLowerCase())),
+    [config],
+  );
+  const maxUploadBytes = config?.maxUploadBytes ?? 0;
 
-  const processQueue = useCallback(async (items: QueueItem[]) => {
-    if (processingRef.current) return;
-    processingRef.current = true;
+  const activeItems = queue.filter((item) => item.status === "queued" || item.status === "uploading");
+  const busy = activeItems.length > 0;
 
-    const remaining = [...items];
+  const aggregate = useMemo(() => {
+    if (activeItems.length === 0) return null;
 
-    for (let i = 0; i < remaining.length; i++) {
-      if (remaining[i].status !== "pending") continue;
+    const total = activeItems.reduce((sum, item) => sum + (item.progress?.total ?? item.file.size), 0);
+    const loaded = activeItems.reduce((sum, item) => sum + (item.progress?.loaded ?? 0), 0);
+    const percent = total > 0 ? Math.round((loaded / total) * 100) : 0;
+    const startedAtMs = Math.min(...activeItems.map((item) => item.startedAtMs));
+    const elapsedSec = Math.max(0.001, (Date.now() - startedAtMs) / 1000);
+    const bytesPerSec = loaded / elapsedSec;
+    const remainingSec = bytesPerSec > 0 ? Math.max(0, (total - loaded) / bytesPerSec) : 0;
 
-      remaining[i] = { ...remaining[i], status: "uploading", progress: { loaded: 0, total: remaining[i].file.size, percent: 0 } };
-      setQueue([...remaining]);
+    return {
+      loaded,
+      total,
+      percent,
+      remainingLabel: formatRemaining(remainingSec),
+    };
+  }, [activeItems]);
 
-      try {
-        await api.uploadWithProgress(
-          remaining[i].file,
-          (p) => {
-            remaining[i] = { ...remaining[i], progress: p };
-            setQueue([...remaining]);
-          },
-          (cancel) => { cancelRef.current = cancel; }
-        );
-        cancelRef.current = null;
-        remaining[i] = { ...remaining[i], status: "done", progress: null, error: null };
-      } catch (err) {
-        cancelRef.current = null;
-        const msg = err instanceof Error ? err.message : t("upload.error.generic");
-        if (msg === "cancelled") {
-          // Remove cancelled item from queue silently
-          remaining.splice(i, 1);
-          i--;
-          setQueue([...remaining]);
-          continue;
-        }
-        remaining[i] = {
-          ...remaining[i],
-          status: "error",
-          progress: null,
-          error: msg,
-        };
-      }
+  const updateItem = useCallback((id: string, updater: (item: QueueItem) => QueueItem) => {
+    setQueue((prev) => prev.map((item) => (item.id === id ? updater(item) : item)));
+  }, []);
 
-      setQueue([...remaining]);
+  const startUpload = useCallback((item: QueueItem) => {
+    updateItem(item.id, (current) => ({
+      ...current,
+      status: "uploading",
+      progress: { loaded: 0, total: current.file.size, percent: 0 },
+    }));
+
+    void api.uploadWithProgress(
+      item.file,
+      (progress) => {
+        updateItem(item.id, (current) => ({ ...current, progress, status: "uploading" }));
+      },
+      (cancel) => {
+        cancelMapRef.current[item.id] = cancel;
+      },
+    ).then(() => {
+      delete cancelMapRef.current[item.id];
+      updateItem(item.id, (current) => ({ ...current, status: "done", progress: null, error: null }));
       onUploaded();
-    }
-
-    processingRef.current = false;
-
-    // Clear completed items after a delay
-    setTimeout(() => {
-      setQueue((prev) => prev.filter((q) => q.status === "uploading" || q.status === "pending"));
-    }, 3000);
-  }, [onUploaded, t]);
+      window.setTimeout(() => {
+        setQueue((prev) => prev.filter((entry) => entry.id !== item.id || entry.status === "uploading" || entry.status === "queued"));
+      }, 3000);
+    }).catch((err) => {
+      delete cancelMapRef.current[item.id];
+      const message = err instanceof Error ? err.message : t("upload.error.generic");
+      if (message === "cancelled") {
+        setQueue((prev) => prev.filter((entry) => entry.id !== item.id));
+        return;
+      }
+      updateItem(item.id, (current) => ({ ...current, status: "error", progress: null, error: message }));
+    });
+  }, [onUploaded, t, updateItem]);
 
   const addFiles = useCallback((files: FileList | File[]) => {
     const arr = Array.from(files);
     if (arr.length === 0) return;
 
-    const newItems: QueueItem[] = arr.map((file) => ({
-      file,
-      status: "pending" as const,
-      progress: null,
-      error: null,
-    }));
-
-    setQueue((prev) => {
-      const merged = [...prev, ...newItems];
-      // Start processing if not already running
-      if (!processingRef.current) {
-        processQueue(merged);
+    const startedAtMs = Date.now();
+    const prepared: QueueItem[] = arr.map((file, index) => {
+      const extension = `.${(file.name.split(".").pop() ?? "").toLowerCase()}`;
+      if (!acceptedFormats.has(extension)) {
+        return {
+          id: `${startedAtMs}-${index}-${file.name}`,
+          file,
+          status: "error",
+          progress: null,
+          error: `Недопустимый формат. Разрешено: ${(config?.acceptedFormats ?? Array.from(acceptedFormats)).join(", ")}`,
+          startedAtMs,
+        };
       }
-      return merged;
+      if (maxUploadBytes > 0 && file.size > maxUploadBytes) {
+        return {
+          id: `${startedAtMs}-${index}-${file.name}`,
+          file,
+          status: "error",
+          progress: null,
+          error: `Файл слишком большой. Максимум: ${config?.maxUploadHuman ?? humanSize(maxUploadBytes)}`,
+          startedAtMs,
+        };
+      }
+      return {
+        id: `${startedAtMs}-${index}-${file.name}`,
+        file,
+        status: "queued",
+        progress: { loaded: 0, total: file.size, percent: 0 },
+        error: null,
+        startedAtMs,
+      };
     });
-  }, [processQueue]);
+
+    setQueue((prev) => [...prepared, ...prev]);
+    prepared.filter((item) => item.status === "queued").forEach(startUpload);
+  }, [acceptedFormats, config, maxUploadBytes, startUpload]);
+
+  const cancelUploads = useCallback(() => {
+    Object.values(cancelMapRef.current).forEach((cancel) => cancel());
+    cancelMapRef.current = {};
+  }, []);
 
   const onDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
@@ -167,7 +226,7 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
     ...(busy ? zoneBusy : {}),
   };
 
-  const activeItem = queue.find((q) => q.status === "uploading");
+  const finishedItems = queue.filter((item) => item.status === "done" || item.status === "error");
 
   return (
     <div>
@@ -177,7 +236,7 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
-        {activeItem ? (
+        {aggregate ? (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
             <div
               style={{
@@ -197,21 +256,16 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
                   maxWidth: "60%",
                 }}
               >
-                {activeItem.file.name}
+                Загружается файлов: {activeItems.length}
               </span>
               <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
                 <span style={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
-                  {activeItem.progress?.percent ?? 0}%
-                  {queue.filter((q) => q.status === "pending").length > 0 && (
-                    <span style={{ marginLeft: 8, fontSize: "var(--text-xs)" }}>
-                      +{queue.filter((q) => q.status === "pending").length}
-                    </span>
-                  )}
+                  {aggregate.percent}%
                 </span>
                 <button
                   type="button"
                   title="Отменить загрузку"
-                  onClick={(e) => { e.preventDefault(); cancelRef.current?.(); }}
+                  onClick={(e) => { e.preventDefault(); cancelUploads(); }}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -231,7 +285,11 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
                 </button>
               </div>
             </div>
-            <Progress percent={activeItem.progress?.percent ?? 0} height={6} animate />
+            <Progress percent={aggregate.percent} height={6} animate />
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--sp-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+              <span>{humanSize(aggregate.loaded)} / {humanSize(aggregate.total)}</span>
+              <span>{aggregate.remainingLabel}</span>
+            </div>
           </div>
         ) : (
           <>
@@ -242,7 +300,7 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
               </span>
               <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
                 {config
-                  ? `Max ${config.maxUploadHuman} \u00b7 ${config.acceptedFormats.join(", ")}`
+                  ? `Max ${config.maxUploadHuman} · ${config.acceptedFormats.join(", ")}`
                   : t("upload.loading")}
               </span>
             </div>
@@ -259,40 +317,37 @@ export function UploadZone({ config, onUploaded }: UploadZoneProps) {
         />
       </label>
 
-      {/* Queue list (done/error items) */}
-      {queue.filter((q) => q.status === "done" || q.status === "error").length > 0 && (
+      {finishedItems.length > 0 && (
         <div style={{ marginTop: "var(--sp-2)", display: "flex", flexDirection: "column", gap: "var(--sp-1)" }}>
-          {queue
-            .filter((q) => q.status === "done" || q.status === "error")
-            .map((q, i) => (
-              <div
-                key={`${q.file.name}-${i}`}
+          {finishedItems.map((item) => (
+            <div
+              key={item.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--sp-2)",
+                fontSize: "var(--text-sm)",
+                animation: "fade-in var(--duration-fast) var(--ease)",
+              }}
+            >
+              {item.status === "done" ? (
+                <CheckCircle size={14} style={{ color: "var(--success)", flexShrink: 0 }} />
+              ) : (
+                <AlertCircle size={14} style={{ color: "var(--error)", flexShrink: 0 }} />
+              )}
+              <span
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--sp-2)",
-                  fontSize: "var(--text-sm)",
-                  animation: "fade-in var(--duration-fast) var(--ease)",
+                  color: item.status === "done" ? "var(--text-muted)" : "var(--error)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
                 }}
               >
-                {q.status === "done" ? (
-                  <CheckCircle size={14} style={{ color: "var(--success)", flexShrink: 0 }} />
-                ) : (
-                  <AlertCircle size={14} style={{ color: "var(--error)", flexShrink: 0 }} />
-                )}
-                <span
-                  style={{
-                    color: q.status === "done" ? "var(--text-muted)" : "var(--error)",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {q.file.name}
-                  {q.error && ` — ${q.error}`}
-                </span>
-              </div>
-            ))}
+                {item.file.name}
+                {item.error && ` — ${item.error}`}
+              </span>
+            </div>
+          ))}
         </div>
       )}
     </div>

@@ -48,6 +48,8 @@ func NewRouter(
 	r.With(timeout).Post("/api/media/bulk-delete", uploadHandler.BulkDeleteMedia)
 	r.With(timeout).Get("/api/settings/transcription", uploadHandler.APITranscriptionSettings)
 	r.With(timeout).Put("/api/settings/transcription", uploadHandler.APIUpdateTranscriptionSettings)
+	r.With(timeout).Get("/api/settings/runtime", uploadHandler.APIRuntimeSettings)
+	r.With(timeout).Put("/api/settings/runtime", uploadHandler.APIUpdateRuntimeSettings)
 	r.With(timeout).Get("/api/ui-config", uploadHandler.APIUIConfig)
 	r.With(timeout).Put("/api/ui-preference", uploadHandler.APIUpdateUITheme)
 	r.With(timeout).Get("/api/trigger-rules", triggerRuleHandler.APITriggerRules)

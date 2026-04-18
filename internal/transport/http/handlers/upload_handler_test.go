@@ -17,10 +17,12 @@ import (
 	"testing"
 	"time"
 
+	appsettingsapp "media-pipeline/internal/app/appsettings"
 	"media-pipeline/internal/app/command"
 	mediaapp "media-pipeline/internal/app/media"
 	transcriptionapp "media-pipeline/internal/app/transcription"
 	triggerapp "media-pipeline/internal/app/trigger"
+	appsettings "media-pipeline/internal/domain/appsettings"
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
 	domainsummary "media-pipeline/internal/domain/summary"
@@ -1228,6 +1230,15 @@ func newTestApp(t *testing.T) testWebApp {
 		repositories.NewTranscriptionProfileRepository(sqlDB),
 		domaintranscription.DefaultProfile("ru"),
 	)
+	runtimeSettingsSvc := appsettingsapp.NewService(
+		repositories.NewRuntimeSettingsRepository(sqlDB),
+		appsettings.Settings{
+			AutoUploadMinAgeSec: 60,
+			PreviewTimeoutSec:   600,
+			MaxUploadSizeMB:     10,
+		},
+	)
+	cancelRequestRepo := repositories.NewMediaCancelRequestRepository(sqlDB)
 	triggerRuleService := triggerapp.NewService(triggerRuleRepo)
 	uploadUC := command.NewUploadMediaUseCase(
 		mediaRepo,
@@ -1251,17 +1262,20 @@ func newTestApp(t *testing.T) testWebApp {
 		5*time.Minute,
 	)
 	requestSummaryUC := mediaapp.NewRequestSummaryUseCase(mediaRepo, transcriptRepo, jobRepo)
-	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, uploadStorage, audioStorage, previewStorage, screenshotStorage, logger)
+	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, jobRepo, cancelRequestRepo, triggerScreenshotRepo, uploadStorage, audioStorage, previewStorage, screenshotStorage, logger)
 	retryJobUC := mediaapp.NewRetryJobUseCase(mediaRepo, jobRepo, jobRepo, mediaRepo, logger)
+	historicalETA := mediaapp.NewHistoricalEstimator(jobRepo)
 	handler, err := handlers.NewUploadHandler(
 		uploadUC,
 		profileService,
+		runtimeSettingsSvc,
 		triggerRuleService,
 		transcriptViewUC,
 		requestSummaryUC,
 		deleteMediaUC,
 		retryJobUC,
 		jobRepo,
+		historicalETA,
 		templatesDir,
 		10*1024*1024,
 		logger,
