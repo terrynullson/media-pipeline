@@ -43,24 +43,33 @@ func NewRouter(
 	// File uploads manage their own limit via MaxBytesReader on the multipart reader.
 	limitJSON := LimitRequestBody(1 << 20) // 1 MiB
 
+	// adminToken guards mutating and destructive endpoints.
+	// When MEDIA_ACCESS_TOKEN is empty the middleware is a no-op (open access),
+	// so existing deployments without a token are unaffected.
+	// The same token already protects /api/media/{id}/status and /result.
+	adminToken := MediaTokenMiddleware(mediaAccessToken)
+
+	// Read-only endpoints — no auth required, safe to expose.
 	r.With(timeout).Get("/api/dashboard", uploadHandler.APIDashboard)
 	r.With(timeout).Get("/api/media", uploadHandler.APIMediaList)
 	r.With(timeout).Get("/api/jobs", uploadHandler.APIJobsList)
 	r.With(timeout).Get("/api/media/{mediaID}", uploadHandler.APIMediaDetail)
 	r.With(timeout).Get("/api/media/{mediaID}/transcript/export", uploadHandler.ExportTranscript)
-	r.With(timeout).Post("/api/media/{mediaID}/retry", uploadHandler.RetryJob)
-	r.With(timeout, limitJSON).Post("/api/media/bulk-delete", uploadHandler.BulkDeleteMedia)
 	r.With(timeout).Get("/api/settings/transcription", uploadHandler.APITranscriptionSettings)
-	r.With(timeout, limitJSON).Put("/api/settings/transcription", uploadHandler.APIUpdateTranscriptionSettings)
 	r.With(timeout).Get("/api/settings/runtime", uploadHandler.APIRuntimeSettings)
-	r.With(timeout, limitJSON).Put("/api/settings/runtime", uploadHandler.APIUpdateRuntimeSettings)
 	r.With(timeout).Get("/api/ui-config", uploadHandler.APIUIConfig)
-	r.With(timeout, limitJSON).Put("/api/ui-preference", uploadHandler.APIUpdateUITheme)
 	r.With(timeout).Get("/api/trigger-rules", triggerRuleHandler.APITriggerRules)
-	r.With(timeout, limitJSON).Post("/api/trigger-rules", triggerRuleHandler.APICreateTriggerRule)
-	r.With(timeout, limitJSON).Post("/api/trigger-rules/preview", triggerRuleHandler.APIPreviewTriggerRule)
-	r.With(timeout, limitJSON).Patch("/api/trigger-rules/{ruleID}", triggerRuleHandler.APIUpdateTriggerRule)
-	r.With(timeout).Delete("/api/trigger-rules/{ruleID}", triggerRuleHandler.APIDeleteTriggerRule)
+
+	// Mutating / destructive endpoints — require admin token when configured.
+	r.With(timeout, adminToken).Post("/api/media/{mediaID}/retry", uploadHandler.RetryJob)
+	r.With(timeout, adminToken, limitJSON).Post("/api/media/bulk-delete", uploadHandler.BulkDeleteMedia)
+	r.With(timeout, adminToken, limitJSON).Put("/api/settings/transcription", uploadHandler.APIUpdateTranscriptionSettings)
+	r.With(timeout, adminToken, limitJSON).Put("/api/settings/runtime", uploadHandler.APIUpdateRuntimeSettings)
+	r.With(timeout, adminToken, limitJSON).Put("/api/ui-preference", uploadHandler.APIUpdateUITheme)
+	r.With(timeout, adminToken, limitJSON).Post("/api/trigger-rules", triggerRuleHandler.APICreateTriggerRule)
+	r.With(timeout, adminToken, limitJSON).Post("/api/trigger-rules/preview", triggerRuleHandler.APIPreviewTriggerRule)
+	r.With(timeout, adminToken, limitJSON).Patch("/api/trigger-rules/{ruleID}", triggerRuleHandler.APIUpdateTriggerRule)
+	r.With(timeout, adminToken).Delete("/api/trigger-rules/{ruleID}", triggerRuleHandler.APIDeleteTriggerRule)
 
 	mediaToken := MediaTokenMiddleware(mediaAccessToken)
 
