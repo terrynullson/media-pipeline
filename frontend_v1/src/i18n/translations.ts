@@ -75,8 +75,28 @@ const translations = {
   "settings.vadFilter": { en: "VAD filter", ru: "VAD фильтр" },
   "settings.save": { en: "Save settings", ru: "Сохранить" },
   "settings.saved": { en: "Saved", ru: "Сохранено" },
+  "settings.saveError": { en: "Failed to save", ru: "Не удалось сохранить" },
   "settings.loading": { en: "Loading settings\u2026", ru: "Загрузка настроек\u2026" },
   "settings.loadError": { en: "Could not load settings. Check server connection.", ru: "Не удалось загрузить настройки. Проверьте соединение с сервером." },
+
+  // Section descriptions
+  "settings.transcriptionDesc": { en: "Configure the transcription engine: model, device, and quality parameters.", ru: "Параметры движка транскрипции: модель, устройство и качество." },
+  "settings.rulesDesc": { en: "Highlight important moments in transcripts using keyword or exact-phrase rules.", ru: "Подсветка важных моментов в транскриптах по ключевым словам и точным фразам." },
+
+  // Sub-groups
+  "settings.groupEngine": { en: "Engine", ru: "Движок" },
+  "settings.groupHardware": { en: "Hardware", ru: "Железо" },
+  "settings.groupQuality": { en: "Language & quality", ru: "Язык и качество" },
+
+  // Field hints
+  "settings.backendHint": { en: "Transcription engine library.", ru: "Библиотека-движок транскрипции." },
+  "settings.modelHint": { en: "Larger models are more accurate but slower and heavier.", ru: "Более крупные модели точнее, но медленнее и тяжелее." },
+  "settings.deviceHint": { en: "CPU works everywhere; CUDA needs an NVIDIA GPU.", ru: "CPU работает везде; CUDA требует NVIDIA GPU." },
+  "settings.computeTypeHintCPU": { en: "int8 is faster; float32 is more precise.", ru: "int8 быстрее; float32 точнее." },
+  "settings.computeTypeHintGPU": { en: "float16 is fastest; float32 is more precise.", ru: "float16 быстрее; float32 точнее." },
+  "settings.languageHint": { en: "ISO code (e.g. en, ru) or leave blank to auto-detect.", ru: "ISO-код (например en, ru) или оставьте пустым для авто-определения." },
+  "settings.beamSizeHint": { en: "Higher values improve accuracy but slow transcription (1–10).", ru: "Больше — точнее, но медленнее (1–10)." },
+  "settings.vadHint": { en: "Silences and non-speech segments are filtered out before transcription.", ru: "Тишина и не-речевые участки удаляются перед транскрипцией." },
 
   // ── Trigger rules ──
   "rules.title": { en: "Trigger Rules", ru: "Правила триггеров" },
