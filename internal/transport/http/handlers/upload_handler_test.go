@@ -29,7 +29,7 @@ import (
 	"media-pipeline/internal/domain/transcript"
 	domaintranscription "media-pipeline/internal/domain/transcription"
 	domaintrigger "media-pipeline/internal/domain/trigger"
-	"media-pipeline/internal/infra/db"
+	"media-pipeline/internal/infra/db/dbtest"
 	"media-pipeline/internal/infra/db/repositories"
 	infraRuntime "media-pipeline/internal/infra/runtime"
 	"media-pipeline/internal/infra/storage"
@@ -1183,27 +1183,15 @@ func newTestApp(t *testing.T) testWebApp {
 	t.Helper()
 
 	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "app.db")
 	uploadDir := filepath.Join(tempDir, "uploads")
 	audioDir := filepath.Join(tempDir, "audio")
 	previewDir := filepath.Join(tempDir, "previews")
 	screenshotsDir := filepath.Join(tempDir, "screenshots")
 
-	sqlDB, err := db.OpenSQLite(dbPath)
-	if err != nil {
-		t.Fatalf("OpenSQLite() error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = sqlDB.Close()
-	})
-
-	migrationsPath, err := infraRuntime.ResolvePath("internal/infra/db/migrations")
-	if err != nil {
-		t.Fatalf("ResolvePath(migrations) error = %v", err)
-	}
-	if err := db.RunMigrations(sqlDB, migrationsPath); err != nil {
-		t.Fatalf("RunMigrations() error = %v", err)
-	}
+	// dbtest.New skips the test when TEST_DATABASE_URL is unset; otherwise it
+	// returns a *sql.DB scoped to a freshly migrated schema and registers
+	// cleanup so the schema is dropped at the end of the test.
+	sqlDB := dbtest.New(t)
 
 	templatesDir, err := infraRuntime.ResolvePath("internal/transport/http/views/templates")
 	if err != nil {

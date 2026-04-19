@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -17,19 +18,24 @@ func NewTranscriptionProfileRepository(db *sql.DB) *TranscriptionProfileReposito
 	return &TranscriptionProfileRepository{db: db}
 }
 
+const transcriptionProfileColumns = `
+	id, backend, model_name, device, compute_type, language, beam_size,
+	vad_enabled, ui_theme, is_default, created_at, updated_at
+`
+
 func (r *TranscriptionProfileRepository) GetDefault(ctx context.Context) (transcription.Profile, bool, error) {
 	row := r.db.QueryRowContext(
 		ctx,
-		`SELECT id, backend, model_name, device, compute_type, language, beam_size, vad_enabled, ui_theme, is_default, created_at, updated_at
+		`SELECT `+transcriptionProfileColumns+`
 		 FROM transcription_profiles
-		 WHERE is_default = 1
+		 WHERE is_default = TRUE
 		 ORDER BY id ASC
 		 LIMIT 1`,
 	)
 
 	profile, ok, err := scanTranscriptionProfile(row)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return transcription.Profile{}, false, nil
 		}
 		return transcription.Profile{}, false, fmt.Errorf("get default transcription profile: %w", err)
@@ -43,15 +49,15 @@ func (r *TranscriptionProfileRepository) Save(ctx context.Context, profile trans
 	if err != nil {
 		return transcription.Profile{}, fmt.Errorf("begin transcription profile tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
-	updatedAt := profile.UpdatedAtUTC.Format(time.RFC3339)
+	updatedAt := profile.UpdatedAtUTC.UTC()
 	if profile.IsDefault {
 		if _, err := tx.ExecContext(
 			ctx,
 			`UPDATE transcription_profiles
-			 SET is_default = 0, updated_at = ?
-			 WHERE is_default = 1 AND id <> ?`,
+			 SET is_default = FALSE, updated_at = $1
+			 WHERE is_default = TRUE AND id <> $2`,
 			updatedAt,
 			profile.ID,
 		); err != nil {
@@ -60,48 +66,46 @@ func (r *TranscriptionProfileRepository) Save(ctx context.Context, profile trans
 	}
 
 	if profile.ID == 0 {
-		result, err := tx.ExecContext(
+		var id int64
+		err := tx.QueryRowContext(
 			ctx,
 			`INSERT INTO transcription_profiles (
-				backend, model_name, device, compute_type, language, beam_size, vad_enabled, ui_theme, is_default, created_at, updated_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				backend, model_name, device, compute_type, language, beam_size,
+				vad_enabled, ui_theme, is_default, created_at, updated_at
+			 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			 RETURNING id`,
 			profile.Backend,
 			profile.ModelName,
 			profile.Device,
 			profile.ComputeType,
 			profile.Language,
 			profile.BeamSize,
-			boolToInt(profile.VADEnabled),
+			profile.VADEnabled,
 			profile.UITheme,
-			boolToInt(profile.IsDefault),
-			profile.CreatedAtUTC.Format(time.RFC3339),
+			profile.IsDefault,
+			profile.CreatedAtUTC.UTC(),
 			updatedAt,
-		)
+		).Scan(&id)
 		if err != nil {
 			return transcription.Profile{}, fmt.Errorf("insert transcription profile: %w", err)
-		}
-
-		id, err := result.LastInsertId()
-		if err != nil {
-			return transcription.Profile{}, fmt.Errorf("transcription profile last insert id: %w", err)
 		}
 		profile.ID = id
 	} else {
 		result, err := tx.ExecContext(
 			ctx,
 			`UPDATE transcription_profiles
-			 SET backend = ?, model_name = ?, device = ?, compute_type = ?, language = ?, beam_size = ?,
-			     vad_enabled = ?, ui_theme = ?, is_default = ?, updated_at = ?
-			 WHERE id = ?`,
+			 SET backend = $1, model_name = $2, device = $3, compute_type = $4, language = $5, beam_size = $6,
+			     vad_enabled = $7, ui_theme = $8, is_default = $9, updated_at = $10
+			 WHERE id = $11`,
 			profile.Backend,
 			profile.ModelName,
 			profile.Device,
 			profile.ComputeType,
 			profile.Language,
 			profile.BeamSize,
-			boolToInt(profile.VADEnabled),
+			profile.VADEnabled,
 			profile.UITheme,
-			boolToInt(profile.IsDefault),
+			profile.IsDefault,
 			updatedAt,
 			profile.ID,
 		)
@@ -120,14 +124,9 @@ func (r *TranscriptionProfileRepository) Save(ctx context.Context, profile trans
 	return profile, nil
 }
 
-func scanTranscriptionProfile(scanner interface {
-	Scan(dest ...any) error
-}) (transcription.Profile, bool, error) {
+func scanTranscriptionProfile(scanner rowScanner) (transcription.Profile, bool, error) {
 	var profile transcription.Profile
-	var createdAt string
-	var updatedAt string
-	var vadEnabled int
-	var isDefault int
+	var createdAt, updatedAt time.Time
 	if err := scanner.Scan(
 		&profile.ID,
 		&profile.Backend,
@@ -136,33 +135,17 @@ func scanTranscriptionProfile(scanner interface {
 		&profile.ComputeType,
 		&profile.Language,
 		&profile.BeamSize,
-		&vadEnabled,
+		&profile.VADEnabled,
 		&profile.UITheme,
-		&isDefault,
+		&profile.IsDefault,
 		&createdAt,
 		&updatedAt,
 	); err != nil {
 		return transcription.Profile{}, false, err
 	}
 
-	var err error
-	profile.CreatedAtUTC, err = time.Parse(time.RFC3339, createdAt)
-	if err != nil {
-		return transcription.Profile{}, false, fmt.Errorf("parse transcription profile created_at: %w", err)
-	}
-	profile.UpdatedAtUTC, err = time.Parse(time.RFC3339, updatedAt)
-	if err != nil {
-		return transcription.Profile{}, false, fmt.Errorf("parse transcription profile updated_at: %w", err)
-	}
-	profile.VADEnabled = vadEnabled == 1
-	profile.IsDefault = isDefault == 1
+	profile.CreatedAtUTC = createdAt.UTC()
+	profile.UpdatedAtUTC = updatedAt.UTC()
 
 	return profile, true, nil
-}
-
-func boolToInt(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
 }

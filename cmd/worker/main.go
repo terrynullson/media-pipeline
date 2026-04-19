@@ -21,6 +21,7 @@ import (
 	"media-pipeline/internal/infra/db"
 	"media-pipeline/internal/infra/db/repositories"
 	infraMedia "media-pipeline/internal/infra/media"
+	"media-pipeline/internal/infra/recording"
 	infraRuntime "media-pipeline/internal/infra/runtime"
 	"media-pipeline/internal/infra/storage"
 	infraSummary "media-pipeline/internal/infra/summary"
@@ -50,9 +51,19 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	sqlDB, err := db.OpenSQLite(cfg.DBPath)
+	dsn, err := cfg.BuildDatabaseURL()
 	if err != nil {
-		logger.Error("open database", slog.Any("error", err), slog.String("db_path", cfg.DBPath))
+		logger.Error("resolve database URL", slog.Any("error", err))
+		os.Exit(1)
+	}
+	sqlDB, err := db.Open(ctx, db.Options{
+		DSN:             dsn,
+		MaxOpenConns:    cfg.DBMaxOpenConns,
+		MaxIdleConns:    cfg.DBMaxIdleConns,
+		ConnMaxLifetime: cfg.DBConnMaxLifetime(),
+	})
+	if err != nil {
+		logger.Error("open database", slog.Any("error", err), slog.String("db", cfg.SafeDSN()))
 		os.Exit(1)
 	}
 	defer sqlDB.Close()
@@ -62,7 +73,7 @@ func main() {
 		logger.Error("resolve migrations path", slog.Any("error", err))
 		os.Exit(1)
 	}
-	if err := db.RunMigrations(sqlDB, migrationsPath); err != nil {
+	if err := db.RunMigrations(ctx, sqlDB, migrationsPath); err != nil {
 		logger.Error("run migrations", slog.Any("error", err), slog.String("path", migrationsPath))
 		os.Exit(1)
 	}
@@ -107,7 +118,8 @@ func main() {
 	autoUploadSource := infraAutoUpload.NewLocalSource(cfg.AutoUploadDir, cfg.AutoUploadArchiveDir, cfg.AutoUploadMinAge()).
 		WithMinAgeProvider(runtimeSettingsSvc)
 	autoUploadService := autouploadapp.NewService(autoUploadSource, uploadUC, logger).
-		WithImportTracker(autoUploadImportRepo)
+		WithImportTracker(autoUploadImportRepo).
+		WithRecordingMetadataParser(recording.AutoUploadParser)
 
 	processor := appworker.NewProcessor(
 		jobRepo,
@@ -140,7 +152,7 @@ func main() {
 	runner := appworker.NewRunner(processor, autoUploadService, cfg.WorkerPollInterval(), logger)
 
 	logger.Info("starting worker",
-		slog.String("db_path", cfg.DBPath),
+		slog.String("db", cfg.SafeDSN()),
 		slog.String("upload_dir", cfg.UploadDir),
 		slog.String("auto_upload_dir", cfg.AutoUploadDir),
 		slog.String("auto_upload_archive_dir", cfg.AutoUploadArchiveDir),

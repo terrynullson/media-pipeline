@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -28,18 +29,18 @@ func (r *SummaryRepository) Save(ctx context.Context, item domainsummary.Summary
 		ctx,
 		`INSERT INTO summaries (
 			media_id, summary_text, highlights_json, provider, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(media_id) DO UPDATE SET
-			summary_text = excluded.summary_text,
-			highlights_json = excluded.highlights_json,
-			provider = excluded.provider,
-			updated_at = excluded.updated_at`,
+		 ) VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (media_id) DO UPDATE SET
+			summary_text    = EXCLUDED.summary_text,
+			highlights_json = EXCLUDED.highlights_json,
+			provider        = EXCLUDED.provider,
+			updated_at      = EXCLUDED.updated_at`,
 		item.MediaID,
 		item.SummaryText,
 		string(highlightsJSON),
 		item.Provider,
-		item.CreatedAtUTC.Format(time.RFC3339),
-		item.UpdatedAtUTC.Format(time.RFC3339),
+		item.CreatedAtUTC.UTC(),
+		item.UpdatedAtUTC.UTC(),
 	)
 	if err != nil {
 		return fmt.Errorf("save summary: %w", err)
@@ -53,14 +54,13 @@ func (r *SummaryRepository) GetByMediaID(ctx context.Context, mediaID int64) (do
 		ctx,
 		`SELECT id, media_id, summary_text, highlights_json, provider, created_at, updated_at
 		 FROM summaries
-		 WHERE media_id = ?`,
+		 WHERE media_id = $1`,
 		mediaID,
 	)
 
 	var item domainsummary.Summary
 	var highlightsJSON string
-	var createdAt string
-	var updatedAt string
+	var createdAt, updatedAt time.Time
 	err := row.Scan(
 		&item.ID,
 		&item.MediaID,
@@ -71,7 +71,7 @@ func (r *SummaryRepository) GetByMediaID(ctx context.Context, mediaID int64) (do
 		&updatedAt,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return domainsummary.Summary{}, false, nil
 		}
 		return domainsummary.Summary{}, false, fmt.Errorf("scan summary by media id %d: %w", mediaID, err)
@@ -81,14 +81,8 @@ func (r *SummaryRepository) GetByMediaID(ctx context.Context, mediaID int64) (do
 		return domainsummary.Summary{}, false, fmt.Errorf("unmarshal summary highlights: %w", err)
 	}
 
-	item.CreatedAtUTC, err = time.Parse(time.RFC3339, createdAt)
-	if err != nil {
-		return domainsummary.Summary{}, false, fmt.Errorf("parse summary created_at: %w", err)
-	}
-	item.UpdatedAtUTC, err = time.Parse(time.RFC3339, updatedAt)
-	if err != nil {
-		return domainsummary.Summary{}, false, fmt.Errorf("parse summary updated_at: %w", err)
-	}
+	item.CreatedAtUTC = createdAt.UTC()
+	item.UpdatedAtUTC = updatedAt.UTC()
 
 	return item, true, nil
 }

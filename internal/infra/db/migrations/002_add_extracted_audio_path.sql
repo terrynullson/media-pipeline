@@ -1,1 +1,1 @@
-ALTER TABLE media ADD COLUMN extracted_audio_path TEXT NOT NULL DEFAULT '';
+ALTER TABLE media ADD COLUMN IF NOT EXISTS extracted_audio_path TEXT NOT NULL DEFAULT '';

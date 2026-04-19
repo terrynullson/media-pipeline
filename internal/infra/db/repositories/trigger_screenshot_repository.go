@@ -26,9 +26,9 @@ func (r *TriggerScreenshotRepository) ReplaceForMedia(
 	if err != nil {
 		return fmt.Errorf("begin trigger screenshot tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, "DELETE FROM trigger_event_screenshots WHERE media_id = ?", mediaID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM trigger_event_screenshots WHERE media_id = $1`, mediaID); err != nil {
 		return fmt.Errorf("delete trigger screenshots by media: %w", err)
 	}
 
@@ -37,14 +37,14 @@ func (r *TriggerScreenshotRepository) ReplaceForMedia(
 			ctx,
 			`INSERT INTO trigger_event_screenshots (
 				media_id, trigger_event_id, timestamp_sec, image_path, width, height, created_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			 ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 			item.MediaID,
 			item.TriggerEventID,
 			item.TimestampSec,
 			item.ImagePath,
 			item.Width,
 			item.Height,
-			item.CreatedAtUTC.Format(time.RFC3339),
+			item.CreatedAtUTC.UTC(),
 		); err != nil {
 			return fmt.Errorf("insert trigger screenshot %d: %w", index, err)
 		}
@@ -62,7 +62,7 @@ func (r *TriggerScreenshotRepository) ListByMediaID(ctx context.Context, mediaID
 		ctx,
 		`SELECT id, media_id, trigger_event_id, timestamp_sec, image_path, width, height, created_at
 		 FROM trigger_event_screenshots
-		 WHERE media_id = ?
+		 WHERE media_id = $1
 		 ORDER BY trigger_event_id ASC, id ASC`,
 		mediaID,
 	)
@@ -92,7 +92,7 @@ func (r *TriggerScreenshotRepository) ListPathsByMediaID(ctx context.Context, me
 		ctx,
 		`SELECT image_path
 		 FROM trigger_event_screenshots
-		 WHERE media_id = ?
+		 WHERE media_id = $1
 		 ORDER BY id ASC`,
 		mediaID,
 	)
@@ -117,11 +117,9 @@ func (r *TriggerScreenshotRepository) ListPathsByMediaID(ctx context.Context, me
 	return paths, nil
 }
 
-func scanTriggerScreenshot(scanner interface {
-	Scan(dest ...any) error
-}) (domaintrigger.Screenshot, error) {
+func scanTriggerScreenshot(scanner rowScanner) (domaintrigger.Screenshot, error) {
 	var item domaintrigger.Screenshot
-	var createdAt string
+	var createdAt time.Time
 
 	if err := scanner.Scan(
 		&item.ID,
@@ -136,11 +134,7 @@ func scanTriggerScreenshot(scanner interface {
 		return domaintrigger.Screenshot{}, fmt.Errorf("scan trigger screenshot: %w", err)
 	}
 
-	parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
-	if err != nil {
-		return domaintrigger.Screenshot{}, fmt.Errorf("parse trigger screenshot created_at: %w", err)
-	}
-	item.CreatedAtUTC = parsedCreatedAt
+	item.CreatedAtUTC = createdAt.UTC()
 
 	return item, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -18,39 +19,50 @@ func NewAutoUploadImportRepository(db *sql.DB) *AutoUploadImportRepository {
 	return &AutoUploadImportRepository{db: db}
 }
 
-func (r *AutoUploadImportRepository) Begin(ctx context.Context, key autouploadapp.ImportKey, nowUTC time.Time) (autouploadapp.BeginImportResult, error) {
+// Begin claims an import slot for the given key. Returns Started=true when
+// this call inserted the row, Started=false (along with the existing status)
+// when another worker had already claimed it. We use INSERT ... ON CONFLICT
+// DO NOTHING RETURNING id so the "did we insert?" check is a single round
+// trip on PostgreSQL.
+func (r *AutoUploadImportRepository) Begin(
+	ctx context.Context,
+	key autouploadapp.ImportKey,
+	nowUTC time.Time,
+) (autouploadapp.BeginImportResult, error) {
 	fingerprint := autoUploadFingerprint(key)
+	now := nowUTC.UTC()
 
-	result, err := r.db.ExecContext(
+	var insertedID int64
+	err := r.db.QueryRowContext(
 		ctx,
-		`INSERT OR IGNORE INTO auto_upload_imports (
+		`INSERT INTO auto_upload_imports (
 			fingerprint, source_path, size_bytes, modified_at, status, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES ($1, $2, $3, $4, $5, $6, $6)
+		ON CONFLICT (fingerprint) DO NOTHING
+		RETURNING id`,
 		fingerprint,
 		key.RelativePath,
 		key.SizeBytes,
-		key.ModifiedAtUTC.UTC().Format(time.RFC3339Nano),
+		key.ModifiedAtUTC.UTC(),
 		autouploadapp.ImportStatusImporting,
-		nowUTC.UTC().Format(time.RFC3339),
-		nowUTC.UTC().Format(time.RFC3339),
-	)
-	if err != nil {
-		return autouploadapp.BeginImportResult{}, fmt.Errorf("begin auto-upload import: %w", err)
-	}
+		now,
+	).Scan(&insertedID)
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return autouploadapp.BeginImportResult{}, fmt.Errorf("begin auto-upload import rows affected: %w", err)
-	}
-	if rowsAffected > 0 {
+	switch {
+	case err == nil:
+		// fresh insert — we own the import
 		return autouploadapp.BeginImportResult{Started: true, Status: autouploadapp.ImportStatusImporting}, nil
+	case errors.Is(err, sql.ErrNoRows):
+		// existing row — fetch its current state
+	default:
+		return autouploadapp.BeginImportResult{}, fmt.Errorf("begin auto-upload import: %w", err)
 	}
 
 	var status string
 	var mediaID sql.NullInt64
 	if err := r.db.QueryRowContext(
 		ctx,
-		`SELECT status, media_id FROM auto_upload_imports WHERE fingerprint = ?`,
+		`SELECT status, media_id FROM auto_upload_imports WHERE fingerprint = $1`,
 		fingerprint,
 	).Scan(&status, &mediaID); err != nil {
 		return autouploadapp.BeginImportResult{}, fmt.Errorf("load existing auto-upload import: %w", err)
@@ -64,15 +76,20 @@ func (r *AutoUploadImportRepository) Begin(ctx context.Context, key autouploadap
 	return existing, nil
 }
 
-func (r *AutoUploadImportRepository) MarkImported(ctx context.Context, key autouploadapp.ImportKey, mediaID int64, nowUTC time.Time) error {
+func (r *AutoUploadImportRepository) MarkImported(
+	ctx context.Context,
+	key autouploadapp.ImportKey,
+	mediaID int64,
+	nowUTC time.Time,
+) error {
 	_, err := r.db.ExecContext(
 		ctx,
 		`UPDATE auto_upload_imports
-		 SET status = ?, media_id = ?, updated_at = ?
-		 WHERE fingerprint = ?`,
+		 SET status = $1, media_id = $2, updated_at = $3
+		 WHERE fingerprint = $4`,
 		autouploadapp.ImportStatusImported,
 		mediaID,
-		nowUTC.UTC().Format(time.RFC3339),
+		nowUTC.UTC(),
 		autoUploadFingerprint(key),
 	)
 	if err != nil {
@@ -84,7 +101,7 @@ func (r *AutoUploadImportRepository) MarkImported(ctx context.Context, key autou
 func (r *AutoUploadImportRepository) Delete(ctx context.Context, key autouploadapp.ImportKey) error {
 	_, err := r.db.ExecContext(
 		ctx,
-		`DELETE FROM auto_upload_imports WHERE fingerprint = ?`,
+		`DELETE FROM auto_upload_imports WHERE fingerprint = $1`,
 		autoUploadFingerprint(key),
 	)
 	if err != nil {

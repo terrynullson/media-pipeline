@@ -17,10 +17,12 @@ func NewTriggerRuleRepository(db *sql.DB) *TriggerRuleRepository {
 	return &TriggerRuleRepository{db: db}
 }
 
+const triggerRuleColumns = `id, name, category, pattern, match_mode, enabled, created_at, updated_at`
+
 func (r *TriggerRuleRepository) List(ctx context.Context) ([]domaintrigger.Rule, error) {
 	rows, err := r.db.QueryContext(
 		ctx,
-		`SELECT id, name, category, pattern, match_mode, enabled, created_at, updated_at
+		`SELECT `+triggerRuleColumns+`
 		 FROM trigger_rules
 		 ORDER BY enabled DESC, category ASC, name ASC, id ASC`,
 	)
@@ -48,9 +50,9 @@ func (r *TriggerRuleRepository) List(ctx context.Context) ([]domaintrigger.Rule,
 func (r *TriggerRuleRepository) ListEnabled(ctx context.Context) ([]domaintrigger.Rule, error) {
 	rows, err := r.db.QueryContext(
 		ctx,
-		`SELECT id, name, category, pattern, match_mode, enabled, created_at, updated_at
+		`SELECT `+triggerRuleColumns+`
 		 FROM trigger_rules
-		 WHERE enabled = 1
+		 WHERE enabled = TRUE
 		 ORDER BY category ASC, name ASC, id ASC`,
 	)
 	if err != nil {
@@ -75,25 +77,22 @@ func (r *TriggerRuleRepository) ListEnabled(ctx context.Context) ([]domaintrigge
 }
 
 func (r *TriggerRuleRepository) Create(ctx context.Context, rule domaintrigger.Rule) (domaintrigger.Rule, error) {
-	result, err := r.db.ExecContext(
+	var id int64
+	err := r.db.QueryRowContext(
 		ctx,
 		`INSERT INTO trigger_rules (name, category, pattern, match_mode, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING id`,
 		rule.Name,
 		rule.Category,
 		rule.Pattern,
 		rule.MatchMode,
-		triggerBoolToInt(rule.Enabled),
-		rule.CreatedAtUTC.Format(time.RFC3339),
-		rule.UpdatedAtUTC.Format(time.RFC3339),
-	)
+		rule.Enabled,
+		rule.CreatedAtUTC.UTC(),
+		rule.UpdatedAtUTC.UTC(),
+	).Scan(&id)
 	if err != nil {
 		return domaintrigger.Rule{}, fmt.Errorf("insert trigger rule: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return domaintrigger.Rule{}, fmt.Errorf("trigger rule last insert id: %w", err)
 	}
 	rule.ID = id
 
@@ -104,10 +103,10 @@ func (r *TriggerRuleRepository) SetEnabled(ctx context.Context, id int64, enable
 	result, err := r.db.ExecContext(
 		ctx,
 		`UPDATE trigger_rules
-		 SET enabled = ?, updated_at = ?
-		 WHERE id = ?`,
-		triggerBoolToInt(enabled),
-		nowUTC.Format(time.RFC3339),
+		 SET enabled = $1, updated_at = $2
+		 WHERE id = $3`,
+		enabled,
+		nowUTC.UTC(),
 		id,
 	)
 	if err != nil {
@@ -118,7 +117,7 @@ func (r *TriggerRuleRepository) SetEnabled(ctx context.Context, id int64, enable
 }
 
 func (r *TriggerRuleRepository) Delete(ctx context.Context, id int64) error {
-	result, err := r.db.ExecContext(ctx, "DELETE FROM trigger_rules WHERE id = ?", id)
+	result, err := r.db.ExecContext(ctx, `DELETE FROM trigger_rules WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete trigger rule: %w", err)
 	}
@@ -126,13 +125,9 @@ func (r *TriggerRuleRepository) Delete(ctx context.Context, id int64) error {
 	return ensureTriggerRuleRowsAffected(result, id, "delete trigger rule")
 }
 
-func scanTriggerRule(scanner interface {
-	Scan(dest ...any) error
-}) (domaintrigger.Rule, error) {
+func scanTriggerRule(scanner rowScanner) (domaintrigger.Rule, error) {
 	var item domaintrigger.Rule
-	var enabled int
-	var createdAt string
-	var updatedAt string
+	var createdAt, updatedAt time.Time
 
 	if err := scanner.Scan(
 		&item.ID,
@@ -140,24 +135,15 @@ func scanTriggerRule(scanner interface {
 		&item.Category,
 		&item.Pattern,
 		&item.MatchMode,
-		&enabled,
+		&item.Enabled,
 		&createdAt,
 		&updatedAt,
 	); err != nil {
 		return domaintrigger.Rule{}, fmt.Errorf("scan trigger rule: %w", err)
 	}
 
-	item.Enabled = enabled == 1
-	parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
-	if err != nil {
-		return domaintrigger.Rule{}, fmt.Errorf("parse trigger rule created_at: %w", err)
-	}
-	parsedUpdatedAt, err := time.Parse(time.RFC3339, updatedAt)
-	if err != nil {
-		return domaintrigger.Rule{}, fmt.Errorf("parse trigger rule updated_at: %w", err)
-	}
-	item.CreatedAtUTC = parsedCreatedAt
-	item.UpdatedAtUTC = parsedUpdatedAt
+	item.CreatedAtUTC = createdAt.UTC()
+	item.UpdatedAtUTC = updatedAt.UTC()
 
 	return item, nil
 }
@@ -172,11 +158,4 @@ func ensureTriggerRuleRowsAffected(result sql.Result, id int64, action string) e
 	}
 
 	return nil
-}
-
-func triggerBoolToInt(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
 }

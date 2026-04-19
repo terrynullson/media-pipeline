@@ -33,6 +33,14 @@ type UploadMediaInput struct {
 	StartedAtUTC        time.Time
 	FinishedAtUTC       time.Time
 	RuntimeSnapshotJSON string
+
+	// Optional broadcast metadata parsed by the caller from OriginalName via
+	// infra/recording.ParseFilename. When the filename does not match the
+	// recorder convention these stay zero-valued and the airtime fields on
+	// the media row are left NULL.
+	SourceName            string
+	RecordingStartedAtUTC *time.Time
+	RawRecordingLabel     string
 }
 
 type UploadMediaResult struct {
@@ -114,6 +122,13 @@ func (u *UploadMediaUseCase) Upload(ctx context.Context, in UploadMediaInput) (U
 		Status:              media.StatusQueued,
 		CreatedAtUTC:        nowUTC,
 		UpdatedAtUTC:        nowUTC,
+
+		// Optional broadcast metadata. When the original filename did not match
+		// the recorder convention these fields are zero-valued and the repository
+		// stores NULL for the airtime columns.
+		SourceName:            in.SourceName,
+		RecordingStartedAtUTC: in.RecordingStartedAtUTC,
+		RawRecordingLabel:     in.RawRecordingLabel,
 	})
 	if err != nil {
 		logger.Error("create media record failed",

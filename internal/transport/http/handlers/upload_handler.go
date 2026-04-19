@@ -25,6 +25,19 @@ import (
 	"media-pipeline/internal/observability"
 )
 
+// RecordingMetadata mirrors autoupload.RecordingMetadata. Defined here so the
+// transport layer does not import infra directly. The composition root wires
+// a parser implemented in internal/infra/recording.
+type RecordingMetadata struct {
+	SourceName        string
+	StartedAtUTC      time.Time
+	RawRecordingLabel string
+}
+
+// RecordingMetadataParser is an optional dependency. When nil, uploads
+// proceed without airtime fields.
+type RecordingMetadataParser func(name string) (*RecordingMetadata, error)
+
 type UploadHandler struct {
 	uploadUC         *command.UploadMediaUseCase
 	transcriptionSvc TranscriptionSettingsService
@@ -36,6 +49,7 @@ type UploadHandler struct {
 	retryJobUC       RetryJobService
 	jobReader        MediaJobReader
 	historicalETA    HistoricalEstimatorService
+	parseRecording   RecordingMetadataParser
 	tmpl             *template.Template
 	maxUploadSizeB   int64
 	maxRequestBodyB  int64
@@ -43,6 +57,13 @@ type UploadHandler struct {
 	listItemsMaxSize int
 	maxSettingsBodyB int64
 	logger           *slog.Logger
+}
+
+// WithRecordingMetadataParser injects a parser that derives broadcast
+// metadata from the uploaded filename.
+func (h *UploadHandler) WithRecordingMetadataParser(parser RecordingMetadataParser) *UploadHandler {
+	h.parseRecording = parser
+	return h
 }
 
 type TranscriptionSettingsService interface {
@@ -296,7 +317,7 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		slog.Int64("declared_size_bytes", fileHeader.Size),
 	)
 
-	result, err := h.uploadUC.Upload(r.Context(), command.UploadMediaInput{
+	uploadInput := command.UploadMediaInput{
 		OriginalName:        fileHeader.Filename,
 		MIMEType:            normalizeMIMEType(fileHeader.Header.Get("Content-Type")),
 		SizeBytes:           fileHeader.Size,
@@ -304,7 +325,19 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		Content:             file,
 		StartedAtUTC:        startedAtUTC,
 		RuntimeSnapshotJSON: buildRuntimeSnapshotJSON(r),
-	})
+	}
+	if h.parseRecording != nil {
+		meta, parseErr := h.parseRecording(fileHeader.Filename)
+		if parseErr != nil {
+			logger.Warn("recording filename parse failed", slog.Any("error", parseErr), slog.String("filename", fileHeader.Filename))
+		} else if meta != nil {
+			startedCopy := meta.StartedAtUTC.UTC()
+			uploadInput.SourceName = meta.SourceName
+			uploadInput.RecordingStartedAtUTC = &startedCopy
+			uploadInput.RawRecordingLabel = meta.RawRecordingLabel
+		}
+	}
+	result, err := h.uploadUC.Upload(r.Context(), uploadInput)
 	if err != nil {
 		logger.Warn("upload failed", slog.Any("error", err), slog.String("filename", fileHeader.Filename))
 		h.renderUploadFailure(w, r, h.userFacingUploadError(err))

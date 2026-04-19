@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,8 +28,7 @@ func (r *RuntimeSettingsRepository) Get(ctx context.Context) (appsettings.Settin
 	)
 
 	var item appsettings.Settings
-	var createdAt string
-	var updatedAt string
+	var createdAt, updatedAt time.Time
 	if err := row.Scan(
 		&item.ID,
 		&item.AutoUploadMinAgeSec,
@@ -37,21 +37,14 @@ func (r *RuntimeSettingsRepository) Get(ctx context.Context) (appsettings.Settin
 		&createdAt,
 		&updatedAt,
 	); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return appsettings.Settings{}, false, nil
 		}
 		return appsettings.Settings{}, false, fmt.Errorf("get runtime settings: %w", err)
 	}
 
-	var err error
-	item.CreatedAtUTC, err = time.Parse(time.RFC3339, createdAt)
-	if err != nil {
-		return appsettings.Settings{}, false, fmt.Errorf("parse runtime settings created_at: %w", err)
-	}
-	item.UpdatedAtUTC, err = time.Parse(time.RFC3339, updatedAt)
-	if err != nil {
-		return appsettings.Settings{}, false, fmt.Errorf("parse runtime settings updated_at: %w", err)
-	}
+	item.CreatedAtUTC = createdAt.UTC()
+	item.UpdatedAtUTC = updatedAt.UTC()
 
 	return item, true, nil
 }
@@ -65,18 +58,18 @@ func (r *RuntimeSettingsRepository) Save(ctx context.Context, settings appsettin
 		ctx,
 		`INSERT INTO runtime_settings (
 			id, auto_upload_min_age_sec, preview_timeout_sec, max_upload_size_mb, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET
-		 	auto_upload_min_age_sec = excluded.auto_upload_min_age_sec,
-		 	preview_timeout_sec = excluded.preview_timeout_sec,
-		 	max_upload_size_mb = excluded.max_upload_size_mb,
-		 	updated_at = excluded.updated_at`,
+		 ) VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (id) DO UPDATE SET
+			auto_upload_min_age_sec = EXCLUDED.auto_upload_min_age_sec,
+			preview_timeout_sec     = EXCLUDED.preview_timeout_sec,
+			max_upload_size_mb      = EXCLUDED.max_upload_size_mb,
+			updated_at              = EXCLUDED.updated_at`,
 		settings.ID,
 		settings.AutoUploadMinAgeSec,
 		settings.PreviewTimeoutSec,
 		settings.MaxUploadSizeMB,
-		settings.CreatedAtUTC.Format(time.RFC3339),
-		settings.UpdatedAtUTC.Format(time.RFC3339),
+		settings.CreatedAtUTC.UTC(),
+		settings.UpdatedAtUTC.UTC(),
 	)
 	if err != nil {
 		return appsettings.Settings{}, fmt.Errorf("save runtime settings: %w", err)

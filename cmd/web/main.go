@@ -22,6 +22,7 @@ import (
 	"media-pipeline/internal/infra/db"
 	"media-pipeline/internal/infra/db/repositories"
 	inframedia "media-pipeline/internal/infra/media"
+	"media-pipeline/internal/infra/recording"
 	infraRuntime "media-pipeline/internal/infra/runtime"
 	"media-pipeline/internal/infra/storage"
 	"media-pipeline/internal/observability"
@@ -50,9 +51,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	sqlDB, err := db.OpenSQLite(cfg.DBPath)
+	// Bootstrap context spans DB open, migrations, and signal install. The
+	// signal-aware ctx replaces it once the server is ready to accept traffic.
+	bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer bootstrapCancel()
+
+	dsn, err := cfg.BuildDatabaseURL()
 	if err != nil {
-		logger.Error("open database", slog.Any("error", err), slog.String("db_path", cfg.DBPath))
+		logger.Error("resolve database URL", slog.Any("error", err))
+		os.Exit(1)
+	}
+	sqlDB, err := db.Open(bootstrapCtx, db.Options{
+		DSN:             dsn,
+		MaxOpenConns:    cfg.DBMaxOpenConns,
+		MaxIdleConns:    cfg.DBMaxIdleConns,
+		ConnMaxLifetime: cfg.DBConnMaxLifetime(),
+	})
+	if err != nil {
+		logger.Error("open database", slog.Any("error", err), slog.String("db", cfg.SafeDSN()))
 		os.Exit(1)
 	}
 	defer sqlDB.Close()
@@ -63,7 +79,7 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("starting migrations", slog.String("path", migrationsPath))
-	if err = db.RunMigrations(sqlDB, migrationsPath); err != nil {
+	if err = db.RunMigrations(bootstrapCtx, sqlDB, migrationsPath); err != nil {
 		logger.Error("run migrations", slog.Any("error", err), slog.String("path", migrationsPath))
 		os.Exit(1)
 	}
@@ -134,6 +150,10 @@ func main() {
 		logger.Error("create upload handler", slog.Any("error", err))
 		os.Exit(1)
 	}
+	// Wire the recording-filename parser so airtime fields (source_name,
+	// recording_started_at, raw_recording_label) are populated for uploads
+	// whose original filename matches the recorder convention.
+	uploadHandler.WithRecordingMetadataParser(recording.HandlersParser)
 	mediaStatusUC := mediaapp.NewMediaStatusUseCase(mediaRepo, transcriptRepo, jobRepo)
 	machineAPIHandler := handlers.NewMachineAPIHandler(mediaStatusUC, transcriptViewUC, logger)
 	workerStatusUC := mediaapp.NewWorkerStatusUseCase(jobRepo)
@@ -169,7 +189,7 @@ func main() {
 
 	logger.Info("starting web server",
 		slog.String("addr", addr),
-		slog.String("db_path", cfg.DBPath),
+		slog.String("db", cfg.SafeDSN()),
 		slog.String("upload_dir", cfg.UploadDir),
 		slog.String("preview_dir", cfg.PreviewDir),
 		slog.Int64("max_upload_bytes", cfg.MaxUploadSizeBytes()),

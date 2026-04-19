@@ -28,11 +28,26 @@ type Candidate struct {
 	ModifiedAtUTC time.Time
 }
 
+// RecordingMetadata describes optional broadcast metadata derived from a
+// candidate's filename. Returning a nil pointer means "not a recorder
+// filename"; the upload then proceeds without airtime fields. Implementations
+// live in infra (see internal/infra/recording) so that this app-layer package
+// stays free of infra imports.
+type RecordingMetadata struct {
+	SourceName        string
+	StartedAtUTC      time.Time
+	RawRecordingLabel string
+}
+
+// RecordingMetadataParser is injected by the composition root.
+type RecordingMetadataParser func(name string) (*RecordingMetadata, error)
+
 type Service struct {
-	source   Source
-	uploader Uploader
-	tracker  ImportTracker
-	logger   *slog.Logger
+	source         Source
+	uploader       Uploader
+	tracker        ImportTracker
+	parseRecording RecordingMetadataParser
+	logger         *slog.Logger
 }
 
 type ImportTracker interface {
@@ -51,6 +66,14 @@ func NewService(source Source, uploader Uploader, logger *slog.Logger) *Service 
 
 func (s *Service) WithImportTracker(tracker ImportTracker) *Service {
 	s.tracker = tracker
+	return s
+}
+
+// WithRecordingMetadataParser injects a parser used to derive airtime fields
+// from a candidate's filename. When unset, uploads proceed with empty
+// broadcast metadata.
+func (s *Service) WithRecordingMetadataParser(parser RecordingMetadataParser) *Service {
+	s.parseRecording = parser
 	return s
 }
 
@@ -107,12 +130,26 @@ func (s *Service) ImportNext(ctx context.Context) (bool, error) {
 	}
 
 	startedAtUTC := time.Now().UTC()
-	result, err := s.uploader.Upload(ctx, command.UploadMediaInput{
+	uploadInput := command.UploadMediaInput{
 		OriginalName: candidate.Name,
 		SizeBytes:    candidate.SizeBytes,
 		Content:      reader,
 		StartedAtUTC: startedAtUTC,
-	})
+	}
+	if s.parseRecording != nil {
+		meta, parseErr := s.parseRecording(candidate.Name)
+		if parseErr != nil {
+			// Filename looked structured but values were nonsense — log and
+			// continue without airtime metadata. Not a hard failure.
+			logger.Warn("recording filename parse failed", slog.Any("error", parseErr))
+		} else if meta != nil {
+			startedCopy := meta.StartedAtUTC.UTC()
+			uploadInput.SourceName = meta.SourceName
+			uploadInput.RecordingStartedAtUTC = &startedCopy
+			uploadInput.RawRecordingLabel = meta.RawRecordingLabel
+		}
+	}
+	result, err := s.uploader.Upload(ctx, uploadInput)
 	if err != nil {
 		_ = reader.Close()
 		if s.tracker != nil {
