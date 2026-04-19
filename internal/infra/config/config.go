@@ -1,43 +1,66 @@
 package config
 
 import (
+	"fmt"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
+// Config is the loaded runtime configuration. It is intentionally a flat,
+// dependency-free value object so domain/app code never has to import it.
 type Config struct {
-	AppPort                  string
-	DBPath                   string
-	UploadDir                string
-	AutoUploadDir            string
-	AutoUploadArchiveDir     string
-	AudioDir                 string
-	PreviewDir               string
-	ScreenshotsDir           string
-	FFmpegBinary             string
-	PythonBinary             string
-	TranscribeScript         string
-	TranscribeLanguage       string
-	MaxUploadSizeMB          int64
-	WorkerPollIntervalMS     int64
-	AutoUploadMinAgeSec      int64
-	FFmpegTimeoutSec         int64
-	PreviewTimeoutSec        int64
-	ScreenshotTimeoutSec     int64
-	TranscribeTimeoutSec     int64
-	OllamaURL                string
-	OllamaModel              string
-	SummaryProvider          string
-	MediaAccessToken         string // env: MEDIA_ACCESS_TOKEN, default: "" (disabled)
-	HTTPRequestTimeoutSec    int64  // env: HTTP_REQUEST_TIMEOUT_SEC, default: 30
-	UploadRateLimitPerMinute int64  // env: UPLOAD_RATE_LIMIT_PER_MINUTE, default: 0 (disabled)
+	AppPort              string
+	DatabaseURL          string // canonical PostgreSQL DSN, see BuildDatabaseURL
+	DBHost               string
+	DBPort               string
+	DBName               string
+	DBUser               string
+	DBPassword           string
+	DBSSLMode            string
+	DBMaxOpenConns       int
+	DBMaxIdleConns       int
+	DBConnMaxLifetimeSec int64
+	UploadDir            string
+	AutoUploadDir        string
+	AutoUploadArchiveDir string
+	AudioDir             string
+	PreviewDir           string
+	ScreenshotsDir       string
+	FFmpegBinary         string
+	PythonBinary         string
+	TranscribeScript     string
+	TranscribeLanguage   string
+	MaxUploadSizeMB      int64
+	WorkerPollIntervalMS int64
+	AutoUploadMinAgeSec  int64
+	FFmpegTimeoutSec     int64
+	PreviewTimeoutSec    int64
+	ScreenshotTimeoutSec int64
+	TranscribeTimeoutSec int64
+	OllamaURL            string
+	OllamaModel          string
+	SummaryProvider      string
+	MediaAccessToken     string
+	HTTPRequestTimeoutSec    int64
+	UploadRateLimitPerMinute int64
 }
 
 func Load() Config {
 	cfg := Config{
 		AppPort:                  getEnv("APP_PORT", "8080"),
-		DBPath:                   getEnv("DB_PATH", "./data/app.db"),
+		DatabaseURL:              getEnv("DATABASE_URL", ""),
+		DBHost:                   getEnv("DB_HOST", ""),
+		DBPort:                   getEnv("DB_PORT", "5432"),
+		DBName:                   getEnv("DB_NAME", ""),
+		DBUser:                   getEnv("DB_USER", ""),
+		DBPassword:               getEnv("DB_PASSWORD", ""),
+		DBSSLMode:                getEnv("DB_SSLMODE", "disable"),
+		DBMaxOpenConns:           int(getEnvInt64("DB_MAX_OPEN_CONNS", 25)),
+		DBMaxIdleConns:           int(getEnvInt64("DB_MAX_IDLE_CONNS", 5)),
+		DBConnMaxLifetimeSec:     getEnvInt64("DB_CONN_MAX_LIFETIME_SEC", 1800),
 		UploadDir:                getEnv("UPLOAD_DIR", "./data/uploads"),
 		AutoUploadDir:            getEnv("AUTO_UPLOAD_DIR", "./data/auto_uploads"),
 		AutoUploadArchiveDir:     getEnv("AUTO_UPLOAD_ARCHIVE_DIR", "./data/auto_uploads_imported"),
@@ -89,6 +112,69 @@ func Load() Config {
 	return cfg
 }
 
+// BuildDatabaseURL returns the resolved PostgreSQL DSN.
+//
+// Precedence:
+//  1. DATABASE_URL — used verbatim if set.
+//  2. discrete DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD/DB_SSLMODE — assembled
+//     into a postgres:// URL.
+//
+// Returns an error when neither form is configured. Never logs or returns the
+// password in plaintext via SafeDSN.
+func (c Config) BuildDatabaseURL() (string, error) {
+	if strings.TrimSpace(c.DatabaseURL) != "" {
+		return c.DatabaseURL, nil
+	}
+	if c.DBHost == "" || c.DBName == "" || c.DBUser == "" {
+		return "", fmt.Errorf("database is not configured: set DATABASE_URL or DB_HOST/DB_NAME/DB_USER")
+	}
+	host := c.DBHost
+	if c.DBPort != "" {
+		host = c.DBHost + ":" + c.DBPort
+	}
+	u := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(c.DBUser, c.DBPassword),
+		Host:   host,
+		Path:   "/" + c.DBName,
+	}
+	q := u.Query()
+	if c.DBSSLMode != "" {
+		q.Set("sslmode", c.DBSSLMode)
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+// SafeDSN returns a redacted DSN suitable for logging — host, port, db, sslmode
+// are preserved; the password is replaced with "***".
+func (c Config) SafeDSN() string {
+	raw, err := c.BuildDatabaseURL()
+	if err != nil || raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		// Treat as opaque KV-style DSN: do a coarse password=*** replacement.
+		return redactKVPassword(raw)
+	}
+	if u.User != nil {
+		name := u.User.Username()
+		u.User = url.UserPassword(name, "***")
+	}
+	return u.String()
+}
+
+func redactKVPassword(dsn string) string {
+	parts := strings.Fields(dsn)
+	for i, part := range parts {
+		if strings.HasPrefix(strings.ToLower(part), "password=") {
+			parts[i] = "password=***"
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
 func (c Config) MaxUploadSizeBytes() int64 {
 	return c.MaxUploadSizeMB * 1024 * 1024
 }
@@ -119,6 +205,10 @@ func (c Config) TranscribeTimeout() time.Duration {
 
 func (c Config) HTTPRequestTimeout() time.Duration {
 	return time.Duration(c.HTTPRequestTimeoutSec) * time.Second
+}
+
+func (c Config) DBConnMaxLifetime() time.Duration {
+	return time.Duration(c.DBConnMaxLifetimeSec) * time.Second
 }
 
 func getEnv(key, fallback string) string {

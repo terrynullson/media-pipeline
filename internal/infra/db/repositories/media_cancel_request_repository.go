@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -19,10 +20,10 @@ func (r *MediaCancelRequestRepository) Request(ctx context.Context, mediaID int6
 	_, err := r.db.ExecContext(
 		ctx,
 		`INSERT INTO media_cancel_requests (media_id, requested_at)
-		 VALUES (?, ?)
-		 ON CONFLICT(media_id) DO UPDATE SET requested_at = excluded.requested_at`,
+		 VALUES ($1, $2)
+		 ON CONFLICT (media_id) DO UPDATE SET requested_at = EXCLUDED.requested_at`,
 		mediaID,
-		requestedAtUTC.Format(time.RFC3339),
+		requestedAtUTC.UTC(),
 	)
 	if err != nil {
 		return fmt.Errorf("request media cancellation: %w", err)
@@ -34,20 +35,20 @@ func (r *MediaCancelRequestRepository) Exists(ctx context.Context, mediaID int64
 	var exists int
 	err := r.db.QueryRowContext(
 		ctx,
-		`SELECT 1 FROM media_cancel_requests WHERE media_id = ? LIMIT 1`,
+		`SELECT 1 FROM media_cancel_requests WHERE media_id = $1 LIMIT 1`,
 		mediaID,
 	).Scan(&exists)
 	if err == nil {
 		return true, nil
 	}
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	return false, fmt.Errorf("check media cancellation request: %w", err)
 }
 
 func (r *MediaCancelRequestRepository) Delete(ctx context.Context, mediaID int64) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM media_cancel_requests WHERE media_id = ?`, mediaID)
+	_, err := r.db.ExecContext(ctx, `DELETE FROM media_cancel_requests WHERE media_id = $1`, mediaID)
 	if err != nil {
 		return fmt.Errorf("delete media cancellation request: %w", err)
 	}

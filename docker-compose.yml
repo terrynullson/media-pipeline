@@ -1,4 +1,28 @@
+# Docker Compose orchestrates the three pieces needed to run the pipeline
+# locally: the web server, the worker, and the PostgreSQL instance both
+# binaries connect to. The DATABASE_URL inside the containers points at the
+# `postgres` service hostname; .env.example's value is meant for host-side
+# `go run` and is intentionally overridden here.
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: media_pipeline
+      POSTGRES_PASSWORD: media_pipeline
+      POSTGRES_DB: media_pipeline
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      # pg_isready returns 0 only when the cluster accepts connections.
+      # The compose `depends_on: condition: service_healthy` clause uses this
+      # signal so the app/worker do not race the database during startup.
+      test: ["CMD-SHELL", "pg_isready -U media_pipeline -d media_pipeline"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   app:
     build:
       context: .
@@ -7,8 +31,14 @@ services:
       - "8080:8080"
     env_file:
       - .env.example
+    environment:
+      DATABASE_URL: postgres://media_pipeline:media_pipeline@postgres:5432/media_pipeline?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./data:/app/data
+
   worker:
     build:
       context: .
@@ -16,5 +46,13 @@ services:
     command: ["/app/worker"]
     env_file:
       - .env.example
+    environment:
+      DATABASE_URL: postgres://media_pipeline:media_pipeline@postgres:5432/media_pipeline?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./data:/app/data
+
+volumes:
+  postgres_data:

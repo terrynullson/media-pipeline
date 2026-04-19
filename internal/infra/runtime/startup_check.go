@@ -1,12 +1,14 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"time"
 
 	"media-pipeline/internal/infra/config"
+	"media-pipeline/internal/infra/db"
 )
 
 // StartupCheckResult holds errors and warnings from startup dependency checks.
@@ -51,10 +53,8 @@ func CheckWorkerDependencies(cfg config.Config) StartupCheckResult {
 		checkWritableDir(&result, dir.path, dir.envName)
 	}
 
-	// DB directory must exist (or be creatable)
-	if cfg.DBPath != "" {
-		checkWritableDir(&result, filepath.Dir(cfg.DBPath), "DB_PATH (directory)")
-	}
+	// PostgreSQL reachability
+	checkPostgres(&result, cfg)
 
 	return result
 }
@@ -63,12 +63,37 @@ func CheckWorkerDependencies(cfg config.Config) StartupCheckResult {
 func CheckWebDependencies(cfg config.Config) StartupCheckResult {
 	var result StartupCheckResult
 
-	if cfg.DBPath != "" {
-		checkWritableDir(&result, filepath.Dir(cfg.DBPath), "DB_PATH (directory)")
-	}
 	checkWritableDir(&result, cfg.UploadDir, "UPLOAD_DIR")
+	checkPostgres(&result, cfg)
 
 	return result
+}
+
+// checkPostgres builds the DSN, opens a short-lived database/sql connection,
+// and pings it. Failures are reported as errors. The DSN is never logged
+// in plaintext — only host/port/db/sslmode via SafeDSN().
+func checkPostgres(result *StartupCheckResult, cfg config.Config) {
+	dsn, err := cfg.BuildDatabaseURL()
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("database config: %v", err))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sqlDB, err := db.Open(ctx, db.Options{
+		DSN:          dsn,
+		MaxOpenConns: 1,
+		MaxIdleConns: 1,
+		PingTimeout:  3 * time.Second,
+	})
+	if err != nil {
+		result.Errors = append(result.Errors,
+			fmt.Sprintf("postgres unreachable (%s): %v", cfg.SafeDSN(), err))
+		return
+	}
+	_ = sqlDB.Close()
 }
 
 // checkBinary appends an error if the named binary cannot be found in PATH or

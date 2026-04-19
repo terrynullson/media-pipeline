@@ -1,4 +1,4 @@
 CREATE TABLE IF NOT EXISTS media_cancel_requests (
-    media_id INTEGER PRIMARY KEY,
-    requested_at TEXT NOT NULL
+    media_id     BIGINT      PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+    requested_at TIMESTAMPTZ NOT NULL
 );

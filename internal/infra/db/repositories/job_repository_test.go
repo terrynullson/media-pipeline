@@ -2,15 +2,11 @@ package repositories
 
 import (
 	"context"
-	"database/sql"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
-	"media-pipeline/internal/infra/db"
-	infraRuntime "media-pipeline/internal/infra/runtime"
 )
 
 func TestJobRepository_ClaimNextPendingAndMarkDone(t *testing.T) {
@@ -459,28 +455,6 @@ func TestJobRepository_ClaimNextPendingSecondCallReturnsNotFound(t *testing.T) {
 	if ok2 {
 		t.Fatal("second ClaimNextPending() ok = true, want false (no more pending jobs)")
 	}
-}
-
-func openTestDB(t *testing.T) *sql.DB {
-	t.Helper()
-
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "app.db")
-
-	sqlDB, err := db.OpenSQLite(dbPath)
-	if err != nil {
-		t.Fatalf("OpenSQLite() error = %v", err)
-	}
-
-	migrationsPath, err := infraRuntime.ResolvePath("internal/infra/db/migrations")
-	if err != nil {
-		t.Fatalf("ResolvePath(migrations) error = %v", err)
-	}
-	if err := db.RunMigrations(sqlDB, migrationsPath); err != nil {
-		t.Fatalf("RunMigrations() error = %v", err)
-	}
-
-	return sqlDB
 }
 
 func createTestMedia(t *testing.T, ctx context.Context, mediaRepo *MediaRepository) int64 {

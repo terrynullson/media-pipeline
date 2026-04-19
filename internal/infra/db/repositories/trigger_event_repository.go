@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,20 +24,20 @@ func (r *TriggerEventRepository) ReplaceForMedia(ctx context.Context, mediaID in
 	if err != nil {
 		return fmt.Errorf("begin trigger event tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if transcriptID != nil {
 		if _, err := tx.ExecContext(
 			ctx,
 			`DELETE FROM trigger_events
-			 WHERE media_id = ? AND transcript_id = ?`,
+			 WHERE media_id = $1 AND transcript_id = $2`,
 			mediaID,
 			*transcriptID,
 		); err != nil {
 			return fmt.Errorf("delete trigger events by transcript: %w", err)
 		}
 	} else {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM trigger_events WHERE media_id = ?", mediaID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM trigger_events WHERE media_id = $1`, mediaID); err != nil {
 			return fmt.Errorf("delete trigger events by media: %w", err)
 		}
 	}
@@ -52,7 +53,7 @@ func (r *TriggerEventRepository) ReplaceForMedia(ctx context.Context, mediaID in
 			`INSERT INTO trigger_events (
 				media_id, transcript_id, rule_id, category, matched_text, segment_index,
 				start_sec, end_sec, segment_text, context_text, created_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 			event.MediaID,
 			transcriptValue,
 			event.RuleID,
@@ -63,7 +64,7 @@ func (r *TriggerEventRepository) ReplaceForMedia(ctx context.Context, mediaID in
 			event.EndSec,
 			event.SegmentText,
 			event.ContextText,
-			event.CreatedAtUTC.Format(time.RFC3339),
+			event.CreatedAtUTC.UTC(),
 		); err != nil {
 			return fmt.Errorf("insert trigger event %d: %w", index, err)
 		}
@@ -83,7 +84,7 @@ func (r *TriggerEventRepository) ListByMediaID(ctx context.Context, mediaID int6
 		        e.segment_index, e.start_sec, e.end_sec, e.segment_text, e.context_text, e.created_at
 		 FROM trigger_events e
 		 JOIN trigger_rules r ON r.id = e.rule_id
-		 WHERE e.media_id = ?
+		 WHERE e.media_id = $1
 		 ORDER BY e.start_sec ASC, e.segment_index ASC, e.id ASC`,
 		mediaID,
 	)
@@ -116,20 +117,17 @@ func (r *TriggerEventRepository) CountByMediaIDs(ctx context.Context, mediaIDs [
 
 	placeholders := make([]string, 0, len(mediaIDs))
 	args := make([]any, 0, len(mediaIDs))
-	for _, mediaID := range mediaIDs {
-		placeholders = append(placeholders, "?")
+	for i, mediaID := range mediaIDs {
+		placeholders = append(placeholders, "$"+strconv.Itoa(i+1))
 		args = append(args, mediaID)
 	}
 
 	rows, err := r.db.QueryContext(
 		ctx,
-		fmt.Sprintf(
-			`SELECT media_id, COUNT(*)
-			 FROM trigger_events
-			 WHERE media_id IN (%s)
-			 GROUP BY media_id`,
-			strings.Join(placeholders, ", "),
-		),
+		`SELECT media_id, COUNT(*)
+		 FROM trigger_events
+		 WHERE media_id IN (`+strings.Join(placeholders, ", ")+`)
+		 GROUP BY media_id`,
 		args...,
 	)
 	if err != nil {
@@ -153,12 +151,10 @@ func (r *TriggerEventRepository) CountByMediaIDs(ctx context.Context, mediaIDs [
 	return counts, nil
 }
 
-func scanTriggerEvent(scanner interface {
-	Scan(dest ...any) error
-}) (domaintrigger.Event, error) {
+func scanTriggerEvent(scanner rowScanner) (domaintrigger.Event, error) {
 	var item domaintrigger.Event
 	var transcriptID sql.NullInt64
-	var createdAt string
+	var createdAt time.Time
 
 	if err := scanner.Scan(
 		&item.ID,
@@ -181,11 +177,7 @@ func scanTriggerEvent(scanner interface {
 	if transcriptID.Valid {
 		item.TranscriptID = &transcriptID.Int64
 	}
-	parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
-	if err != nil {
-		return domaintrigger.Event{}, fmt.Errorf("parse trigger event created_at: %w", err)
-	}
-	item.CreatedAtUTC = parsedCreatedAt
+	item.CreatedAtUTC = createdAt.UTC()
 
 	return item, nil
 }

@@ -3,12 +3,23 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/ports"
 )
+
+// Column list reused by SELECT queries — keeping it in one constant prevents
+// the field order from drifting between SELECT and Scan.
+const mediaColumns = `
+	id, original_name, stored_name, extension, mime_type,
+	size_bytes, storage_path, extracted_audio_path,
+	preview_video_path, preview_video_size_bytes, preview_video_mime_type, preview_video_created_at,
+	transcript_text, runtime_snapshot_json, status, created_at, updated_at,
+	source_name, recording_started_at, recording_ended_at, raw_recording_label
+`
 
 type MediaRepository struct {
 	db *sql.DB
@@ -19,12 +30,17 @@ func NewMediaRepository(db *sql.DB) *MediaRepository {
 }
 
 func (r *MediaRepository) Create(ctx context.Context, m media.Media) (int64, error) {
-	result, err := r.db.ExecContext(
+	var id int64
+	err := r.db.QueryRowContext(
 		ctx,
 		`INSERT INTO media (
 			original_name, stored_name, extension, mime_type,
-			size_bytes, storage_path, extracted_audio_path, preview_video_path, preview_video_size_bytes, preview_video_mime_type, preview_video_created_at, transcript_text, runtime_snapshot_json, status, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			size_bytes, storage_path, extracted_audio_path,
+			preview_video_path, preview_video_size_bytes, preview_video_mime_type, preview_video_created_at,
+			transcript_text, runtime_snapshot_json, status, created_at, updated_at,
+			source_name, recording_started_at, recording_ended_at, raw_recording_label
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+		RETURNING id`,
 		m.OriginalName,
 		m.StoredName,
 		m.Extension,
@@ -35,30 +51,28 @@ func (r *MediaRepository) Create(ctx context.Context, m media.Media) (int64, err
 		nullIfEmpty(m.PreviewVideoPath),
 		nullIfZero(m.PreviewVideoSizeBytes),
 		nullIfEmpty(m.PreviewVideoMIMEType),
-		formatOptionalTime(m.PreviewVideoCreatedAtUTC),
+		nullableTime(m.PreviewVideoCreatedAtUTC),
 		m.TranscriptText,
 		m.RuntimeSnapshotJSON,
 		m.Status,
-		m.CreatedAtUTC.Format(time.RFC3339),
-		m.UpdatedAtUTC.Format(time.RFC3339),
-	)
+		m.CreatedAtUTC.UTC(),
+		m.UpdatedAtUTC.UTC(),
+		nullIfEmpty(m.SourceName),
+		nullableTime(m.RecordingStartedAtUTC),
+		nullableTime(m.RecordingEndedAtUTC),
+		nullIfEmpty(m.RawRecordingLabel),
+	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("insert media: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("media last insert id: %w", err)
 	}
 
 	return id, nil
 }
 
 func (r *MediaRepository) Delete(ctx context.Context, id int64) error {
-	if _, err := r.db.ExecContext(ctx, "DELETE FROM media WHERE id = ?", id); err != nil {
+	if _, err := r.db.ExecContext(ctx, "DELETE FROM media WHERE id = $1", id); err != nil {
 		return fmt.Errorf("delete media: %w", err)
 	}
-
 	return nil
 }
 
@@ -67,34 +81,20 @@ func (r *MediaRepository) DeleteWithAssociations(ctx context.Context, id int64) 
 	if err != nil {
 		return fmt.Errorf("begin media delete tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // superseded by Commit
 
-	if _, err := tx.ExecContext(
-		ctx,
-		`DELETE FROM transcript_segments
-		 WHERE transcript_id IN (
-		 	SELECT id
-		 	FROM transcripts
-		 	WHERE media_id = ?
-		 )`,
-		id,
-	); err != nil {
-		return fmt.Errorf("delete transcript segments by media id: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, "DELETE FROM transcripts WHERE media_id = ?", id); err != nil {
-		return fmt.Errorf("delete transcripts by media id: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, "DELETE FROM jobs WHERE media_id = ?", id); err != nil {
+	// transcript_segments / transcripts / trigger_events / trigger_event_screenshots /
+	// transcript_windows / summaries / media_cancel_requests are all wired with
+	// ON DELETE CASCADE, so the DELETE on media handles them. jobs intentionally
+	// have no cascade (history may want to live on); delete them explicitly.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM jobs WHERE media_id = $1", id); err != nil {
 		return fmt.Errorf("delete jobs by media id: %w", err)
 	}
 
-	result, err := tx.ExecContext(ctx, "DELETE FROM media WHERE id = ?", id)
+	result, err := tx.ExecContext(ctx, "DELETE FROM media WHERE id = $1", id)
 	if err != nil {
 		return fmt.Errorf("delete media by id: %w", err)
 	}
-
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("delete media rows affected: %w", err)
@@ -106,18 +106,16 @@ func (r *MediaRepository) DeleteWithAssociations(ctx context.Context, id int64) 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit media delete tx: %w", err)
 	}
-
 	return nil
 }
 
 func (r *MediaRepository) ListRecent(ctx context.Context, limit int) ([]media.Media, error) {
 	rows, err := r.db.QueryContext(
 		ctx,
-		`SELECT id, original_name, stored_name, extension, mime_type,
-			size_bytes, storage_path, extracted_audio_path, preview_video_path, preview_video_size_bytes, preview_video_mime_type, preview_video_created_at, transcript_text, runtime_snapshot_json, status, created_at, updated_at
+		`SELECT `+mediaColumns+`
 		 FROM media
-		 ORDER BY datetime(created_at) DESC
-		 LIMIT ?`,
+		 ORDER BY created_at DESC, id DESC
+		 LIMIT $1`,
 		limit,
 	)
 	if err != nil {
@@ -127,107 +125,31 @@ func (r *MediaRepository) ListRecent(ctx context.Context, limit int) ([]media.Me
 
 	items := make([]media.Media, 0)
 	for rows.Next() {
-		var item media.Media
-		var createdAt, updatedAt string
-		var previewVideoPath sql.NullString
-		var previewVideoSizeBytes sql.NullInt64
-		var previewVideoMIMEType sql.NullString
-		var previewVideoCreatedAt sql.NullString
-		if scanErr := rows.Scan(
-			&item.ID,
-			&item.OriginalName,
-			&item.StoredName,
-			&item.Extension,
-			&item.MIMEType,
-			&item.SizeBytes,
-			&item.StoragePath,
-			&item.ExtractedAudioPath,
-			&previewVideoPath,
-			&previewVideoSizeBytes,
-			&previewVideoMIMEType,
-			&previewVideoCreatedAt,
-			&item.TranscriptText,
-			&item.RuntimeSnapshotJSON,
-			&item.Status,
-			&createdAt,
-			&updatedAt,
-		); scanErr != nil {
-			return nil, fmt.Errorf("scan media row: %w", scanErr)
-		}
-
-		item.CreatedAtUTC, err = time.Parse(time.RFC3339, createdAt)
+		item, err := scanMediaRow(rows)
 		if err != nil {
-			return nil, fmt.Errorf("parse media created_at: %w", err)
+			return nil, err
 		}
-		item.UpdatedAtUTC, err = time.Parse(time.RFC3339, updatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse media updated_at: %w", err)
-		}
-		applyPreviewFields(&item, previewVideoPath, previewVideoSizeBytes, previewVideoMIMEType, previewVideoCreatedAt)
 		items = append(items, item)
 	}
-
-	if err = rows.Err(); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate media rows: %w", err)
 	}
-
 	return items, nil
 }
 
 func (r *MediaRepository) GetByID(ctx context.Context, id int64) (media.Media, error) {
 	row := r.db.QueryRowContext(
 		ctx,
-		`SELECT id, original_name, stored_name, extension, mime_type,
-			size_bytes, storage_path, extracted_audio_path, preview_video_path, preview_video_size_bytes, preview_video_mime_type, preview_video_created_at, transcript_text, runtime_snapshot_json, status, created_at, updated_at
-		 FROM media
-		 WHERE id = ?`,
+		`SELECT `+mediaColumns+` FROM media WHERE id = $1`,
 		id,
 	)
-
-	var item media.Media
-	var createdAt string
-	var updatedAt string
-	var previewVideoPath sql.NullString
-	var previewVideoSizeBytes sql.NullInt64
-	var previewVideoMIMEType sql.NullString
-	var previewVideoCreatedAt sql.NullString
-	if err := row.Scan(
-		&item.ID,
-		&item.OriginalName,
-		&item.StoredName,
-		&item.Extension,
-		&item.MIMEType,
-		&item.SizeBytes,
-		&item.StoragePath,
-		&item.ExtractedAudioPath,
-		&previewVideoPath,
-		&previewVideoSizeBytes,
-		&previewVideoMIMEType,
-		&previewVideoCreatedAt,
-		&item.TranscriptText,
-		&item.RuntimeSnapshotJSON,
-		&item.Status,
-		&createdAt,
-		&updatedAt,
-	); err != nil {
-		if err == sql.ErrNoRows {
+	item, err := scanMediaRow(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return media.Media{}, fmt.Errorf("get media by id %d: %w", id, ports.ErrNotFound)
 		}
-		return media.Media{}, fmt.Errorf("scan media by id %d: %w", id, err)
+		return media.Media{}, err
 	}
-
-	parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
-	if err != nil {
-		return media.Media{}, fmt.Errorf("parse media created_at: %w", err)
-	}
-	parsedUpdatedAt, err := time.Parse(time.RFC3339, updatedAt)
-	if err != nil {
-		return media.Media{}, fmt.Errorf("parse media updated_at: %w", err)
-	}
-	item.CreatedAtUTC = parsedCreatedAt
-	item.UpdatedAtUTC = parsedUpdatedAt
-	applyPreviewFields(&item, previewVideoPath, previewVideoSizeBytes, previewVideoMIMEType, previewVideoCreatedAt)
-
 	return item, nil
 }
 
@@ -243,26 +165,17 @@ func (r *MediaRepository) MarkAudioExtracted(ctx context.Context, id int64, extr
 	result, err := r.db.ExecContext(
 		ctx,
 		`UPDATE media
-		 SET status = ?, extracted_audio_path = ?, updated_at = ?
-		 WHERE id = ?`,
+		 SET status = $1, extracted_audio_path = $2, updated_at = $3
+		 WHERE id = $4`,
 		media.StatusAudioExtracted,
 		extractedAudioPath,
-		nowUTC.Format(time.RFC3339),
+		nowUTC.UTC(),
 		id,
 	)
 	if err != nil {
 		return fmt.Errorf("mark media audio extracted: %w", err)
 	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("media audio extracted rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("mark media audio extracted: media %d not found", id)
-	}
-
-	return nil
+	return ensureRowsAffectedMedia(result, id, "mark media audio extracted")
 }
 
 func (r *MediaRepository) MarkPreviewReady(
@@ -277,28 +190,20 @@ func (r *MediaRepository) MarkPreviewReady(
 	result, err := r.db.ExecContext(
 		ctx,
 		`UPDATE media
-		 SET preview_video_path = ?, preview_video_size_bytes = ?, preview_video_mime_type = ?, preview_video_created_at = ?, updated_at = ?
-		 WHERE id = ?`,
+		 SET preview_video_path = $1, preview_video_size_bytes = $2, preview_video_mime_type = $3,
+		     preview_video_created_at = $4, updated_at = $5
+		 WHERE id = $6`,
 		previewVideoPath,
 		previewVideoSizeBytes,
 		previewVideoMIMEType,
-		previewVideoCreatedAtUTC.Format(time.RFC3339),
-		nowUTC.Format(time.RFC3339),
+		previewVideoCreatedAtUTC.UTC(),
+		nowUTC.UTC(),
 		id,
 	)
 	if err != nil {
 		return fmt.Errorf("mark media preview ready: %w", err)
 	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("media preview ready rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("mark media preview ready: media %d not found", id)
-	}
-
-	return nil
+	return ensureRowsAffectedMedia(result, id, "mark media preview ready")
 }
 
 func (r *MediaRepository) MarkFailed(ctx context.Context, id int64, nowUTC time.Time) error {
@@ -306,28 +211,7 @@ func (r *MediaRepository) MarkFailed(ctx context.Context, id int64, nowUTC time.
 }
 
 func (r *MediaRepository) MarkAudioReady(ctx context.Context, id int64, nowUTC time.Time) error {
-	result, err := r.db.ExecContext(
-		ctx,
-		`UPDATE media
-		 SET status = ?, updated_at = ?
-		 WHERE id = ?`,
-		media.StatusAudioExtracted,
-		nowUTC.Format(time.RFC3339),
-		id,
-	)
-	if err != nil {
-		return fmt.Errorf("mark media audio ready: %w", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("media audio ready rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("mark media audio ready: media %d not found", id)
-	}
-
-	return nil
+	return r.updateStatusOnly(ctx, id, media.StatusAudioExtracted, nowUTC, "mark media audio ready")
 }
 
 func (r *MediaRepository) MarkTranscribing(ctx context.Context, id int64, nowUTC time.Time) error {
@@ -338,26 +222,36 @@ func (r *MediaRepository) MarkTranscribed(ctx context.Context, id int64, transcr
 	result, err := r.db.ExecContext(
 		ctx,
 		`UPDATE media
-		 SET status = ?, transcript_text = ?, updated_at = ?
-		 WHERE id = ?`,
+		 SET status = $1, transcript_text = $2, updated_at = $3
+		 WHERE id = $4`,
 		media.StatusTranscribed,
 		transcriptText,
-		nowUTC.Format(time.RFC3339),
+		nowUTC.UTC(),
 		id,
 	)
 	if err != nil {
 		return fmt.Errorf("mark media transcribed: %w", err)
 	}
+	return ensureRowsAffectedMedia(result, id, "mark media transcribed")
+}
 
-	rowsAffected, err := result.RowsAffected()
+// SetRecordingEndedAt fills in the absolute end-of-broadcast timecode once the
+// recording's duration is known (typically right after audio extraction or
+// right after the final transcript segment is committed).
+func (r *MediaRepository) SetRecordingEndedAt(ctx context.Context, id int64, endedAtUTC time.Time, nowUTC time.Time) error {
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE media
+		 SET recording_ended_at = $1, updated_at = $2
+		 WHERE id = $3`,
+		endedAtUTC.UTC(),
+		nowUTC.UTC(),
+		id,
+	)
 	if err != nil {
-		return fmt.Errorf("media transcribed rows affected: %w", err)
+		return fmt.Errorf("set recording ended_at: %w", err)
 	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("mark media transcribed: media %d not found", id)
-	}
-
-	return nil
+	return ensureRowsAffectedMedia(result, id, "set recording ended_at")
 }
 
 func (r *MediaRepository) updateStatusOnly(
@@ -369,35 +263,64 @@ func (r *MediaRepository) updateStatusOnly(
 ) error {
 	result, err := r.db.ExecContext(
 		ctx,
-		`UPDATE media
-		 SET status = ?, updated_at = ?
-		 WHERE id = ?`,
+		`UPDATE media SET status = $1, updated_at = $2 WHERE id = $3`,
 		status,
-		nowUTC.Format(time.RFC3339),
+		nowUTC.UTC(),
 		id,
 	)
 	if err != nil {
 		return fmt.Errorf("%s: %w", action, err)
 	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("%s rows affected: %w", action, err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("%s: media %d not found", action, id)
-	}
-
-	return nil
+	return ensureRowsAffectedMedia(result, id, action)
 }
 
-func applyPreviewFields(
-	item *media.Media,
-	previewVideoPath sql.NullString,
-	previewVideoSizeBytes sql.NullInt64,
-	previewVideoMIMEType sql.NullString,
-	previewVideoCreatedAt sql.NullString,
-) {
+// rowScanner unifies *sql.Row and *sql.Rows so scanMediaRow has one body.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanMediaRow(scanner rowScanner) (media.Media, error) {
+	var item media.Media
+	var (
+		previewVideoPath      sql.NullString
+		previewVideoSizeBytes sql.NullInt64
+		previewVideoMIMEType  sql.NullString
+		previewVideoCreatedAt sql.NullTime
+		sourceName            sql.NullString
+		recordingStartedAt    sql.NullTime
+		recordingEndedAt      sql.NullTime
+		rawRecordingLabel     sql.NullString
+	)
+
+	if err := scanner.Scan(
+		&item.ID,
+		&item.OriginalName,
+		&item.StoredName,
+		&item.Extension,
+		&item.MIMEType,
+		&item.SizeBytes,
+		&item.StoragePath,
+		&item.ExtractedAudioPath,
+		&previewVideoPath,
+		&previewVideoSizeBytes,
+		&previewVideoMIMEType,
+		&previewVideoCreatedAt,
+		&item.TranscriptText,
+		&item.RuntimeSnapshotJSON,
+		&item.Status,
+		&item.CreatedAtUTC,
+		&item.UpdatedAtUTC,
+		&sourceName,
+		&recordingStartedAt,
+		&recordingEndedAt,
+		&rawRecordingLabel,
+	); err != nil {
+		return media.Media{}, err
+	}
+
+	item.CreatedAtUTC = item.CreatedAtUTC.UTC()
+	item.UpdatedAtUTC = item.UpdatedAtUTC.UTC()
+
 	if previewVideoPath.Valid {
 		item.PreviewVideoPath = previewVideoPath.String
 	}
@@ -408,10 +331,35 @@ func applyPreviewFields(
 		item.PreviewVideoMIMEType = previewVideoMIMEType.String
 	}
 	if previewVideoCreatedAt.Valid {
-		if parsed, err := time.Parse(time.RFC3339, previewVideoCreatedAt.String); err == nil {
-			item.PreviewVideoCreatedAtUTC = &parsed
-		}
+		t := previewVideoCreatedAt.Time.UTC()
+		item.PreviewVideoCreatedAtUTC = &t
 	}
+	if sourceName.Valid {
+		item.SourceName = sourceName.String
+	}
+	if recordingStartedAt.Valid {
+		t := recordingStartedAt.Time.UTC()
+		item.RecordingStartedAtUTC = &t
+	}
+	if recordingEndedAt.Valid {
+		t := recordingEndedAt.Time.UTC()
+		item.RecordingEndedAtUTC = &t
+	}
+	if rawRecordingLabel.Valid {
+		item.RawRecordingLabel = rawRecordingLabel.String
+	}
+	return item, nil
+}
+
+func ensureRowsAffectedMedia(result sql.Result, id int64, action string) error {
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("%s rows affected: %w", action, err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("%s: media %d not found", action, id)
+	}
+	return nil
 }
 
 func nullIfEmpty(value string) any {
@@ -428,9 +376,11 @@ func nullIfZero(value int64) any {
 	return value
 }
 
-func formatOptionalTime(value *time.Time) any {
+// nullableTime returns a typed nil for nil/zero times so the pgx driver writes
+// SQL NULL (not "0001-01-01 00:00:00").
+func nullableTime(value *time.Time) any {
 	if value == nil || value.IsZero() {
 		return nil
 	}
-	return value.UTC().Format(time.RFC3339)
+	return value.UTC()
 }
