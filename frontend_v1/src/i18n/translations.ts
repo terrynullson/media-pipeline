@@ -121,6 +121,11 @@ const translations = {
     en: "Configure stop-words for the word-frequency report on the Analytics page.",
     ru: "Настройка стоп-слов для отчёта «Топ слов» на странице Аналитика.",
   },
+  "settings.runtime": { en: "Runtime", ru: "Обработка" },
+  "settings.runtimeDesc": {
+    en: "Limits for uploads and auto-ingest: max file size, auto-upload delay, preview timeout.",
+    ru: "Лимиты загрузки и авто-импорта: размер файла, задержка авто-загрузки, таймаут превью.",
+  },
 
   "settings.groupEngine": { en: "Engine", ru: "Движок" },
   "settings.groupHardware": { en: "Hardware", ru: "Железо" },

@@ -401,11 +401,17 @@ func (h *UploadHandler) APIUpdateRuntimeSettings(w http.ResponseWriter, r *http.
 		return
 	}
 
-	saved, err := h.runtimeSvc.SaveCurrent(r.Context(), appsettings.Settings{
-		AutoUploadMinAgeSec: payload.AutoUploadMinAgeSec,
-		PreviewTimeoutSec:   payload.PreviewTimeoutSec,
-		MaxUploadSizeMB:     payload.MaxUploadSizeMB,
-	})
+	current, err := h.runtimeSvc.GetCurrent(r.Context())
+	if err != nil {
+		observability.LoggerFromContext(r.Context(), h.logger).Error("load current runtime settings", slog.Any("error", err))
+		http.Error(w, "не удалось загрузить настройки", http.StatusInternalServerError)
+		return
+	}
+	current.AutoUploadMinAgeSec = payload.AutoUploadMinAgeSec
+	current.PreviewTimeoutSec = payload.PreviewTimeoutSec
+	current.MaxUploadSizeMB = payload.MaxUploadSizeMB
+
+	saved, err := h.runtimeSvc.SaveCurrent(r.Context(), current)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			http.Error(w, "request canceled", http.StatusRequestTimeout)

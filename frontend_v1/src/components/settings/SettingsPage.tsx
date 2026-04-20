@@ -28,6 +28,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   BarChart3,
+  SlidersHorizontal,
 } from "lucide-react";
 import { api } from "../../api/client";
 import type { SettingsResponse } from "../../models/types";
@@ -37,7 +38,7 @@ import { TriggerRules } from "./TriggerRules";
 
 // ─── Типы ────────────────────────────────────────────────────────────────────
 
-type Section = "transcription" | "rules" | "analytics";
+type Section = "transcription" | "runtime" | "rules" | "analytics";
 
 interface NavItem {
   id: Section;
@@ -54,6 +55,12 @@ const NAV_ITEMS: NavItem[] = [
     descKey: "settings.transcriptionDesc",
   },
   {
+    id: "runtime",
+    icon: <SlidersHorizontal size={15} />,
+    titleKey: "settings.runtime",
+    descKey: "settings.runtimeDesc",
+  },
+  {
     id: "rules",
     icon: <ListFilter size={15} />,
     titleKey: "rules.title",
@@ -66,6 +73,112 @@ const NAV_ITEMS: NavItem[] = [
     descKey: "settings.analyticsDesc",
   },
 ];
+
+// ─── Секция: Runtime (лимиты обработки) ──────────────────────────────────────
+
+function RuntimeSection({
+  settings,
+  onSaved,
+  onError,
+}: {
+  settings: SettingsResponse;
+  onSaved: () => void;
+  onError: () => void;
+}) {
+  const [form, setForm] = useState({
+    maxUploadSizeMB: settings.runtime.maxUploadSizeMB || 1024,
+    autoUploadMinAgeSec: settings.runtime.autoUploadMinAgeSec ?? 60,
+    previewTimeoutSec: settings.runtime.previewTimeoutSec || 600,
+  });
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await api.updateRuntimeSettings(form);
+      onSaved();
+    } catch {
+      onError();
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)" }}>
+      <div>
+        <p style={groupHeadingStyle}>Лимиты загрузки</p>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+            gap: "var(--sp-4)",
+          }}
+        >
+          <FieldRow
+            label="Макс. размер файла (MB)"
+            hint="Файлы больше этого размера не загрузятся. По умолчанию 1024 MB."
+          >
+            <input
+              style={inputStyle}
+              type="number"
+              min={1}
+              max={102400}
+              value={form.maxUploadSizeMB}
+              onChange={(e) =>
+                setForm({ ...form, maxUploadSizeMB: Number(e.target.value) })
+              }
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Задержка авто-загрузки (сек)"
+            hint="Сколько секунд файл должен быть «стабильным» в папке импорта, прежде чем система возьмёт его в работу."
+          >
+            <input
+              style={inputStyle}
+              type="number"
+              min={0}
+              max={86400}
+              value={form.autoUploadMinAgeSec}
+              onChange={(e) =>
+                setForm({ ...form, autoUploadMinAgeSec: Number(e.target.value) })
+              }
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Таймаут превью (сек)"
+            hint="Максимум времени на подготовку превью-видео. По истечении — ошибка."
+          >
+            <input
+              style={inputStyle}
+              type="number"
+              min={30}
+              max={86400}
+              value={form.previewTimeoutSec}
+              onChange={(e) =>
+                setForm({ ...form, previewTimeoutSec: Number(e.target.value) })
+              }
+            />
+          </FieldRow>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          paddingTop: "var(--sp-2)",
+          borderTop: "1px solid var(--border)",
+        }}
+      >
+        <Button variant="primary" size="sm" loading={saving} onClick={handleSave}>
+          Сохранить
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 // ─── Секция: Аналитика (стоп-слова) ──────────────────────────────────────────
 
@@ -760,6 +873,20 @@ export function SettingsPage() {
             {/* Тело секции */}
             {active === "transcription" && (
               <TranscriptionSection
+                settings={settings}
+                onSaved={() =>
+                  setToast({ message: t("settings.saved"), type: "success" })
+                }
+                onError={() =>
+                  setToast({
+                    message: t("settings.saveError"),
+                    type: "error",
+                  })
+                }
+              />
+            )}
+            {active === "runtime" && (
+              <RuntimeSection
                 settings={settings}
                 onSaved={() =>
                   setToast({ message: t("settings.saved"), type: "success" })
