@@ -1,5 +1,5 @@
-import { Settings, Waves, Sun, Moon } from "lucide-react";
-import { useNavigate, useMatch } from "react-router-dom";
+import { Settings, Waves, Sun, Moon, BarChart3, Clock, Home } from "lucide-react";
+import { useNavigate, useMatch, useLocation } from "react-router-dom";
 import { useTranslation, type Locale } from "../../i18n";
 import { useTheme } from "../../theme";
 import { api } from "../../api/client";
@@ -95,7 +95,19 @@ export function Topbar() {
   const { t, locale, setLocale } = useTranslation();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
   const onSettingsPage = Boolean(useMatch("/settings"));
+
+  const navTabs: { path: string; label: string; icon: React.ReactNode }[] = [
+    { path: "/", label: "Главная", icon: <Home size={13} /> },
+    { path: "/analytics", label: "Аналитика", icon: <BarChart3 size={13} /> },
+    { path: "/timeline", label: "Хронология", icon: <Clock size={13} /> },
+  ];
+  const activeTab =
+    navTabs
+      .slice()
+      .sort((a, b) => b.path.length - a.path.length)
+      .find((t) => (t.path === "/" ? location.pathname === "/" : location.pathname.startsWith(t.path)))?.path ?? "/";
 
   const { data: workerStatus } = usePolling(api.workerStatus, 5000, true);
 
@@ -156,29 +168,73 @@ export function Topbar() {
           </span>
         </a>
 
-        <button
-          onClick={toggleTheme}
-          aria-label="Toggle theme"
+        <nav
+          aria-label="Primary"
           style={{
-            ...iconBtn,
             position: "absolute",
             left: "50%",
             transform: "translateX(-50%)",
-            borderColor: "var(--border-accent)",
-            color: "var(--accent)",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "var(--accent-soft)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "none";
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
           }}
         >
-          {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-        </button>
+          {navTabs.map((tab) => {
+            const isActive = activeTab === tab.path;
+            return (
+              <button
+                key={tab.path}
+                onClick={() => navigate(tab.path)}
+                aria-current={isActive ? "page" : undefined}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  height: 30,
+                  padding: "0 10px",
+                  borderRadius: "var(--radius-sm)",
+                  border: "1px solid",
+                  borderColor: isActive ? "var(--accent)" : "transparent",
+                  background: isActive ? "var(--accent-soft)" : "transparent",
+                  color: isActive ? "var(--accent)" : "var(--text-muted)",
+                  fontSize: "var(--text-xs)",
+                  fontWeight: isActive ? 600 : 500,
+                  cursor: "pointer",
+                  transition:
+                    "color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease)",
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.color = "var(--text)";
+                    e.currentTarget.style.background = "var(--bg-card-hover)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.color = "var(--text-muted)";
+                    e.currentTarget.style.background = "transparent";
+                  }
+                }}
+              >
+                {tab.icon}
+                {tab.label}
+              </button>
+            );
+          })}
+        </nav>
 
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
           <WorkerStatusChip status={workerStatus} />
+
+          <button
+            onClick={toggleTheme}
+            aria-label="Toggle theme"
+            style={iconBtn}
+            onMouseEnter={hoverIn}
+            onMouseLeave={hoverOut}
+          >
+            {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
 
           <button
             onClick={() => setLocale(nextLocale)}

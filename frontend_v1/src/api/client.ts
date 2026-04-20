@@ -1,10 +1,13 @@
 import type {
+  AnalyticsResponse,
   DashboardResponse,
   JobItem,
   MediaDetailResponse,
   MediaListItem,
   RuntimeSettingsResponse,
   SettingsResponse,
+  TimelineFilters,
+  TimelineResponse,
   TriggerRule,
   UIConfigResponse,
   UploadProgress,
@@ -188,6 +191,30 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+    }),
+  analytics: () => requestJSON<AnalyticsResponse>("/api/analytics"),
+  timeline: (filters: TimelineFilters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
+    if (filters.source) params.set("source", filters.source);
+    const qs = params.toString();
+    return requestJSON<TimelineResponse>(`/api/timeline${qs ? `?${qs}` : ""}`);
+  },
+  timelineExportURL: (filters: TimelineFilters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
+    if (filters.source) params.set("source", filters.source);
+    const qs = params.toString();
+    return `/api/timeline/export${qs ? `?${qs}` : ""}`;
+  },
+  stopWords: () => requestJSON<{ stopWords: string }>("/api/settings/stop-words"),
+  updateStopWords: (stopWords: string) =>
+    requestJSON<{ status: string; stopWords: string }>("/api/settings/stop-words", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stopWords }),
     }),
   bulkDeleteMedia: (ids: number[]) =>
     requestJSON<{ deleted: number[]; failed: { id: number; error: string }[] }>("/api/media/bulk-delete", {

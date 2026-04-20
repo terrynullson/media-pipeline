@@ -10,6 +10,7 @@ type Settings struct {
 	AutoUploadMinAgeSec int64
 	PreviewTimeoutSec   int64
 	MaxUploadSizeMB     int64
+	StopWords           string
 	CreatedAtUTC        time.Time
 	UpdatedAtUTC        time.Time
 }

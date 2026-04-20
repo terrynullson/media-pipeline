@@ -1281,7 +1281,7 @@ func newTestApp(t *testing.T) testWebApp {
 		WithPreviewService(triggerPreviewUC)
 
 	return testWebApp{
-		router:         httptransport.NewRouter(logger, handler, machineAPIHandler, triggerRuleHandler, workerStatusHandler, staticPath, uploadDir, audioDir, previewDir, screenshotsDir, "", 30*time.Second, 0),
+		router:         httptransport.NewRouter(logger, handler, machineAPIHandler, triggerRuleHandler, workerStatusHandler, nil, staticPath, uploadDir, audioDir, previewDir, screenshotsDir, "", 30*time.Second, 0),
 		db:             sqlDB,
 		uploadDir:      uploadDir,
 		audioDir:       audioDir,
