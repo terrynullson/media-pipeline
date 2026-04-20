@@ -10,7 +10,9 @@ package db
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,11 +79,34 @@ func Open(ctx context.Context, opts Options) (*sql.DB, error) {
 	return sqlDB, nil
 }
 
+// migrationAdvisoryLockKey derives a stable 64-bit advisory lock id from the
+// migration table name. Keeping the key deterministic avoids hard-coded magic
+// numbers while ensuring every app instance contends on the same lock.
+var migrationAdvisoryLockKey = func() int64 {
+	sum := sha1.Sum([]byte("media-pipeline:schema-migrations"))
+	return int64(binary.BigEndian.Uint64(sum[:8]))
+}()
+
 // RunMigrations applies every *.sql file in migrationsDir in lexical order
 // inside its own transaction, recording the version in schema_migrations.
-// Each migration is expected to be PostgreSQL-compatible.
+// Each migration is expected to be PostgreSQL-compatible. A PostgreSQL
+// advisory lock serializes concurrent migration runners so parallel startups
+// do not race each other.
 func RunMigrations(ctx context.Context, sqlDB *sql.DB, migrationsDir string) error {
-	if _, err := sqlDB.ExecContext(ctx, `
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("open migration connection: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, migrationAdvisoryLockKey); err != nil {
+		return fmt.Errorf("acquire migration advisory lock: %w", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, migrationAdvisoryLockKey)
+	}()
+
+	if _, err := conn.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version    TEXT        PRIMARY KEY,
 			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -90,25 +115,14 @@ func RunMigrations(ctx context.Context, sqlDB *sql.DB, migrationsDir string) err
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
-	entries, err := os.ReadDir(migrationsDir)
+	names, err := listMigrationNames(migrationsDir)
 	if err != nil {
-		return fmt.Errorf("read migrations dir: %w", err)
+		return err
 	}
-
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		if filepath.Ext(entry.Name()) == ".sql" {
-			names = append(names, entry.Name())
-		}
-	}
-	sort.Strings(names)
 
 	for _, name := range names {
 		var exists int
-		err := sqlDB.QueryRowContext(ctx,
+		err := conn.QueryRowContext(ctx,
 			"SELECT 1 FROM schema_migrations WHERE version = $1", name,
 		).Scan(&exists)
 		if err == nil {
@@ -123,7 +137,7 @@ func RunMigrations(ctx context.Context, sqlDB *sql.DB, migrationsDir string) err
 			return fmt.Errorf("read migration %s: %w", name, readErr)
 		}
 
-		tx, beginErr := sqlDB.BeginTx(ctx, nil)
+		tx, beginErr := conn.BeginTx(ctx, nil)
 		if beginErr != nil {
 			return fmt.Errorf("begin migration tx: %w", beginErr)
 		}
@@ -144,4 +158,51 @@ func RunMigrations(ctx context.Context, sqlDB *sql.DB, migrationsDir string) err
 	}
 
 	return nil
+}
+
+// EnsureMigrationsApplied verifies that every *.sql migration in migrationsDir
+// has been recorded in schema_migrations. It is useful for processes such as
+// the worker that do not own migrations but should fail fast when the schema is
+// not ready yet.
+func EnsureMigrationsApplied(ctx context.Context, sqlDB *sql.DB, migrationsDir string) error {
+	names, err := listMigrationNames(migrationsDir)
+	if err != nil {
+		return err
+	}
+
+	for _, name := range names {
+		var exists int
+		err := sqlDB.QueryRowContext(ctx,
+			`SELECT 1 FROM schema_migrations WHERE version = $1`,
+			name,
+		).Scan(&exists)
+		if err == nil {
+			continue
+		}
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("required migration %s is not applied", name)
+		}
+		return fmt.Errorf("check migration %s: %w", name, err)
+	}
+
+	return nil
+}
+
+func listMigrationNames(migrationsDir string) ([]string, error) {
+	entries, err := os.ReadDir(migrationsDir)
+	if err != nil {
+		return nil, fmt.Errorf("read migrations dir: %w", err)
+	}
+
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if filepath.Ext(entry.Name()) == ".sql" {
+			names = append(names, entry.Name())
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }

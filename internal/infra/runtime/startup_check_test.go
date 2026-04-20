@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"media-pipeline/internal/infra/config"
@@ -12,14 +14,19 @@ func TestCheckWorkerDependencies_ValidDirs(t *testing.T) {
 	t.Parallel()
 
 	base := t.TempDir()
+	pythonBinary, ok := resolveTestPythonBinary()
+	if !ok {
+		t.Skip("python launcher is not available in PATH")
+	}
 	scriptPath := filepath.Join(base, "transcribe.py")
-	if err := os.WriteFile(scriptPath, []byte("# stub"), 0o644); err != nil {
+	script := "import json\nimport sys\nif '--self-check' in sys.argv:\n    json.dump({'status': 'ok'}, sys.stdout)\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
 	cfg := config.Config{
 		FFmpegBinary:     "ffmpeg", // may not be installed; only dirs are asserted below
-		PythonBinary:     "python",
+		PythonBinary:     pythonBinary,
 		TranscribeScript: scriptPath,
 		UploadDir:        filepath.Join(base, "uploads"),
 		AudioDir:         filepath.Join(base, "audio"),
@@ -30,16 +37,12 @@ func TestCheckWorkerDependencies_ValidDirs(t *testing.T) {
 
 	result := CheckWorkerDependencies(cfg)
 
-	// Directories must have been created.
 	for _, dir := range []string{cfg.UploadDir, cfg.AudioDir, cfg.ScreenshotsDir, cfg.PreviewDir} {
 		if _, err := os.Stat(dir); err != nil {
 			t.Errorf("expected dir %s to be created, got: %v", dir, err)
 		}
 	}
 
-	// Filter out binary- and database-related errors. Binaries may not exist
-	// in CI; the Postgres ping is exercised by separate integration tests
-	// that require TEST_DATABASE_URL.
 	var dirErrors []string
 	for _, e := range result.Errors {
 		if !containsAny(e, "FFMPEG_BINARY", "PYTHON_BINARY", "postgres", "database config", "DATABASE_URL") {
@@ -55,9 +58,13 @@ func TestCheckWorkerDependencies_MissingScript(t *testing.T) {
 	t.Parallel()
 
 	base := t.TempDir()
+	pythonBinary, ok := resolveTestPythonBinary()
+	if !ok {
+		t.Skip("python launcher is not available in PATH")
+	}
 	cfg := config.Config{
 		FFmpegBinary:     "ffmpeg",
-		PythonBinary:     "python",
+		PythonBinary:     pythonBinary,
 		TranscribeScript: filepath.Join(base, "nonexistent.py"),
 		UploadDir:        filepath.Join(base, "uploads"),
 		AudioDir:         filepath.Join(base, "audio"),
@@ -80,6 +87,46 @@ func TestCheckWorkerDependencies_MissingScript(t *testing.T) {
 	}
 }
 
+func TestCheckWorkerDependencies_FailingSelfCheck(t *testing.T) {
+	t.Parallel()
+
+	pythonBinary, ok := resolveTestPythonBinary()
+	if !ok {
+		t.Skip("python launcher is not available in PATH")
+	}
+
+	base := t.TempDir()
+	scriptPath := filepath.Join(base, "transcribe.py")
+	script := "import sys\nif '--self-check' in sys.argv:\n    print('backend missing', file=sys.stderr)\n    raise SystemExit(1)\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg := config.Config{
+		FFmpegBinary:     "ffmpeg",
+		PythonBinary:     pythonBinary,
+		TranscribeScript: scriptPath,
+		UploadDir:        filepath.Join(base, "uploads"),
+		AudioDir:         filepath.Join(base, "audio"),
+		ScreenshotsDir:   filepath.Join(base, "screenshots"),
+		PreviewDir:       filepath.Join(base, "previews"),
+	}
+	applyTestDatabaseURL(&cfg)
+
+	result := CheckWorkerDependencies(cfg)
+
+	found := false
+	for _, e := range result.Errors {
+		if containsAny(e, "transcription backend self-check failed") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected transcription self-check error, got %v", result.Errors)
+	}
+}
+
 func TestCheckWebDependencies_ValidDirs(t *testing.T) {
 	t.Parallel()
 
@@ -91,8 +138,6 @@ func TestCheckWebDependencies_ValidDirs(t *testing.T) {
 
 	result := CheckWebDependencies(cfg)
 
-	// Allow Postgres errors when TEST_DATABASE_URL is unset; the directory
-	// creation is what this test asserts.
 	for _, e := range result.Errors {
 		if !containsAny(e, "postgres", "database config", "DATABASE_URL") {
 			t.Errorf("unexpected CheckWebDependencies error: %s", e)
@@ -118,20 +163,14 @@ func TestCheckWebDependencies_ReadOnlyDir(t *testing.T) {
 	applyTestDatabaseURL(&cfg)
 
 	result := CheckWebDependencies(cfg)
-	// On Windows, 0o555 doesn't prevent directory creation, so we only check on
-	// systems where the permission actually takes effect.
-	if os.Getuid() == 0 {
-		// root can always write — skip the check
+	if runtime.GOOS == "windows" {
 		return
 	}
-	_ = result // acceptable: may or may not error on Windows
+	if len(result.Errors) == 0 {
+		t.Skip("read-only directory semantics are not enforced in this environment")
+	}
 }
 
-// applyTestDatabaseURL fills DATABASE_URL onto cfg from TEST_DATABASE_URL when
-// available. With a real Postgres DSN the checks exercise the full ping path;
-// without one they will surface a "postgres unreachable" / "database config"
-// error that callers filter out — the per-test assertions only care about
-// directory creation.
 func applyTestDatabaseURL(cfg *config.Config) {
 	if dsn := os.Getenv("TEST_DATABASE_URL"); dsn != "" {
 		cfg.DatabaseURL = dsn
@@ -147,4 +186,13 @@ func containsAny(s string, substrings ...string) bool {
 		}
 	}
 	return false
+}
+
+func resolveTestPythonBinary() (string, bool) {
+	for _, candidate := range []string{"py", "python"} {
+		if _, err := exec.LookPath(candidate); err == nil {
+			return candidate, true
+		}
+	}
+	return "", false
 }

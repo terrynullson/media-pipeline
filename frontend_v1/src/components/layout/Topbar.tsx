@@ -38,34 +38,30 @@ function WorkerStatusChip({
   if (!status) return null;
 
   const { likelyAlive, currentJob, queue } = status;
-  const hasWork = currentJob || queue.pending > 0;
+  const hasWork = currentJob != null || queue.pending > 0;
 
-  let dot: string;
-  let label: string;
-  let title: string;
+  let dot = "var(--text-muted)";
+  let label = "Воркер простаивает";
+  let title = "Сейчас активных задач нет.";
 
-  if (!hasWork && !likelyAlive) {
-    dot = "var(--text-muted)";
-    label = "Воркер простаивает";
-    title = "Сейчас активных задач нет.";
-  } else if (!likelyAlive) {
-    dot = "var(--warning, #ca8a04)";
-    label = "Статус воркера не обновляется";
-    title = currentJob
-      ? `${currentJob.type} · media ${currentJob.mediaId}. Нет свежего heartbeat, проверь логи worker.`
-      : `В очереди ${queue.pending} задач(и), но heartbeat давно не обновлялся. Проверь логи worker.`;
-  } else if (currentJob) {
-    dot = "var(--success)";
+  if (currentJob && likelyAlive) {
     const pct =
-      currentJob.progressPercent != null
-        ? ` · ${currentJob.progressPercent}%`
-        : "";
+      currentJob.progressPercent != null ? ` · ${currentJob.progressPercent}%` : "";
+    dot = "var(--success)";
     label = `Воркер активен${pct}`;
     title = `${currentJob.type} · media ${currentJob.mediaId}`;
-  } else {
+  } else if (currentJob && !likelyAlive) {
+    dot = "var(--warning, #ca8a04)";
+    label = "Идёт длинная задача";
+    title = `${currentJob.type} · media ${currentJob.mediaId}. Heartbeat давно не обновлялся, но задача всё ещё отмечена как running.`;
+  } else if (queue.pending > 0) {
     dot = "var(--warning, #ca8a04)";
     label = `В очереди: ${queue.pending}`;
-    title = `Ожидает: ${queue.pending}`;
+    title = `Ожидает задач: ${queue.pending}`;
+  } else if (hasWork) {
+    dot = "var(--warning, #ca8a04)";
+    label = "Нужно проверить воркер";
+    title = "Есть работа, но статус воркера выглядит несвежим.";
   }
 
   return (
@@ -87,8 +83,7 @@ function WorkerStatusChip({
           borderRadius: "50%",
           background: dot,
           flexShrink: 0,
-          boxShadow:
-            likelyAlive && hasWork ? `0 0 5px ${dot}` : "none",
+          boxShadow: likelyAlive && hasWork ? `0 0 5px ${dot}` : "none",
         }}
       />
       <span>{label}</span>
@@ -96,11 +91,6 @@ function WorkerStatusChip({
   );
 }
 
-/**
- * Topbar — верхняя панель приложения.
- * Кнопка настроек теперь выполняет navigate("/settings"),
- * открывая полноценную страницу вместо drawer.
- */
 export function Topbar() {
   const { t, locale, setLocale } = useTranslation();
   const { theme, toggleTheme } = useTheme();
@@ -133,7 +123,6 @@ export function Topbar() {
           padding: "0 var(--sp-6)",
         }}
       >
-        {/* Left: logo */}
         <a
           href="/app-v1/"
           style={{
@@ -167,7 +156,6 @@ export function Topbar() {
           </span>
         </a>
 
-        {/* Center: theme toggle */}
         <button
           onClick={toggleTheme}
           aria-label="Toggle theme"
@@ -189,10 +177,7 @@ export function Topbar() {
           {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
         </button>
 
-        {/* Right: worker status + lang + settings */}
-        <div
-          style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}
-        >
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
           <WorkerStatusChip status={workerStatus} />
 
           <button
@@ -213,14 +198,12 @@ export function Topbar() {
             </span>
           </button>
 
-          {/* Кнопка настроек → переход на /app-v1/settings */}
           <button
             onClick={() => navigate("/settings")}
             aria-label={t("topbar.settings")}
             aria-current={onSettingsPage ? "page" : undefined}
             style={{
               ...iconBtn,
-              // Подсвечиваем кнопку, когда мы уже на странице настроек
               ...(onSettingsPage
                 ? {
                     color: "var(--accent)",
@@ -239,4 +222,3 @@ export function Topbar() {
     </header>
   );
 }
-

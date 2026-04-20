@@ -22,8 +22,8 @@ func NewAutoUploadImportRepository(db *sql.DB) *AutoUploadImportRepository {
 // Begin claims an import slot for the given key. Returns Started=true when
 // this call inserted the row, Started=false (along with the existing status)
 // when another worker had already claimed it. We use INSERT ... ON CONFLICT
-// DO NOTHING RETURNING id so the "did we insert?" check is a single round
-// trip on PostgreSQL.
+// DO NOTHING RETURNING fingerprint so the "did we insert?" check is a single
+// round trip on PostgreSQL without introducing a surrogate id column.
 func (r *AutoUploadImportRepository) Begin(
 	ctx context.Context,
 	key autouploadapp.ImportKey,
@@ -32,21 +32,21 @@ func (r *AutoUploadImportRepository) Begin(
 	fingerprint := autoUploadFingerprint(key)
 	now := nowUTC.UTC()
 
-	var insertedID int64
+	var insertedFingerprint string
 	err := r.db.QueryRowContext(
 		ctx,
 		`INSERT INTO auto_upload_imports (
 			fingerprint, source_path, size_bytes, modified_at, status, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $6)
 		ON CONFLICT (fingerprint) DO NOTHING
-		RETURNING id`,
+		RETURNING fingerprint`,
 		fingerprint,
 		key.RelativePath,
 		key.SizeBytes,
 		key.ModifiedAtUTC.UTC(),
 		autouploadapp.ImportStatusImporting,
 		now,
-	).Scan(&insertedID)
+	).Scan(&insertedFingerprint)
 
 	switch {
 	case err == nil:

@@ -1,4 +1,6 @@
 CREATE TABLE IF NOT EXISTS auto_upload_imports (
+    -- fingerprint is the natural idempotency key for a discovered source file;
+    -- we intentionally do not add a surrogate numeric id here.
     fingerprint TEXT        PRIMARY KEY,
     source_path TEXT        NOT NULL,
     size_bytes  BIGINT      NOT NULL,

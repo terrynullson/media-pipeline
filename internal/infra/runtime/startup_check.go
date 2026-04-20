@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"media-pipeline/internal/infra/config"
@@ -28,16 +29,11 @@ func CheckWorkerDependencies(cfg config.Config) StartupCheckResult {
 
 	// Binaries
 	checkBinary(&result, cfg.FFmpegBinary, "FFMPEG_BINARY")
-	checkBinary(&result, cfg.PythonBinary, "PYTHON_BINARY")
+	pythonOK := checkBinary(&result, cfg.PythonBinary, "PYTHON_BINARY")
 
-	// Script file
-	if cfg.TranscribeScript != "" {
-		if _, err := os.Stat(cfg.TranscribeScript); os.IsNotExist(err) {
-			result.Errors = append(result.Errors,
-				fmt.Sprintf("TRANSCRIBE_SCRIPT not found: %s", cfg.TranscribeScript))
-		}
-	} else {
-		result.Errors = append(result.Errors, "TRANSCRIBE_SCRIPT is not set")
+	scriptOK := checkExistingPath(&result, cfg.TranscribeScript, "TRANSCRIBE_SCRIPT")
+	if pythonOK && scriptOK {
+		checkTranscriptionBackend(&result, cfg)
 	}
 
 	// Writable directories (create if absent)
@@ -98,15 +94,60 @@ func checkPostgres(result *StartupCheckResult, cfg config.Config) {
 
 // checkBinary appends an error if the named binary cannot be found in PATH or
 // directly on disk.
-func checkBinary(result *StartupCheckResult, binary, envName string) {
+func checkBinary(result *StartupCheckResult, binary, envName string) bool {
 	if binary == "" {
 		result.Errors = append(result.Errors, fmt.Sprintf("%s is not set", envName))
-		return
+		return false
 	}
 	if _, err := exec.LookPath(binary); err != nil {
 		result.Errors = append(result.Errors,
 			fmt.Sprintf("%s binary not found or not executable: %s (%v)", envName, binary, err))
+		return false
 	}
+
+	return true
+}
+
+func checkExistingPath(result *StartupCheckResult, path, envName string) bool {
+	if path == "" {
+		result.Errors = append(result.Errors, fmt.Sprintf("%s is not set", envName))
+		return false
+	}
+	if _, err := ResolvePath(path); err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("%s not found: %s", envName, path))
+		return false
+	}
+
+	return true
+}
+
+func checkTranscriptionBackend(result *StartupCheckResult, cfg config.Config) {
+	scriptPath, err := ResolvePath(cfg.TranscribeScript)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("TRANSCRIBE_SCRIPT not found: %s", cfg.TranscribeScript))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, cfg.PythonBinary, scriptPath, "--self-check")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return
+	}
+
+	details := strings.TrimSpace(string(output))
+	if details == "" {
+		details = err.Error()
+	} else {
+		details = fmt.Sprintf("%s: %s", err, details)
+	}
+	if len(details) > 400 {
+		details = details[:400]
+	}
+	result.Errors = append(result.Errors,
+		fmt.Sprintf("transcription backend self-check failed (%s %s --self-check): %s", cfg.PythonBinary, scriptPath, details))
 }
 
 // checkWritableDir ensures dir exists (creating it if necessary) and is writable.

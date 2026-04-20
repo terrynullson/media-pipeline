@@ -57,7 +57,7 @@ func TestJobRepository_ClaimNextPendingAndMarkDone(t *testing.T) {
 	var status string
 	var attempts int
 	var errorMessage string
-	if err := sqlDB.QueryRowContext(ctx, "SELECT status, attempts, error_message FROM jobs WHERE id = ?", claimedJob.ID).
+	if err := sqlDB.QueryRowContext(ctx, "SELECT status, attempts, error_message FROM jobs WHERE id = $1", claimedJob.ID).
 		Scan(&status, &attempts, &errorMessage); err != nil {
 		t.Fatalf("QueryRow(status) error = %v", err)
 	}
@@ -117,7 +117,7 @@ func TestJobRepository_MarkFailedIncrementsAttempts(t *testing.T) {
 	var status string
 	var attempts int
 	var errorMessage string
-	if err := sqlDB.QueryRowContext(ctx, "SELECT status, attempts, error_message FROM jobs WHERE id = ?", jobID).
+	if err := sqlDB.QueryRowContext(ctx, "SELECT status, attempts, error_message FROM jobs WHERE id = $1", jobID).
 		Scan(&status, &attempts, &errorMessage); err != nil {
 		t.Fatalf("QueryRow(status) error = %v", err)
 	}
@@ -171,7 +171,7 @@ func TestJobRepository_RequeueMovesRunningBackToPending(t *testing.T) {
 	var status string
 	var attempts int
 	var errorMessage string
-	if err := sqlDB.QueryRowContext(ctx, "SELECT status, attempts, error_message FROM jobs WHERE id = ?", jobID).
+	if err := sqlDB.QueryRowContext(ctx, "SELECT status, attempts, error_message FROM jobs WHERE id = $1", jobID).
 		Scan(&status, &attempts, &errorMessage); err != nil {
 		t.Fatalf("QueryRow(status) error = %v", err)
 	}

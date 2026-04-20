@@ -1,68 +1,94 @@
 export type Locale = "ru" | "en";
 
 const translations = {
-  // ── App ──
   "app.title": { en: "Media Pipeline", ru: "Медиа Пайплайн" },
 
-  // ── Upload ──
-  "upload.dropOrClick": { en: "Drop file or click to select", ru: "Перетащите файл или нажмите для выбора" },
-  "upload.dropMultiple": { en: "Drop files or click to select", ru: "Перетащите файлы или нажмите для выбора" },
-  "upload.loading": { en: "Loading format info\u2026", ru: "Загрузка информации\u2026" },
+  "upload.dropOrClick": {
+    en: "Drop file or click to select",
+    ru: "Перетащите файл или нажмите для выбора",
+  },
+  "upload.dropMultiple": {
+    en: "Drop files or click to select",
+    ru: "Перетащите файлы или нажмите для выбора",
+  },
+  "upload.loading": { en: "Loading format info...", ru: "Загрузка информации..." },
   "upload.error.generic": { en: "Upload failed", ru: "Ошибка загрузки" },
 
-  // ── Media list ──
   "filter.all": { en: "All", ru: "Все" },
   "filter.processing": { en: "Processing", ru: "В обработке" },
   "filter.done": { en: "Done", ru: "Готово" },
   "filter.failed": { en: "Failed", ru: "Ошибка" },
-  "filter.placeholder": { en: "Filter by filename\u2026", ru: "Поиск по имени файла\u2026" },
-  "filter.empty": { en: "No items match the current filter.", ru: "Ничего не найдено по текущему фильтру." },
+  "filter.placeholder": {
+    en: "Filter by filename...",
+    ru: "Поиск по имени файла...",
+  },
+  "filter.empty": {
+    en: "No items match the current filter.",
+    ru: "По текущему фильтру ничего не найдено.",
+  },
 
-  // ── Actions ──
   "action.delete": { en: "Delete", ru: "Удалить" },
   "action.deleteMedia": { en: "Delete media", ru: "Удалить медиа" },
   "action.confirmDelete": { en: "Are you sure?", ru: "Вы уверены?" },
-  "action.confirmDeleteLong": { en: "Are you sure? This cannot be undone.", ru: "Вы уверены? Это действие нельзя отменить." },
+  "action.confirmDeleteLong": {
+    en: "Are you sure? This cannot be undone.",
+    ru: "Вы уверены? Это действие нельзя отменить.",
+  },
   "action.yesDelete": { en: "Yes, delete", ru: "Да, удалить" },
   "action.confirmBtn": { en: "Confirm delete", ru: "Подтвердить" },
   "action.cancel": { en: "Cancel", ru: "Отмена" },
   "action.select": { en: "Select", ru: "Выбрать" },
-  "action.cancelSelect": { en: "Cancel selection", ru: "Отменить выбор" },
+  "action.cancelSelect": { en: "Cancel selection", ru: "Снять выбор" },
   "action.selectAll": { en: "Select all", ru: "Выбрать все" },
   "action.selectedCount": { en: "{n} selected", ru: "Выбрано: {n}" },
   "action.deleteSelected": { en: "Delete selected", ru: "Удалить выбранные" },
-  "action.confirmDeleteN": { en: "Delete {n} items? Cannot be undone.", ru: "Удалить {n} файл(ов)? Это нельзя отменить." },
+  "action.confirmDeleteN": {
+    en: "Delete {n} items? Cannot be undone.",
+    ru: "Удалить {n} файл(ов)? Это действие нельзя отменить.",
+  },
   "action.back": { en: "Back", ru: "Назад" },
   "action.openDetails": { en: "Open details", ru: "Подробнее" },
-  "action.processing": { en: "Processing in progress\u2026", ru: "Обработка в процессе\u2026" },
+  "action.processing": {
+    en: "Processing in progress...",
+    ru: "Обработка выполняется...",
+  },
 
-  // ── Player ──
-  "player.notAvailable": { en: "Player not available yet.", ru: "Плеер пока недоступен." },
+  "player.notAvailable": {
+    en: "Player not available yet.",
+    ru: "Плеер пока недоступен.",
+  },
   "player.switchToVideo": { en: "Switch to video", ru: "Переключить на видео" },
-  "player.audioFallback": { en: "Use audio fallback", ru: "Аудио версия" },
+  "player.audioFallback": { en: "Use audio fallback", ru: "Аудио-версия" },
 
-  // ── Transcript ──
   "transcript.fullText": { en: "Full Text", ru: "Полный текст" },
   "transcript.segments": { en: "Segments", ru: "Сегменты" },
-  "transcript.notAvailable": { en: "Transcript not available yet.", ru: "Транскрипт пока недоступен." },
-  "transcript.search": { en: "Search transcript\u2026", ru: "Поиск по тексту\u2026" },
+  "transcript.notAvailable": {
+    en: "Transcript not available yet.",
+    ru: "Транскрипт пока недоступен.",
+  },
+  "transcript.search": {
+    en: "Search transcript...",
+    ru: "Поиск по тексту...",
+  },
 
-  // ── Summary ──
-  "summary.notAvailable": { en: "No summary available yet.", ru: "Саммари пока нет." },
+  "summary.notAvailable": {
+    en: "No summary available yet.",
+    ru: "Саммари пока недоступно.",
+  },
   "summary.request": { en: "Request Summary", ru: "Запросить саммари" },
 
-  // ── Triggers ──
   "triggers.title": { en: "Triggers", ru: "Триггеры" },
-  "triggers.empty": { en: "No trigger matches found.", ru: "Совпадений с триггерами не найдено." },
+  "triggers.empty": {
+    en: "No trigger matches found.",
+    ru: "Совпадений по триггерам не найдено.",
+  },
 
-  // ── Tech details ──
   "tech.pipelineSteps": { en: "Pipeline Steps", ru: "Этапы обработки" },
   "tech.settings": { en: "Settings Snapshot", ru: "Снимок настроек" },
   "tech.runtime": { en: "Runtime Snapshot", ru: "Снимок среды" },
-  "tech.runtimePolicy": { en: "Runtime Policy", ru: "Политика среды" },
+  "tech.runtimePolicy": { en: "Runtime Policy", ru: "Политика времени" },
   "tech.warnings": { en: "Warnings", ru: "Предупреждения" },
 
-  // ── Settings page ──
   "settings.title": { en: "Settings", ru: "Настройки" },
   "settings.transcription": { en: "Transcription", ru: "Транскрипция" },
   "settings.backend": { en: "Backend", ru: "Бэкенд" },
@@ -72,33 +98,65 @@ const translations = {
   "settings.language": { en: "Language", ru: "Язык" },
   "settings.beamSize": { en: "Beam size", ru: "Beam size" },
   "settings.auto": { en: "auto", ru: "авто" },
-  "settings.vadFilter": { en: "VAD filter", ru: "VAD фильтр" },
+  "settings.vadFilter": { en: "VAD filter", ru: "VAD-фильтр" },
   "settings.save": { en: "Save settings", ru: "Сохранить" },
   "settings.saved": { en: "Saved", ru: "Сохранено" },
   "settings.saveError": { en: "Failed to save", ru: "Не удалось сохранить" },
-  "settings.loading": { en: "Loading settings\u2026", ru: "Загрузка настроек\u2026" },
-  "settings.loadError": { en: "Could not load settings. Check server connection.", ru: "Не удалось загрузить настройки. Проверьте соединение с сервером." },
+  "settings.loading": { en: "Loading settings...", ru: "Загрузка настроек..." },
+  "settings.loadError": {
+    en: "Could not load settings. Check server connection.",
+    ru: "Не удалось загрузить настройки. Проверьте соединение с сервером.",
+  },
 
-  // Section descriptions
-  "settings.transcriptionDesc": { en: "Configure the transcription engine: model, device, and quality parameters.", ru: "Параметры движка транскрипции: модель, устройство и качество." },
-  "settings.rulesDesc": { en: "Highlight important moments in transcripts using keyword or exact-phrase rules.", ru: "Подсветка важных моментов в транскриптах по ключевым словам и точным фразам." },
+  "settings.transcriptionDesc": {
+    en: "Configure the transcription engine: model, device, and quality parameters.",
+    ru: "Параметры движка транскрипции: модель, устройство и качество.",
+  },
+  "settings.rulesDesc": {
+    en: "Highlight important moments in transcripts using keyword or exact-phrase rules.",
+    ru: "Подсветка важных моментов по ключевым словам и точным фразам.",
+  },
 
-  // Sub-groups
   "settings.groupEngine": { en: "Engine", ru: "Движок" },
   "settings.groupHardware": { en: "Hardware", ru: "Железо" },
-  "settings.groupQuality": { en: "Language & quality", ru: "Язык и качество" },
+  "settings.groupQuality": {
+    en: "Language & quality",
+    ru: "Язык и качество",
+  },
 
-  // Field hints
-  "settings.backendHint": { en: "Transcription engine library.", ru: "Библиотека-движок транскрипции." },
-  "settings.modelHint": { en: "Larger models are more accurate but slower and heavier.", ru: "Более крупные модели точнее, но медленнее и тяжелее." },
-  "settings.deviceHint": { en: "CPU works everywhere; CUDA needs an NVIDIA GPU.", ru: "CPU работает везде; CUDA требует NVIDIA GPU." },
-  "settings.computeTypeHintCPU": { en: "int8 is faster; float32 is more precise.", ru: "int8 быстрее; float32 точнее." },
-  "settings.computeTypeHintGPU": { en: "float16 is fastest; float32 is more precise.", ru: "float16 быстрее; float32 точнее." },
-  "settings.languageHint": { en: "ISO code (e.g. en, ru) or leave blank to auto-detect.", ru: "ISO-код (например en, ru) или оставьте пустым для авто-определения." },
-  "settings.beamSizeHint": { en: "Higher values improve accuracy but slow transcription (1–10).", ru: "Больше — точнее, но медленнее (1–10)." },
-  "settings.vadHint": { en: "Silences and non-speech segments are filtered out before transcription.", ru: "Тишина и не-речевые участки удаляются перед транскрипцией." },
+  "settings.backendHint": {
+    en: "Transcription engine library.",
+    ru: "Библиотека движка транскрипции.",
+  },
+  "settings.modelHint": {
+    en: "Larger models are more accurate but slower and heavier.",
+    ru: "Более крупные модели точнее, но медленнее и тяжелее.",
+  },
+  "settings.deviceHint": {
+    en: "CPU works everywhere; CUDA needs an NVIDIA GPU.",
+    ru: "CPU работает везде; CUDA требует NVIDIA GPU.",
+  },
+  "settings.computeTypeHintCPU": {
+    en: "int8 is faster; float32 is more precise.",
+    ru: "int8 быстрее; float32 точнее.",
+  },
+  "settings.computeTypeHintGPU": {
+    en: "float16 is fastest; float32 is more precise.",
+    ru: "float16 быстрее; float32 точнее.",
+  },
+  "settings.languageHint": {
+    en: "ISO code (e.g. en, ru) or leave blank to auto-detect.",
+    ru: "ISO-код, например en или ru, либо пусто для автоопределения.",
+  },
+  "settings.beamSizeHint": {
+    en: "Higher values improve accuracy but slow transcription (1-10).",
+    ru: "Чем больше значение, тем точнее, но медленнее (1-10).",
+  },
+  "settings.vadHint": {
+    en: "Silences and non-speech segments are filtered out before transcription.",
+    ru: "Тишина и неречевые участки будут удалены перед транскрипцией.",
+  },
 
-  // ── Trigger rules ──
   "rules.title": { en: "Trigger Rules", ru: "Правила триггеров" },
   "rules.name": { en: "Name", ru: "Название" },
   "rules.category": { en: "Category", ru: "Категория" },
@@ -107,10 +165,15 @@ const translations = {
   "rules.exact": { en: "Exact", ru: "Точное" },
   "rules.add": { en: "Add rule", ru: "Добавить" },
   "rules.preview": { en: "Check existing files", ru: "Проверить по файлам" },
-  "rules.previewEmpty": { en: "No matches found in existing transcripts.", ru: "Совпадений в существующих транскриптах не найдено." },
-  "rules.previewResult": { en: "Found {matches} match(es) in {files} file(s).", ru: "Найдено {matches} совпад. в {files} файл(ах)." },
+  "rules.previewEmpty": {
+    en: "No matches found in existing transcripts.",
+    ru: "Совпадений в существующих транскриптах не найдено.",
+  },
+  "rules.previewResult": {
+    en: "Found {matches} match(es) in {files} file(s).",
+    ru: "Найдено {matches} совпадений в {files} файл(ах).",
+  },
 
-  // ── Topbar ──
   "topbar.settings": { en: "Settings", ru: "Настройки" },
 } as const;
 

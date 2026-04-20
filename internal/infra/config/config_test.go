@@ -48,3 +48,52 @@ func TestLoad_AutoUploadDefaults(t *testing.T) {
 		t.Fatalf("AutoUploadMinAgeSec = %d, want 60", cfg.AutoUploadMinAgeSec)
 	}
 }
+
+func TestBuildDatabaseURL_PrefersDatabaseURL(t *testing.T) {
+	cfg := Config{
+		DatabaseURL: "postgres://user:secret@db.example:5432/app?sslmode=require",
+		DBHost:      "ignored-host",
+		DBName:      "ignored-db",
+		DBUser:      "ignored-user",
+	}
+
+	got, err := cfg.BuildDatabaseURL()
+	if err != nil {
+		t.Fatalf("BuildDatabaseURL() error = %v", err)
+	}
+	if got != cfg.DatabaseURL {
+		t.Fatalf("BuildDatabaseURL() = %q, want %q", got, cfg.DatabaseURL)
+	}
+}
+
+func TestBuildDatabaseURL_AssemblesSplitFields(t *testing.T) {
+	cfg := Config{
+		DBHost:     "localhost",
+		DBPort:     "5433",
+		DBName:     "media_pipeline",
+		DBUser:     "media",
+		DBPassword: "secret",
+		DBSSLMode:  "disable",
+	}
+
+	got, err := cfg.BuildDatabaseURL()
+	if err != nil {
+		t.Fatalf("BuildDatabaseURL() error = %v", err)
+	}
+	want := "postgres://media:secret@localhost:5433/media_pipeline?sslmode=disable"
+	if got != want {
+		t.Fatalf("BuildDatabaseURL() = %q, want %q", got, want)
+	}
+}
+
+func TestSafeDSN_RedactsPassword(t *testing.T) {
+	cfg := Config{
+		DatabaseURL: "postgres://media:secret@localhost:5432/media_pipeline?sslmode=disable",
+	}
+
+	got := cfg.SafeDSN()
+	want := "postgres://media:%2A%2A%2A@localhost:5432/media_pipeline?sslmode=disable"
+	if got != want {
+		t.Fatalf("SafeDSN() = %q, want %q", got, want)
+	}
+}

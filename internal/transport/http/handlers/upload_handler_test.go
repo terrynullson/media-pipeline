@@ -1101,10 +1101,10 @@ func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 		t.Fatalf("status = %q, want deleted", payload.Status)
 	}
 
-	assertDBCount(t, app.db, "SELECT COUNT(*) FROM media WHERE id = ?", mediaID, 0)
-	assertDBCount(t, app.db, "SELECT COUNT(*) FROM jobs WHERE media_id = ?", mediaID, 0)
-	assertDBCount(t, app.db, "SELECT COUNT(*) FROM transcripts WHERE media_id = ?", mediaID, 0)
-	assertDBCount(t, app.db, "SELECT COUNT(*) FROM summaries WHERE media_id = ?", mediaID, 0)
+	assertDBCount(t, app.db, "SELECT COUNT(*) FROM media WHERE id = $1", mediaID, 0)
+	assertDBCount(t, app.db, "SELECT COUNT(*) FROM jobs WHERE media_id = $1", mediaID, 0)
+	assertDBCount(t, app.db, "SELECT COUNT(*) FROM transcripts WHERE media_id = $1", mediaID, 0)
+	assertDBCount(t, app.db, "SELECT COUNT(*) FROM summaries WHERE media_id = $1", mediaID, 0)
 
 	if _, err := os.Stat(filepath.Join(app.uploadDir, filepath.FromSlash(uploadRelative))); !os.IsNotExist(err) {
 		t.Fatalf("uploaded file still exists, stat err = %v", err)

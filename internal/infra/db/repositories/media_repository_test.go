@@ -127,12 +127,12 @@ func TestMediaRepository_DeleteWithAssociationsRemovesRows(t *testing.T) {
 		}
 	}
 
-	assertCount("SELECT COUNT(*) FROM media WHERE id = ?", 0)
-	assertCount("SELECT COUNT(*) FROM jobs WHERE media_id = ?", 0)
-	assertCount("SELECT COUNT(*) FROM transcripts WHERE media_id = ?", 0)
+	assertCount("SELECT COUNT(*) FROM media WHERE id = $1", 0)
+	assertCount("SELECT COUNT(*) FROM jobs WHERE media_id = $1", 0)
+	assertCount("SELECT COUNT(*) FROM transcripts WHERE media_id = $1", 0)
 	assertCount(`SELECT COUNT(*)
 		FROM transcript_segments
-		WHERE transcript_id IN (SELECT id FROM transcripts WHERE media_id = ?)`, 0)
+		WHERE transcript_id IN (SELECT id FROM transcripts WHERE media_id = $1)`, 0)
 }
 
 func TestMediaRepository_PersistsRuntimeSnapshot(t *testing.T) {

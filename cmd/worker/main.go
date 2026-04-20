@@ -73,10 +73,11 @@ func main() {
 		logger.Error("resolve migrations path", slog.Any("error", err))
 		os.Exit(1)
 	}
-	if err := db.RunMigrations(ctx, sqlDB, migrationsPath); err != nil {
-		logger.Error("run migrations", slog.Any("error", err), slog.String("path", migrationsPath))
+	if err := db.EnsureMigrationsApplied(ctx, sqlDB, migrationsPath); err != nil {
+		logger.Error("database schema is not ready", slog.Any("error", err), slog.String("path", migrationsPath))
 		os.Exit(1)
 	}
+	logger.Info("worker verified database schema", slog.String("path", migrationsPath))
 
 	jobRepo := repositories.NewJobRepository(sqlDB)
 	mediaRepo := repositories.NewMediaRepository(sqlDB)

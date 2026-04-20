@@ -7,6 +7,11 @@ import (
 	"media-pipeline/internal/domain/job"
 )
 
+const (
+	workerHeartbeatFreshness = 30 * time.Second
+	workerLongJobGrace       = 30 * time.Minute
+)
+
 // workerJobReader is the narrow interface required by WorkerStatusUseCase.
 type workerJobReader interface {
 	ListAllByStatus(ctx context.Context, status job.Status) ([]job.Job, error)
@@ -60,14 +65,21 @@ func (u *WorkerStatusUseCase) Load(ctx context.Context) (WorkerStatusResult, err
 	// Compute heartbeat from the most-recently-updated running job.
 	now := time.Now().UTC()
 	var latestUpdate time.Time
+	var latestStart time.Time
 	for _, j := range running {
 		if j.UpdatedAtUTC.After(latestUpdate) {
 			latestUpdate = j.UpdatedAtUTC
 		}
+		if j.StartedAtUTC != nil && j.StartedAtUTC.After(latestStart) {
+			latestStart = j.StartedAtUTC.UTC()
+		}
 	}
 	if !latestUpdate.IsZero() {
 		result.WorkerHeartbeatAge = int64(now.Sub(latestUpdate).Seconds())
-		result.LikelyAlive = result.WorkerHeartbeatAge <= 30
+		result.LikelyAlive = now.Sub(latestUpdate) <= workerHeartbeatFreshness
+		if !result.LikelyAlive && !latestStart.IsZero() && now.Sub(latestStart) <= workerLongJobGrace {
+			result.LikelyAlive = true
+		}
 	} else {
 		// No running job — check if any pending job was updated recently.
 		for _, j := range pending {
@@ -81,9 +93,14 @@ func (u *WorkerStatusUseCase) Load(ctx context.Context) (WorkerStatusResult, err
 		result.LikelyAlive = false
 	}
 
-	// Pick the first running job as the current one.
+	// Pick the freshest running job as the current one.
 	if len(running) > 0 {
 		j := running[0]
+		for _, candidate := range running[1:] {
+			if candidate.UpdatedAtUTC.After(j.UpdatedAtUTC) {
+				j = candidate
+			}
+		}
 		current := &WorkerCurrentJob{
 			ID:            j.ID,
 			MediaID:       j.MediaID,
