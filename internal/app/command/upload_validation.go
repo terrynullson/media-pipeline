@@ -22,6 +22,12 @@ var allowedExtensions = map[string]struct{}{
 	".flac": {},
 }
 
+func IsSupportedUploadExtension(name string) bool {
+	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(name)))
+	_, ok := allowedExtensions[ext]
+	return ok
+}
+
 func validateUploadInput(in UploadMediaInput, maxUploadBytes int64) (string, *bufio.Reader, string, error) {
 	if in.Content == nil {
 		return "", nil, "", fmt.Errorf("file content is required")
@@ -37,7 +43,7 @@ func validateUploadInput(in UploadMediaInput, maxUploadBytes int64) (string, *bu
 	}
 
 	ext := strings.ToLower(filepath.Ext(in.OriginalName))
-	if _, ok := allowedExtensions[ext]; !ok {
+	if !IsSupportedUploadExtension(in.OriginalName) {
 		return "", nil, "", fmt.Errorf("unsupported file format: %s", ext)
 	}
 

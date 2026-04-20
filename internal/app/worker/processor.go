@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
+
+	"media-pipeline/internal/app/messages"
+	appsettings "media-pipeline/internal/domain/appsettings"
+	appruntime "media-pipeline/internal/infra/runtime"
+	"media-pipeline/internal/observability"
 
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
@@ -28,6 +32,10 @@ type JobRepository interface {
 	UpdateProgress(ctx context.Context, id int64, progressPercent *float64, progressLabel string, isEstimate bool, nowUTC time.Time) error
 	ListByStatus(ctx context.Context, jobType job.Type, status job.Status) ([]job.Job, error)
 	Requeue(ctx context.Context, id int64, errorMessage string, nowUTC time.Time) error
+	// ListPendingCoreJobsWithMediaAge returns all pending core-pipeline jobs joined
+	// with their media record so the scheduler can order by media creation time
+	// without extra per-job GetByID queries.
+	ListPendingCoreJobsWithMediaAge(ctx context.Context, jobTypes []job.Type) ([]job.JobWithMediaAge, error)
 }
 
 type MediaRepository interface {
@@ -70,6 +78,33 @@ type SummaryRepository interface {
 	Save(ctx context.Context, item domainsummary.Summary) error
 }
 
+type RuntimeSettingsProvider interface {
+	GetCurrent(ctx context.Context) (appsettings.Settings, error)
+}
+
+type MediaCancellationReader interface {
+	Exists(ctx context.Context, mediaID int64) (bool, error)
+	Delete(ctx context.Context, mediaID int64) error
+}
+
+// CommitTranscribeInput carries all data needed to atomically finalize a
+// transcription job: save the transcript, update media status, enqueue the
+// next pipeline stage, and mark the current job done.
+type CommitTranscribeInput struct {
+	JobID       int64
+	MediaID     int64
+	Transcript  transcript.Transcript
+	NextJobType job.Type
+	NowUTC      time.Time
+}
+
+// TranscriptionCommitter atomically commits the four writes that complete
+// a transcription job. Implementations must execute all writes inside a
+// single database transaction.
+type TranscriptionCommitter interface {
+	CommitTranscribeJob(ctx context.Context, in CommitTranscribeInput) error
+}
+
 type Processor struct {
 	jobs                  JobRepository
 	media                 MediaRepository
@@ -92,8 +127,13 @@ type Processor struct {
 	screenshotsDir        string
 	ffmpegTimeout         time.Duration
 	previewTimeout        time.Duration
+	runtimeSettings       RuntimeSettingsProvider
+	cancelRequests        MediaCancellationReader
 	screenshotTimeout     time.Duration
 	transcribeBaseTimeout time.Duration
+	// transcriptionCommitter, when set, wraps the four post-transcription
+	// writes in a single transaction. Falls back to sequential writes if nil.
+	transcriptionCommitter TranscriptionCommitter
 }
 
 func NewProcessor(
@@ -148,27 +188,65 @@ func NewProcessor(
 	}
 }
 
+func (p *Processor) WithRuntimeSettings(provider RuntimeSettingsProvider) *Processor {
+	p.runtimeSettings = provider
+	return p
+}
+
+func (p *Processor) WithCancellationReader(reader MediaCancellationReader) *Processor {
+	p.cancelRequests = reader
+	return p
+}
+
+// WithTranscriptionCommitter enables atomic completion of transcription jobs.
+// When set, all four post-transcription writes (transcript save, media status,
+// next job enqueue, job done) execute inside a single database transaction.
+func (p *Processor) WithTranscriptionCommitter(c TranscriptionCommitter) *Processor {
+	p.transcriptionCommitter = c
+	return p
+}
+
+// coreJobTypePriority defines processing order: later stages have higher priority so
+// an in-progress media item finishes completely before a new one starts.
+var coreJobTypePriority = []job.Type{
+	job.TypeGenerateSummary,
+	job.TypePreparePreviewVideo,
+	job.TypeExtractScreenshots,
+	job.TypeAnalyzeTriggers,
+	job.TypeTranscribe,
+	job.TypeExtractAudio,
+}
+
 func (p *Processor) ProcessNext(ctx context.Context) (bool, error) {
-	// Later pipeline stages have higher priority so that an in-progress
-	// media item finishes completely before a new one starts processing.
-	for _, jobType := range []job.Type{
-		job.TypeGenerateSummary,
-		job.TypePreparePreviewVideo,
-		job.TypeExtractScreenshots,
-		job.TypeAnalyzeTriggers,
-		job.TypeTranscribe,
-		job.TypeExtractAudio,
-	} {
-		processed, err := p.processNextByType(ctx, jobType)
-		if err != nil {
-			return false, err
-		}
-		if processed {
-			return true, nil
+	// One JOIN query fetches all pending core jobs with media.created_at so we
+	// can pick the best next type without per-job media.GetByID lookups.
+	pending, err := p.jobs.ListPendingCoreJobsWithMediaAge(ctx, coreJobTypePriority)
+	if err != nil {
+		return false, fmt.Errorf("list pending core jobs: %w", err)
+	}
+	if len(pending) == 0 {
+		return false, nil
+	}
+
+	// Build a priority index: lower index = higher priority.
+	priority := make(map[job.Type]int, len(coreJobTypePriority))
+	for i, t := range coreJobTypePriority {
+		priority[t] = i
+	}
+
+	// Pick the job with the highest priority type; break ties by oldest media.
+	best := pending[0]
+	for _, candidate := range pending[1:] {
+		candPri := priority[candidate.Type]
+		bestPri := priority[best.Type]
+		if candPri < bestPri {
+			best = candidate
+		} else if candPri == bestPri && candidate.MediaCreatedAtUTC.Before(best.MediaCreatedAtUTC) {
+			best = candidate
 		}
 	}
 
-	return false, nil
+	return p.processNextByType(ctx, best.Type)
 }
 
 func (p *Processor) processNextByType(ctx context.Context, jobType job.Type) (bool, error) {
@@ -202,12 +280,12 @@ func (p *Processor) processNextByType(ctx context.Context, jobType job.Type) (bo
 	case job.TypeGenerateSummary:
 		p.processGenerateSummaryJob(ctx, claimedJob, logger)
 	default:
-		jobLog := newJobExecutionLog(logger)
+		jobLog := newJobExecutionLog(claimedJob.Type, logger)
 		p.failJob(
 			ctx,
 			claimedJob,
 			0,
-			fmt.Sprintf("Неподдерживаемый тип задачи: %q", claimedJob.Type),
+			fmt.Sprintf("??????????? ??? job: %q", claimedJob.Type),
 			true,
 			jobLog,
 		)
@@ -217,22 +295,24 @@ func (p *Processor) processNextByType(ctx context.Context, jobType job.Type) (bo
 }
 
 func (p *Processor) processExtractAudioJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
-	jobLog := newJobExecutionLog(logger)
+	jobLog := newJobExecutionLog(job.TypeExtractAudio, logger)
+	ctx, stopWatchingCancellation := p.withCancelableMediaContext(ctx, claimedJob.MediaID, jobLog.logger)
+	defer stopWatchingCancellation()
 
 	mediaItem, err := p.media.GetByID(ctx, claimedJob.MediaID)
 	if err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить медиа", err), true, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ?????????", err), true, jobLog, slog.Any("error", err))
 		return
 	}
 
 	if err := p.media.MarkProcessing(ctx, mediaItem.ID, time.Now().UTC()); err != nil {
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось отметить медиа как обрабатываемое", err), true, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("?? ??????? ????????? ????????? ? ?????? ?????????", err), true, jobLog, slog.Any("error", err))
 		return
 	}
 
-	inputPath, err := safeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
+	inputPath, err := appruntime.SafeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
 	if err != nil {
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось подготовить путь к исходному файлу", err), true, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("?? ??????? ?????????? ???? ? ????????? ?????", err), true, jobLog, slog.Any("error", err))
 		return
 	}
 
@@ -273,18 +353,18 @@ func (p *Processor) processExtractAudioJob(ctx context.Context, claimedJob job.J
 
 	if err := p.media.MarkAudioExtracted(ctx, mediaItem.ID, extractResult.OutputPath, time.Now().UTC()); err != nil {
 		_ = cleanupOutputFile(p.audioDir, extractResult.OutputPath)
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось сохранить путь к извлечённому аудио", err), true, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("?? ??????? ????????? ?????????? ???????????? ?????", err), true, jobLog, slog.Any("error", err))
 		return
 	}
 
 	if err := p.enqueueTranscribeJob(ctx, mediaItem.ID); err != nil {
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось поставить распознавание в очередь", err), true, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("?? ??????? ????????? ???? ????????????? ? ???????", err), true, jobLog, slog.Any("error", err))
 		return
 	}
 
 	if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
 		_ = cleanupOutputFile(p.audioDir, extractResult.OutputPath)
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось завершить задачу извлечения аудио", err), true, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("?? ??????? ????????? ???? ?????????? ?????", err), true, jobLog, slog.Any("error", err))
 		return
 	}
 
@@ -294,38 +374,40 @@ func (p *Processor) processExtractAudioJob(ctx context.Context, claimedJob job.J
 }
 
 func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
-	jobLog := newJobExecutionLog(logger)
+	jobLog := newJobExecutionLog(job.TypeTranscribe, logger)
+	ctx, stopWatchingCancellation := p.withCancelableMediaContext(ctx, claimedJob.MediaID, jobLog.logger)
+	defer stopWatchingCancellation()
 
 	mediaItem, err := p.media.GetByID(ctx, claimedJob.MediaID)
 	if err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить медиа", err), true, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ?????????", err), true, jobLog, slog.Any("error", err))
 		return
 	}
 
 	if strings.TrimSpace(mediaItem.ExtractedAudioPath) == "" {
-		p.failJob(ctx, claimedJob, mediaItem.ID, "У файла не найден путь к извлечённому аудио.", true, jobLog)
+		p.failJob(ctx, claimedJob, mediaItem.ID, "? ????? ??????????? ??????????? ????? ??? ????????????? ??????.", true, jobLog)
 		return
 	}
 
 	if err := p.media.MarkTranscribing(ctx, mediaItem.ID, time.Now().UTC()); err != nil {
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось отметить медиа как распознаваемое", err), true, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("?? ??????? ????????? ????????? ? ?????? ?????????????", err), true, jobLog, slog.Any("error", err))
 		return
 	}
 
-	audioPath, err := safeJoinBasePath(p.audioDir, mediaItem.ExtractedAudioPath)
+	audioPath, err := appruntime.SafeJoinBasePath(p.audioDir, mediaItem.ExtractedAudioPath)
 	if err != nil {
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось подготовить путь к аудио", err), true, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("?? ??????? ?????????? ???? ? ??????????", err), true, jobLog, slog.Any("error", err))
 		return
 	}
 
 	settings, err := p.resolveTranscriptionSettings(ctx, claimedJob, logger)
 	if err != nil {
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось прочитать настройки распознавания", err), true, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("?? ??????? ????????? ????????? ?????????????", err), true, jobLog, slog.Any("error", err))
 		return
 	}
 
 	if p.audioDurations == nil {
-		p.failJob(ctx, claimedJob, mediaItem.ID, "Не удалось определить длительность файла перед распознаванием текста.", true, jobLog)
+		p.failJob(ctx, claimedJob, mediaItem.ID, "?????? ??????????? ???????????? ????? ?? ????????.", true, jobLog)
 		return
 	}
 
@@ -335,7 +417,7 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 			ctx,
 			claimedJob,
 			mediaItem.ID,
-			"Не удалось определить длительность файла перед распознаванием текста.",
+			"?? ??????? ?????????? ???????????? ??????????",
 			true,
 			jobLog,
 			slog.Any("error", err),
@@ -384,7 +466,7 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 		Settings:  settings,
 		Progress: func(progress ports.TranscriptionProgress) {
 			progressValue := progress.Percent
-			progressLabel := "Оценка по обработанным сегментам"
+			progressLabel := buildTranscriptionProgressLabel(progress)
 			progressCtx, cancelProgress := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancelProgress()
 
@@ -428,53 +510,84 @@ func (p *Processor) processTranscribeJob(ctx context.Context, claimedJob job.Job
 	)
 
 	nowUTC := time.Now().UTC()
-	if err := p.transcripts.Save(ctx, transcript.Transcript{
+	transcriptItem := transcript.Transcript{
 		MediaID:      mediaItem.ID,
 		Language:     settings.Language,
 		FullText:     result.FullText,
 		Segments:     toTranscriptSegments(result.Segments),
 		CreatedAtUTC: nowUTC,
 		UpdatedAtUTC: nowUTC,
-	}); err != nil {
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось сохранить расшифровку", err), true, jobLog, slog.Any("error", err))
-		return
-	}
-	jobLog.logger.Info("transcript persisted successfully", slog.Int64("media_id", mediaItem.ID))
-
-	if err := p.media.MarkTranscribed(ctx, mediaItem.ID, result.FullText, time.Now().UTC()); err != nil {
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось отметить медиа как распознанное", err), true, jobLog, slog.Any("error", err))
-		return
 	}
 
-	if err := p.enqueueNextJob(ctx, mediaItem.ID, job.TypeAnalyzeTriggers); err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось поставить анализ триггеров в очередь", err), false, jobLog, slog.Any("error", err))
-		return
-	}
+	if p.transcriptionCommitter != nil {
+		// Preferred path: all four writes in one transaction.
+		// A crash between them is no longer possible — either all succeed or none do.
+		if err := p.transcriptionCommitter.CommitTranscribeJob(ctx, CommitTranscribeInput{
+			JobID:       claimedJob.ID,
+			MediaID:     mediaItem.ID,
+			Transcript:  transcriptItem,
+			NextJobType: job.TypeAnalyzeTriggers,
+			NowUTC:      nowUTC,
+		}); err != nil {
+			p.failJob(ctx, claimedJob, mediaItem.ID,
+				buildInternalFailureMessage("не удалось атомарно завершить задачу транскрипции", err),
+				true, jobLog, slog.Any("error", err))
+			return
+		}
+	} else {
+		// Fallback path (no committer wired): sequential writes with the same
+		// recovery guarantee as before — RecoverInterruptedJobs handles crashes.
+		if err := p.transcripts.Save(ctx, transcriptItem); err != nil {
+			p.failJob(ctx, claimedJob, mediaItem.ID,
+				buildInternalFailureMessage("не удалось сохранить транскрипцию в базу данных", err),
+				true, jobLog, slog.Any("error", err))
+			return
+		}
+		jobLog.logger.Info("transcript persisted successfully", slog.Int64("media_id", mediaItem.ID))
 
-	if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось завершить задачу распознавания", err), false, jobLog, slog.Any("error", err))
-		return
+		if err := p.media.MarkTranscribed(ctx, mediaItem.ID, result.FullText, time.Now().UTC()); err != nil {
+			p.failJob(ctx, claimedJob, mediaItem.ID,
+				buildInternalFailureMessage("не удалось обновить статус медиа после транскрипции", err),
+				true, jobLog, slog.Any("error", err))
+			return
+		}
+
+		if err := p.enqueueNextJob(ctx, mediaItem.ID, job.TypeAnalyzeTriggers); err != nil {
+			p.failJob(ctx, claimedJob, 0,
+				buildInternalFailureMessage("не удалось запланировать этап анализа триггеров", err),
+				false, jobLog, slog.Any("error", err))
+			return
+		}
+
+		if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
+			p.failJob(ctx, claimedJob, 0,
+				buildInternalFailureMessage("не удалось завершить задачу транскрипции", err),
+				false, jobLog, slog.Any("error", err))
+			return
+		}
 	}
 
 	jobLog.Success(slog.Int("segments", len(result.Segments)))
 }
 
 func (p *Processor) processAnalyzeTriggersJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
-	jobLog := newJobExecutionLog(logger)
+	jobLog := newJobExecutionLog(job.TypeAnalyzeTriggers, logger)
+	ctx, stopWatchingCancellation := p.withCancelableMediaContext(ctx, claimedJob.MediaID, jobLog.logger)
+	defer stopWatchingCancellation()
 
 	transcriptItem, ok, err := p.transcripts.GetByMediaID(ctx, claimedJob.MediaID)
 	if err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить расшифровку для анализа триггеров", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ??????????? ??? ??????? ?????????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 	if !ok {
-		p.failJob(ctx, claimedJob, 0, "Расшифровка не найдена, поэтому анализ триггеров не может продолжиться.", false, jobLog)
+		p.failJob(ctx, claimedJob, 0, "??????????? ?? ???????, ???? ??????? ????????? ?? ????? ???? ?????????.", false, jobLog)
 		return
 	}
 
 	rules, err := p.triggerRules.ListEnabled(ctx)
 	if err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить включённые правила триггеров", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ??????? ?????????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
@@ -489,17 +602,17 @@ func (p *Processor) processAnalyzeTriggersJob(ctx context.Context, claimedJob jo
 	})
 
 	if err := p.triggerEvents.ReplaceForMedia(ctx, claimedJob.MediaID, &transcriptID, events); err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось сохранить найденные триггеры", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ????????? ????????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
 	if err := p.enqueueNextJob(ctx, claimedJob.MediaID, job.TypeExtractScreenshots); err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось поставить подготовку скриншотов в очередь", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????????? ???? ??????? ?? ?????????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
 	if err := p.jobs.MarkDone(ctx, claimedJob.ID, nowUTC); err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось завершить задачу анализа триггеров", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ?????? ??????? ?????????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
@@ -507,58 +620,60 @@ func (p *Processor) processAnalyzeTriggersJob(ctx context.Context, claimedJob jo
 }
 
 func (p *Processor) processExtractScreenshotsJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
-	jobLog := newJobExecutionLog(logger)
+	jobLog := newJobExecutionLog(job.TypeExtractScreenshots, logger)
+	ctx, stopWatchingCancellation := p.withCancelableMediaContext(ctx, claimedJob.MediaID, jobLog.logger)
+	defer stopWatchingCancellation()
 
 	mediaItem, err := p.media.GetByID(ctx, claimedJob.MediaID)
 	if err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить медиа для скриншотов", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ????? ??? ??????? ?? ?????????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
 	if mediaItem.IsAudioOnly() {
 		existingPaths, err := p.triggerScreenshots.ListPathsByMediaID(ctx, mediaItem.ID)
 		if err != nil {
-			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить текущие скриншоты", err), false, jobLog, slog.Any("error", err))
+			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ???????????? ?????? ?? ?????????", err), false, jobLog, slog.Any("error", err))
 			return
 		}
 		if err := p.triggerScreenshots.ReplaceForMedia(ctx, mediaItem.ID, nil); err != nil {
-			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось очистить скриншоты для аудио", err), false, jobLog, slog.Any("error", err))
+			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ???????? ?????? ?? ????????? ??? audio-only ?????", err), false, jobLog, slog.Any("error", err))
 			return
 		}
 		p.cleanupCreatedScreenshots(existingPaths, logger)
 		if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
-			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось завершить задачу скриншотов", err), false, jobLog, slog.Any("error", err))
+			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ?????? ??????? ?? ????????? ??? audio-only ?????", err), false, jobLog, slog.Any("error", err))
 			return
 		}
 		jobLog.Success(slog.String("result", "skipped for audio-only media"))
 		return
 	}
 
-	inputPath, err := safeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
+	inputPath, err := appruntime.SafeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
 	if err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось подготовить путь к видео для скриншотов", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ?????????? ???? ? ????????? ????? ??? ??????? ?? ?????????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
 	events, err := p.triggerEvents.ListByMediaID(ctx, claimedJob.MediaID)
 	if err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить найденные триггеры для скриншотов", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ??????? ?????????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
 	if len(events) == 0 {
 		existingPaths, err := p.triggerScreenshots.ListPathsByMediaID(ctx, mediaItem.ID)
 		if err != nil {
-			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить текущие скриншоты", err), false, jobLog, slog.Any("error", err))
+			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ???????????? ?????? ?? ?????????", err), false, jobLog, slog.Any("error", err))
 			return
 		}
 		if err := p.triggerScreenshots.ReplaceForMedia(ctx, mediaItem.ID, nil); err != nil {
-			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось очистить скриншоты без совпадений", err), false, jobLog, slog.Any("error", err))
+			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ???????? ?????? ?? ????????? ??? ?????????? ???????", err), false, jobLog, slog.Any("error", err))
 			return
 		}
 		p.cleanupCreatedScreenshots(existingPaths, logger)
 		if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
-			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось завершить задачу скриншотов", err), false, jobLog, slog.Any("error", err))
+			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ?????? ??????? ?? ????????? ??? ???????", err), false, jobLog, slog.Any("error", err))
 			return
 		}
 		jobLog.Success(slog.String("result", "no trigger events"))
@@ -568,7 +683,7 @@ func (p *Processor) processExtractScreenshotsJob(ctx context.Context, claimedJob
 	nowUTC := time.Now().UTC()
 	existingPaths, err := p.triggerScreenshots.ListPathsByMediaID(ctx, mediaItem.ID)
 	if err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить текущие скриншоты", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ???????????? ?????? ?? ?????????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 	screenshots := make([]domaintrigger.Screenshot, 0, len(events))
@@ -576,7 +691,7 @@ func (p *Processor) processExtractScreenshotsJob(ctx context.Context, claimedJob
 	for _, event := range events {
 		if event.StartSec < 0 {
 			p.cleanupCreatedScreenshots(createdPaths, logger)
-			p.failJob(ctx, claimedJob, 0, "Невалидная временная метка для создания скриншота.", false, jobLog, slog.Float64("timestamp_sec", event.StartSec), slog.Int64("trigger_event_id", event.ID))
+			p.failJob(ctx, claimedJob, 0, "? ??????? ???????? ???????????? ????? ??????, ?????? ??????? ??????.", false, jobLog, slog.Float64("timestamp_sec", event.StartSec), slog.Int64("trigger_event_id", event.ID))
 			return
 		}
 
@@ -620,13 +735,13 @@ func (p *Processor) processExtractScreenshotsJob(ctx context.Context, claimedJob
 
 	if err := p.triggerScreenshots.ReplaceForMedia(ctx, mediaItem.ID, screenshots); err != nil {
 		p.cleanupCreatedScreenshots(createdPaths, logger)
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось сохранить скриншоты", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ????? ??? ?????????? ?????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 	p.cleanupCreatedScreenshots(pathsDifference(existingPaths, createdPaths), logger)
 
 	if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось завершить задачу скриншотов", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ?????? ?????????? ?????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
@@ -634,36 +749,48 @@ func (p *Processor) processExtractScreenshotsJob(ctx context.Context, claimedJob
 }
 
 func (p *Processor) processPreparePreviewVideoJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
-	jobLog := newJobExecutionLog(logger)
+	jobLog := newJobExecutionLog(job.TypePreparePreviewVideo, logger)
+	ctx, stopWatchingCancellation := p.withCancelableMediaContext(ctx, claimedJob.MediaID, jobLog.logger)
+	defer stopWatchingCancellation()
 
 	mediaItem, err := p.media.GetByID(ctx, claimedJob.MediaID)
 	if err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить медиа для browser-safe preview", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ????? ??? ?????????? preview", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
 	if mediaItem.IsAudioOnly() {
 		if err := p.jobs.MarkDone(ctx, claimedJob.ID, time.Now().UTC()); err != nil {
-			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось завершить задачу preview для audio-only media", err), false, jobLog, slog.Any("error", err))
+			p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ?????? preview ??? audio-only ?????", err), false, jobLog, slog.Any("error", err))
 			return
 		}
 		jobLog.Success(slog.String("result", "skipped for audio-only media"))
 		return
 	}
 
-	inputPath, err := safeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
+	inputPath, err := appruntime.SafeJoinBasePath(p.uploadDir, mediaItem.StoragePath)
 	if err != nil {
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось подготовить путь к исходному видео для preview", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("?? ??????? ?????????? ???? ? ????????? ????? ??? preview", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
-	previewCtx, cancel := context.WithTimeout(ctx, p.previewTimeout)
+	previewTimeout := p.previewTimeout
+	if p.runtimeSettings != nil {
+		settings, settingsErr := p.runtimeSettings.GetCurrent(ctx)
+		if settingsErr == nil && settings.PreviewTimeout() > 0 {
+			previewTimeout = settings.PreviewTimeout()
+		} else if settingsErr != nil {
+			jobLog.logger.Warn("load runtime settings failed, using fallback preview timeout", slog.Any("error", settingsErr))
+		}
+	}
+
+	previewCtx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
 	jobLog.logger.Info("starting preview generation",
 		slog.String("input_path", inputPath),
 		slog.String("preview_dir", p.previewDir),
-		slog.Duration("timeout", p.previewTimeout),
+		slog.Duration("timeout", previewTimeout),
 	)
 
 	result, err := p.previewGenerator.Generate(previewCtx, ports.GeneratePreviewVideoInput{
@@ -699,13 +826,13 @@ func (p *Processor) processPreparePreviewVideoJob(ctx context.Context, claimedJo
 		nowUTC,
 	); err != nil {
 		_ = cleanupOutputFile(p.previewDir, result.OutputPath)
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось сохранить preview video metadata", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("?? ??????? ????????? preview-??????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
 	if err := p.jobs.MarkDone(ctx, claimedJob.ID, nowUTC); err != nil {
 		_ = cleanupOutputFile(p.previewDir, result.OutputPath)
-		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("Не удалось завершить задачу подготовки preview video", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, mediaItem.ID, buildInternalFailureMessage("?? ??????? ????????? ??? ?????????? preview-??????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
@@ -716,27 +843,29 @@ func (p *Processor) processPreparePreviewVideoJob(ctx context.Context, claimedJo
 }
 
 func (p *Processor) processGenerateSummaryJob(ctx context.Context, claimedJob job.Job, logger *slog.Logger) {
-	jobLog := newJobExecutionLog(logger)
+	jobLog := newJobExecutionLog(job.TypeGenerateSummary, logger)
+	ctx, stopWatchingCancellation := p.withCancelableMediaContext(ctx, claimedJob.MediaID, jobLog.logger)
+	defer stopWatchingCancellation()
 
 	transcriptItem, ok, err := p.transcripts.GetByMediaID(ctx, claimedJob.MediaID)
 	if err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить расшифровку для саммари", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ??????? ??? ?????????? ???????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 	if !ok || strings.TrimSpace(transcriptItem.FullText) == "" {
-		p.failJob(ctx, claimedJob, 0, "Нельзя собрать саммари без готовой расшифровки.", false, jobLog)
+		p.failJob(ctx, claimedJob, 0, "??????? ????????? ?? ??????? ??? ????? ?????????? ???????.", false, jobLog)
 		return
 	}
 
 	triggerEvents, err := p.triggerEvents.ListByMediaID(ctx, claimedJob.MediaID)
 	if err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить триггеры для саммари", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ?????????? ??????? ??? ?????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
 	triggerScreenshots, err := p.triggerScreenshots.ListByMediaID(ctx, claimedJob.MediaID)
 	if err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось загрузить скриншоты для саммари", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ???? ? ?????? ??? ???????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
@@ -766,12 +895,12 @@ func (p *Processor) processGenerateSummaryJob(ctx context.Context, claimedJob jo
 		UpdatedAtUTC: nowUTC,
 	}
 	if err := p.summaries.Save(ctx, summaryItem); err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось сохранить саммари", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ??????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
 	if err := p.jobs.MarkDone(ctx, claimedJob.ID, nowUTC); err != nil {
-		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("Не удалось завершить задачу саммари", err), false, jobLog, slog.Any("error", err))
+		p.failJob(ctx, claimedJob, 0, buildInternalFailureMessage("?? ??????? ????????? ??? ?????????? ???????", err), false, jobLog, slog.Any("error", err))
 		return
 	}
 
@@ -782,18 +911,27 @@ func (p *Processor) processGenerateSummaryJob(ctx context.Context, claimedJob jo
 }
 
 func (p *Processor) RecoverInterruptedJobs(ctx context.Context) error {
+	// transcriptExists is used by TypeTranscribe recovery to detect the crash window
+	// between MarkTranscribed and MarkDone: if transcript already exists, mark the job
+	// done immediately instead of resetting state and re-running transcription.
+	transcriptExists := func(ctx context.Context, mediaID int64) (bool, error) {
+		_, ok, err := p.transcripts.GetByMediaID(ctx, mediaID)
+		return ok, err
+	}
+
 	for _, recovery := range []struct {
-		jobType      job.Type
-		restoreState func(context.Context, int64, time.Time) error
+		jobType        job.Type
+		restoreState   func(context.Context, int64, time.Time) error
+		alreadyDoneFor func(ctx context.Context, mediaID int64) (bool, error)
 	}{
 		{jobType: job.TypeExtractAudio, restoreState: p.media.MarkUploaded},
-		{jobType: job.TypeTranscribe, restoreState: p.media.MarkAudioReady},
+		{jobType: job.TypeTranscribe, restoreState: p.media.MarkAudioReady, alreadyDoneFor: transcriptExists},
 		{jobType: job.TypeAnalyzeTriggers},
 		{jobType: job.TypeExtractScreenshots},
 		{jobType: job.TypePreparePreviewVideo},
 		{jobType: job.TypeGenerateSummary},
 	} {
-		if err := p.recoverInterruptedJobType(ctx, recovery.jobType, recovery.restoreState); err != nil {
+		if err := p.recoverInterruptedJobType(ctx, recovery.jobType, recovery.restoreState, recovery.alreadyDoneFor); err != nil {
 			return err
 		}
 	}
@@ -823,6 +961,47 @@ func (p *Processor) failJob(
 	}
 }
 
+func (p *Processor) withCancelableMediaContext(ctx context.Context, mediaID int64, logger *slog.Logger) (context.Context, func()) {
+	childCtx, cancel := context.WithCancel(ctx)
+	if p.cancelRequests == nil {
+		return childCtx, cancel
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-stop:
+				return
+			case <-childCtx.Done():
+				return
+			case <-ticker.C:
+				exists, err := p.cancelRequests.Exists(context.Background(), mediaID)
+				if err != nil {
+					logger.Warn("check media cancellation request failed", slog.Int64("media_id", mediaID), slog.Any("error", err))
+					continue
+				}
+				if exists {
+					logger.Info("media cancellation requested", slog.Int64("media_id", mediaID))
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
+	return childCtx, func() {
+		close(stop)
+		cancel()
+		<-done
+	}
+}
+
 func truncateMessage(value string, limit int) string {
 	if len(value) <= limit {
 		return value
@@ -835,7 +1014,7 @@ func cleanupOutputFile(audioDir string, relativePath string) error {
 		return nil
 	}
 
-	fullPath, err := safeJoinBasePath(audioDir, relativePath)
+	fullPath, err := appruntime.SafeJoinBasePath(audioDir, relativePath)
 	if err != nil {
 		return err
 	}
@@ -965,6 +1144,7 @@ func (p *Processor) recoverInterruptedJobType(
 	ctx context.Context,
 	jobType job.Type,
 	restoreState func(context.Context, int64, time.Time) error,
+	alreadyDoneFor func(ctx context.Context, mediaID int64) (bool, error),
 ) error {
 	runningJobs, err := p.jobs.ListByStatus(ctx, jobType, job.StatusRunning)
 	if err != nil {
@@ -981,6 +1161,25 @@ func (p *Processor) recoverInterruptedJobType(
 			slog.Int64("media_id", currentJob.MediaID),
 			slog.String("job_type", string(currentJob.Type)),
 		)
+
+		// If an alreadyDoneFor check is provided (e.g. transcript exists for TypeTranscribe),
+		// the crash occurred in the narrow window after the work was completed but before
+		// MarkDone was called. Mark the job done directly without re-running the work.
+		if alreadyDoneFor != nil {
+			done, checkErr := alreadyDoneFor(ctx, currentJob.MediaID)
+			if checkErr != nil {
+				logger.Error("recover: alreadyDone check failed", slog.Any("error", checkErr))
+				continue
+			}
+			if done {
+				if err := p.jobs.MarkDone(ctx, currentJob.ID, time.Now().UTC()); err != nil {
+					logger.Error("recover: mark job done failed", slog.Any("error", err))
+					continue
+				}
+				logger.Warn("recovered interrupted job as done (work already completed)", slog.String("job_type", string(jobType)))
+				continue
+			}
+		}
 
 		if restoreState != nil {
 			if err := restoreState(ctx, currentJob.MediaID, time.Now().UTC()); err != nil {
@@ -1024,12 +1223,15 @@ func transcriptionDiagnostics(err error) string {
 
 type jobExecutionLog struct {
 	startedAt time.Time
+	jobType   job.Type
 	logger    *slog.Logger
 }
 
-func newJobExecutionLog(logger *slog.Logger, attrs ...slog.Attr) jobExecutionLog {
+func newJobExecutionLog(jobType job.Type, logger *slog.Logger, attrs ...slog.Attr) jobExecutionLog {
+	observability.ActiveJobs.WithLabelValues(string(jobType)).Inc()
 	run := jobExecutionLog{
 		startedAt: time.Now(),
+		jobType:   jobType,
 		logger:    logger,
 	}
 	run.logger.Info("pipeline step started", attrsToAnySlice(attrs)...)
@@ -1037,12 +1239,20 @@ func newJobExecutionLog(logger *slog.Logger, attrs ...slog.Attr) jobExecutionLog
 }
 
 func (j jobExecutionLog) Success(attrs ...slog.Attr) {
-	attrs = append(attrs, slog.Duration("duration", time.Since(j.startedAt)))
+	elapsed := time.Since(j.startedAt)
+	observability.ActiveJobs.WithLabelValues(string(j.jobType)).Dec()
+	observability.JobsProcessedTotal.WithLabelValues(string(j.jobType), "done").Inc()
+	observability.JobDurationSeconds.WithLabelValues(string(j.jobType)).Observe(elapsed.Seconds())
+	attrs = append(attrs, slog.Duration("duration", elapsed))
 	j.logger.Info("pipeline step succeeded", attrsToAnySlice(attrs)...)
 }
 
 func (j jobExecutionLog) Failure(attrs ...slog.Attr) {
-	attrs = append(attrs, slog.Duration("duration", time.Since(j.startedAt)))
+	elapsed := time.Since(j.startedAt)
+	observability.ActiveJobs.WithLabelValues(string(j.jobType)).Dec()
+	observability.JobsProcessedTotal.WithLabelValues(string(j.jobType), "failed").Inc()
+	observability.JobDurationSeconds.WithLabelValues(string(j.jobType)).Observe(elapsed.Seconds())
+	attrs = append(attrs, slog.Duration("duration", elapsed))
 	j.logger.Error("pipeline step failed", attrsToAnySlice(attrs)...)
 }
 
@@ -1061,7 +1271,7 @@ func attrsToAnySlice(attrs []slog.Attr) []any {
 
 func buildPreviewFailureMessage(err error, diagnostics string) string {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return "Истекло время ожидания подготовки browser-safe preview видео."
+		return messages.TimeoutPreview
 	}
 
 	reason := compactDiagnostic(diagnostics, 240)
@@ -1070,12 +1280,12 @@ func buildPreviewFailureMessage(err error, diagnostics string) string {
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
-		reason = "не удалось определить причину"
+		reason = messages.UnknownFailureReason
 	} else if strings.Contains(strings.ToLower(reason), "exit status") {
-		reason = "ffmpeg завершился с ошибкой"
+		reason = messages.FFmpegExitError
 	}
 
-	return "Не удалось подготовить browser-safe preview видео: " + reason
+	return messages.PrefixPreviewVideo + reason
 }
 
 func buildUserFacingStageError(jobType job.Type, err error, diagnostics string) string {
@@ -1085,29 +1295,29 @@ func buildUserFacingStageError(jobType job.Type, err error, diagnostics string) 
 	}
 	reason = humanizeUserReason(jobType, reason)
 	if reason == "" {
-		reason = "не удалось определить причину"
+		reason = messages.UnknownFailureReason
 	}
 
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		switch jobType {
 		case job.TypeExtractAudio, job.TypeExtractScreenshots:
-			return "Истекло время ожидания ffmpeg."
+			return messages.TimeoutFFmpeg
 		case job.TypeTranscribe:
-			return "Истекло время ожидания распознавания текста."
+			return messages.TimeoutTranscribe
 		default:
-			return "Истекло время ожидания обработки."
+			return messages.TimeoutGeneric
 		}
 	case jobType == job.TypeExtractAudio:
-		return "Не удалось извлечь аудио: " + reason
+		return messages.PrefixExtractAudio + reason
 	case jobType == job.TypeTranscribe:
-		return "Не удалось распознать текст: " + reason
+		return messages.PrefixTranscribe + reason
 	case jobType == job.TypeAnalyzeTriggers:
-		return "Не удалось проанализировать триггеры: " + reason
+		return messages.PrefixAnalyze + reason
 	case jobType == job.TypeExtractScreenshots:
-		return "Не удалось подготовить скриншоты: " + reason
+		return messages.PrefixScreenshots + reason
 	case jobType == job.TypeGenerateSummary:
-		return "Не удалось собрать саммари: " + reason
+		return messages.PrefixSummary + reason
 	default:
 		return reason
 	}
@@ -1126,20 +1336,20 @@ func humanizeUserReason(jobType job.Type, reason string) string {
 	if jobType == job.TypeTranscribe {
 		switch {
 		case strings.Contains(lower, "transcription backend returned empty text"):
-			return "модель вернула пустой результат"
+			return messages.TranscriptionEmpty
 		case strings.Contains(lower, "no module named"):
-			return "не удалось запустить Python-зависимости распознавания"
+			return messages.PythonDepsNotFound
 		case strings.Contains(lower, "out of memory"):
-			return "не хватило памяти для запуска модели"
+			return messages.OutOfMemory
 		case strings.Contains(lower, "cuda") && strings.Contains(lower, "not available"):
-			return "CUDA недоступна для этой модели"
+			return messages.CUDAUnavailable
 		case strings.Contains(lower, "exit status"):
-			return "процесс распознавания завершился с ошибкой"
+			return messages.TranscribeExitError
 		}
 	}
 
 	if (jobType == job.TypeExtractAudio || jobType == job.TypeExtractScreenshots) && strings.Contains(lower, "exit status") {
-		return "ffmpeg завершился с ошибкой"
+		return messages.FFmpegExitError
 	}
 
 	return trimmed
@@ -1225,24 +1435,30 @@ func isDiagnosticNoise(line string) bool {
 	return false
 }
 
-func safeJoinBasePath(baseDir string, relativePath string) (string, error) {
-	cleanRelativePath := filepath.Clean(filepath.FromSlash(relativePath))
-	if cleanRelativePath == "." || cleanRelativePath == string(filepath.Separator) {
-		return "", fmt.Errorf("invalid relative path %q", relativePath)
-	}
-	fullPath := filepath.Join(baseDir, cleanRelativePath)
-
-	baseAbs, err := filepath.Abs(baseDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve base dir: %w", err)
-	}
-	fullAbs, err := filepath.Abs(fullPath)
-	if err != nil {
-		return "", fmt.Errorf("resolve full path: %w", err)
-	}
-	if fullAbs != baseAbs && !strings.HasPrefix(fullAbs, baseAbs+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q escapes base dir", relativePath)
+func buildTranscriptionProgressLabel(progress ports.TranscriptionProgress) string {
+	if progress.TotalSec > 0 && progress.ProcessedSec > 0 {
+		return fmt.Sprintf(
+			"Сегмент %s из %s",
+			formatClockLikeDuration(progress.ProcessedSec),
+			formatClockLikeDuration(progress.TotalSec),
+		)
 	}
 
-	return fullAbs, nil
+	return "Оценка по обработанным сегментам"
+}
+
+func formatClockLikeDuration(seconds float64) string {
+	if seconds <= 0 {
+		return "00:00"
+	}
+
+	totalSeconds := int(seconds + 0.5)
+	hours := totalSeconds / 3600
+	minutes := (totalSeconds % 3600) / 60
+	secs := totalSeconds % 60
+	if hours > 0 {
+		return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, secs)
+	}
+
+	return fmt.Sprintf("%02d:%02d", minutes, secs)
 }

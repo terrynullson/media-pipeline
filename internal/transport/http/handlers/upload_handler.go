@@ -15,10 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
 	"media-pipeline/internal/app/command"
 	mediaapp "media-pipeline/internal/app/media"
+	appsettings "media-pipeline/internal/domain/appsettings"
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/transcription"
@@ -26,14 +25,31 @@ import (
 	"media-pipeline/internal/observability"
 )
 
+// RecordingMetadata mirrors autoupload.RecordingMetadata. Defined here so the
+// transport layer does not import infra directly. The composition root wires
+// a parser implemented in internal/infra/recording.
+type RecordingMetadata struct {
+	SourceName        string
+	StartedAtUTC      time.Time
+	RawRecordingLabel string
+}
+
+// RecordingMetadataParser is an optional dependency. When nil, uploads
+// proceed without airtime fields.
+type RecordingMetadataParser func(name string) (*RecordingMetadata, error)
+
 type UploadHandler struct {
 	uploadUC         *command.UploadMediaUseCase
 	transcriptionSvc TranscriptionSettingsService
+	runtimeSvc       RuntimeSettingsService
 	triggerRulesSvc  TriggerRulesService
 	transcriptViewUC TranscriptViewService
 	summaryRequestUC SummaryRequestService
 	deleteMediaUC    MediaDeletionService
+	retryJobUC       RetryJobService
 	jobReader        MediaJobReader
+	historicalETA    HistoricalEstimatorService
+	parseRecording   RecordingMetadataParser
 	tmpl             *template.Template
 	maxUploadSizeB   int64
 	maxRequestBodyB  int64
@@ -43,6 +59,13 @@ type UploadHandler struct {
 	logger           *slog.Logger
 }
 
+// WithRecordingMetadataParser injects a parser that derives broadcast
+// metadata from the uploaded filename.
+func (h *UploadHandler) WithRecordingMetadataParser(parser RecordingMetadataParser) *UploadHandler {
+	h.parseRecording = parser
+	return h
+}
+
 type TranscriptionSettingsService interface {
 	GetCurrent(ctx context.Context) (transcription.Profile, error)
 	SaveCurrent(ctx context.Context, profile transcription.Profile) (transcription.Profile, error)
@@ -50,6 +73,11 @@ type TranscriptionSettingsService interface {
 
 type TranscriptViewService interface {
 	Load(ctx context.Context, mediaID int64) (mediaapp.TranscriptViewResult, error)
+}
+
+type RuntimeSettingsService interface {
+	GetCurrent(ctx context.Context) (appsettings.Settings, error)
+	SaveCurrent(ctx context.Context, settings appsettings.Settings) (appsettings.Settings, error)
 }
 
 type TriggerRulesService interface {
@@ -71,6 +99,14 @@ type MediaJobReader interface {
 	ListByMediaID(ctx context.Context, mediaID int64) ([]job.Job, error)
 }
 
+type RetryJobService interface {
+	Retry(ctx context.Context, mediaID int64) (mediaapp.RetryJobResult, error)
+}
+
+type HistoricalEstimatorService interface {
+	EstimateForMedia(ctx context.Context, mediaItem media.Media, jobType job.Type) (mediaapp.HistoricalEstimate, error)
+}
+
 type MediaListItem struct {
 	ID                int64
 	OriginalName      string
@@ -86,11 +122,13 @@ type MediaListItem struct {
 	IsActive          bool
 	CurrentStage      string
 	CurrentTimingText string
+	CurrentEtaLabel   string
 	FailedStage       string
 	ErrorSummary      string
 	ErrorLocation     string
 	Steps             []PipelineStepView
 	CreatedAtUTC      string
+	CompletedAtUTC    string
 	CanOpenTranscript bool
 	HasTranscript     bool
 	TriggerCount      int
@@ -136,35 +174,17 @@ type TranscriptionSettingsForm struct {
 	UITheme     string `json:"uiTheme"`
 }
 
-type TriggerRuleForm struct {
-	Name      string
-	Category  string
-	Pattern   string
-	MatchMode string
-}
-
-type TriggerRuleView struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	Category     string `json:"category"`
-	Pattern      string `json:"pattern"`
-	MatchMode    string `json:"matchMode"`
-	Enabled      bool   `json:"enabled"`
-	ToggleURL    string `json:"toggleUrl"`
-	DeleteURL    string `json:"deleteUrl"`
-	ToggleLabel  string `json:"toggleLabel"`
-	EnabledLabel string `json:"enabledLabel"`
-	EnabledTone  string `json:"enabledTone"`
-}
-
 func NewUploadHandler(
 	uploadUC *command.UploadMediaUseCase,
 	transcriptionSvc TranscriptionSettingsService,
+	runtimeSvc RuntimeSettingsService,
 	triggerRulesSvc TriggerRulesService,
 	transcriptViewUC TranscriptViewService,
 	summaryRequestUC SummaryRequestService,
 	deleteMediaUC MediaDeletionService,
+	retryJobUC RetryJobService,
 	jobReader MediaJobReader,
+	historicalETA HistoricalEstimatorService,
 	templatesDir string,
 	maxUploadSizeB int64,
 	logger *slog.Logger,
@@ -181,11 +201,14 @@ func NewUploadHandler(
 	return &UploadHandler{
 		uploadUC:         uploadUC,
 		transcriptionSvc: transcriptionSvc,
+		runtimeSvc:       runtimeSvc,
 		triggerRulesSvc:  triggerRulesSvc,
 		transcriptViewUC: transcriptViewUC,
 		summaryRequestUC: summaryRequestUC,
 		deleteMediaUC:    deleteMediaUC,
+		retryJobUC:       retryJobUC,
 		jobReader:        jobReader,
+		historicalETA:    historicalETA,
 		tmpl:             tmpl,
 		maxUploadSizeB:   maxUploadSizeB,
 		maxRequestBodyB:  maxUploadSizeB + (1 << 20),
@@ -196,24 +219,39 @@ func NewUploadHandler(
 	}, nil
 }
 
+func (h *UploadHandler) buildPipelineView(ctx context.Context, mediaItem media.Media, jobs []job.Job) MediaPipelineView {
+	estimates := make(map[job.Type]time.Duration)
+	if h.historicalETA != nil {
+		for _, currentType := range []job.Type{job.TypePreparePreviewVideo, job.TypeExtractAudio} {
+			estimate, err := h.historicalETA.EstimateForMedia(ctx, mediaItem, currentType)
+			if err != nil || !estimate.Available || estimate.EstimatedDuration <= 0 {
+				continue
+			}
+			estimates[currentType] = estimate.EstimatedDuration
+		}
+	}
+
+	return buildMediaPipelineViewWithHistorical(mediaItem, jobs, estimates)
+}
+
 func (h *UploadHandler) Index(w http.ResponseWriter, r *http.Request) {
 	successMessage := ""
 	triggerRuleSuccess := ""
 	switch r.URL.Query().Get("status") {
 	case "uploaded":
-		successMessage = "Файл загружен. Запись создана, задача на извлечение аудио поставлена в очередь."
+		successMessage = "???? ???????? ? ????????? ? ??????? ?? ?????????."
 	case "deleted":
-		successMessage = "Файл удалён. Связанные записи очищены, временные файлы тоже были удалены."
+		successMessage = "???? ??????."
 	case "trigger_rule_saved":
-		triggerRuleSuccess = "Правило триггера создано."
+		triggerRuleSuccess = "??????? ????????? ?????????."
 	case "trigger_rule_updated":
-		triggerRuleSuccess = "Статус правила триггера обновлён."
+		triggerRuleSuccess = "??????? ????????? ?????????."
 	case "trigger_rule_deleted":
-		triggerRuleSuccess = "Правило триггера удалено."
+		triggerRuleSuccess = "??????? ????????? ???????."
 	}
 	settingsSuccess := ""
 	if r.URL.Query().Get("status") == "settings_saved" {
-		settingsSuccess = "Настройки распознавания сохранены."
+		settingsSuccess = "????????? ?????????."
 	}
 
 	h.renderIndex(w, r, "", successMessage, "", settingsSuccess, "", triggerRuleSuccess, nil, nil)
@@ -237,17 +275,18 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	)
 	startedAtUTC := time.Now().UTC()
 
-	r.Body = http.MaxBytesReader(w, r.Body, h.maxRequestBodyB)
+	maxUploadBytes := h.currentMaxUploadSizeBytes(r.Context())
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+(1<<20))
 	if err := r.ParseMultipartForm(h.maxFormMemoryB); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			logger.Warn("upload request rejected: request body too large", slog.Any("error", err))
-			h.renderUploadFailure(w, r, h.uploadLimitMessage("Файл слишком большой."))
+			h.renderUploadFailure(w, r, h.uploadLimitMessage(r.Context(), "?????? ????? ????????? ?????????? ?????."))
 			return
 		}
 
 		logger.Warn("upload request rejected: invalid multipart form", slog.Any("error", err))
-		h.renderUploadFailure(w, r, "Не удалось прочитать форму загрузки. Выберите файл ещё раз.")
+		h.renderUploadFailure(w, r, "?? ??????? ?????????? multipart-?????? ? ??????.")
 		return
 	}
 	defer func() {
@@ -259,17 +298,17 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	file, fileHeader, err := r.FormFile("media")
 	if err != nil {
 		logger.Warn("upload request rejected: media field missing", slog.Any("error", err))
-		h.renderUploadFailure(w, r, "Выберите файл для загрузки.")
+		h.renderUploadFailure(w, r, "?? ?????? ???? ??? ????????.")
 		return
 	}
 	defer file.Close()
 
 	if strings.TrimSpace(fileHeader.Filename) == "" {
-		h.renderUploadFailure(w, r, "Имя файла обязательно.")
+		h.renderUploadFailure(w, r, "? ????? ??? ?????. ???????????? ???? ? ?????????? ?????.")
 		return
 	}
 	if fileHeader.Size == 0 {
-		h.renderUploadFailure(w, r, "Пустой файл загружать нельзя.")
+		h.renderUploadFailure(w, r, "???? ??????. ???????? ???? ? ??????????.")
 		return
 	}
 
@@ -278,14 +317,27 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		slog.Int64("declared_size_bytes", fileHeader.Size),
 	)
 
-	result, err := h.uploadUC.Upload(r.Context(), command.UploadMediaInput{
+	uploadInput := command.UploadMediaInput{
 		OriginalName:        fileHeader.Filename,
 		MIMEType:            normalizeMIMEType(fileHeader.Header.Get("Content-Type")),
 		SizeBytes:           fileHeader.Size,
+		MaxUploadBytes:      maxUploadBytes,
 		Content:             file,
 		StartedAtUTC:        startedAtUTC,
 		RuntimeSnapshotJSON: buildRuntimeSnapshotJSON(r),
-	})
+	}
+	if h.parseRecording != nil {
+		meta, parseErr := h.parseRecording(fileHeader.Filename)
+		if parseErr != nil {
+			logger.Warn("recording filename parse failed", slog.Any("error", parseErr), slog.String("filename", fileHeader.Filename))
+		} else if meta != nil {
+			startedCopy := meta.StartedAtUTC.UTC()
+			uploadInput.SourceName = meta.SourceName
+			uploadInput.RecordingStartedAtUTC = &startedCopy
+			uploadInput.RawRecordingLabel = meta.RawRecordingLabel
+		}
+	}
+	result, err := h.uploadUC.Upload(r.Context(), uploadInput)
 	if err != nil {
 		logger.Warn("upload failed", slog.Any("error", err), slog.String("filename", fileHeader.Filename))
 		h.renderUploadFailure(w, r, h.userFacingUploadError(err))
@@ -297,7 +349,7 @@ func (h *UploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		h.writeJSON(w, http.StatusCreated, map[string]any{
 			"status":  "uploaded",
 			"mediaId": result.MediaID,
-			"message": "Файл загружен. Запись создана, задача поставлена в очередь.",
+			"message": "???? ???????? ? ????????? ? ??????? ?? ?????????.",
 		})
 		return
 	}
@@ -308,25 +360,13 @@ func (h *UploadHandler) MediaStatuses(w http.ResponseWriter, r *http.Request) {
 	items, err := h.buildMediaListItems(r.Context())
 	if err != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("load media statuses failed", slog.Any("error", err))
-		http.Error(w, "не удалось загрузить статусы файлов", http.StatusInternalServerError)
+		http.Error(w, "?? ??????? ????????? ??????? ?????", http.StatusInternalServerError)
 		return
 	}
 
 	h.writeJSON(w, http.StatusOK, map[string]any{
 		"items": items,
 	})
-}
-
-func (h *UploadHandler) renderUploadFailure(w http.ResponseWriter, r *http.Request, message string) {
-	if wantsJSON(r) {
-		h.writeJSON(w, http.StatusBadRequest, map[string]string{
-			"status":  "error",
-			"message": message,
-		})
-		return
-	}
-
-	h.renderIndex(w, r, message, "", "", "", "", "", nil, nil)
 }
 
 func (h *UploadHandler) SaveTranscriptionSettings(w http.ResponseWriter, r *http.Request) {
@@ -338,7 +378,7 @@ func (h *UploadHandler) SaveTranscriptionSettings(w http.ResponseWriter, r *http
 	r.Body = http.MaxBytesReader(w, r.Body, h.maxSettingsBodyB)
 	if err := r.ParseForm(); err != nil {
 		logger.Warn("settings request rejected: invalid form", slog.Any("error", err))
-		h.renderIndex(w, r, "", "", "Не удалось прочитать форму настроек. Попробуйте ещё раз.", "", "", "", buildSettingsFormFromRequest(r), nil)
+		h.renderIndex(w, r, "", "", "?? ??????? ?????????? ????? ????????. ????????? ????????? ???????? ? ?????????? ?????.", "", "", "", buildSettingsFormFromRequest(r), nil)
 		return
 	}
 
@@ -350,7 +390,7 @@ func (h *UploadHandler) SaveTranscriptionSettings(w http.ResponseWriter, r *http
 
 	if _, err := h.transcriptionSvc.SaveCurrent(r.Context(), profile); err != nil {
 		logger.Warn("save transcription settings failed", slog.Any("error", err))
-		h.renderIndex(w, r, "", "", "Не удалось сохранить настройки: "+err.Error(), "", "", "", &form, nil)
+		h.renderIndex(w, r, "", "", "?? ??????? ????????? ????????? ?????????????: "+err.Error(), "", "", "", &form, nil)
 		return
 	}
 
@@ -363,68 +403,22 @@ func (h *UploadHandler) SaveTranscriptionSettings(w http.ResponseWriter, r *http
 	http.Redirect(w, r, "/?status=settings_saved", http.StatusSeeOther)
 }
 
-func (h *UploadHandler) CreateTriggerRule(w http.ResponseWriter, r *http.Request) {
-	logger := observability.LoggerFromContext(r.Context(), h.logger).With(
-		slog.String("method", r.Method),
-		slog.String("path", r.URL.Path),
-	)
-
-	r.Body = http.MaxBytesReader(w, r.Body, h.maxSettingsBodyB)
-	if err := r.ParseForm(); err != nil {
-		logger.Warn("trigger rule request rejected: invalid form", slog.Any("error", err))
-		h.renderIndex(w, r, "", "", "", "", "Не удалось прочитать форму правила триггера. Попробуйте ещё раз.", "", nil, buildTriggerRuleFormFromRequest(r))
-		return
-	}
-
-	rule, form, err := parseTriggerRuleForm(r)
-	if err != nil {
-		h.renderIndex(w, r, "", "", "", "", err.Error(), "", nil, &form)
-		return
-	}
-
-	if _, err := h.triggerRulesSvc.Create(r.Context(), rule); err != nil {
-		logger.Warn("create trigger rule failed", slog.Any("error", err))
-		h.renderIndex(w, r, "", "", "", "", "Не удалось сохранить правило триггера: "+err.Error(), "", nil, &form)
-		return
-	}
-
-	http.Redirect(w, r, "/?status=trigger_rule_saved", http.StatusSeeOther)
+// renderTriggerRuleError implements triggerRulePageRenderer so that
+// TriggerRuleHandler can delegate HTML error rendering.
+func (h *UploadHandler) renderTriggerRuleError(w http.ResponseWriter, r *http.Request, errMsg string, form *TriggerRuleForm) {
+	h.renderIndex(w, r, "", "", "", "", errMsg, "", nil, form)
 }
 
-func (h *UploadHandler) ToggleTriggerRule(w http.ResponseWriter, r *http.Request) {
-	ruleID, err := triggerRuleIDFromRequest(r)
-	if err != nil {
-		http.Error(w, "invalid trigger rule id", http.StatusBadRequest)
+func (h *UploadHandler) renderUploadFailure(w http.ResponseWriter, r *http.Request, message string) {
+	if wantsJSON(r) {
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{
+			"status":  "error",
+			"message": message,
+		})
 		return
 	}
 
-	if err := r.ParseForm(); err != nil {
-		h.renderIndex(w, r, "", "", "", "", "Не удалось прочитать действие для правила триггера.", "", nil, nil)
-		return
-	}
-
-	enabled := r.FormValue("enabled") == "true"
-	if err := h.triggerRulesSvc.SetEnabled(r.Context(), ruleID, enabled); err != nil {
-		h.renderIndex(w, r, "", "", "", "", "Не удалось обновить правило триггера: "+err.Error(), "", nil, nil)
-		return
-	}
-
-	http.Redirect(w, r, "/?status=trigger_rule_updated", http.StatusSeeOther)
-}
-
-func (h *UploadHandler) DeleteTriggerRule(w http.ResponseWriter, r *http.Request) {
-	ruleID, err := triggerRuleIDFromRequest(r)
-	if err != nil {
-		http.Error(w, "invalid trigger rule id", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.triggerRulesSvc.Delete(r.Context(), ruleID); err != nil {
-		h.renderIndex(w, r, "", "", "", "", "Не удалось удалить правило триггера: "+err.Error(), "", nil, nil)
-		return
-	}
-
-	http.Redirect(w, r, "/?status=trigger_rule_deleted", http.StatusSeeOther)
+	h.renderIndex(w, r, message, "", "", "", "", "", nil, nil)
 }
 
 func (h *UploadHandler) renderIndex(
@@ -442,19 +436,19 @@ func (h *UploadHandler) renderIndex(
 	viewItems, err := h.buildMediaListItems(r.Context())
 	if err != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("load media list failed", slog.Any("error", err))
-		http.Error(w, "не удалось загрузить список файлов", http.StatusInternalServerError)
+		http.Error(w, "?? ??????? ????????? ?????? ?????", http.StatusInternalServerError)
 		return
 	}
 	currentProfile, err := h.transcriptionSvc.GetCurrent(r.Context())
 	if err != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("load transcription settings failed", slog.Any("error", err))
-		http.Error(w, "не удалось загрузить настройки распознавания", http.StatusInternalServerError)
+		http.Error(w, "?? ??????? ????????? ????????? ?????????????", http.StatusInternalServerError)
 		return
 	}
 	triggerRules, err := h.triggerRulesSvc.List(r.Context())
 	if err != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("load trigger rules failed", slog.Any("error", err))
-		http.Error(w, "не удалось загрузить правила триггеров", http.StatusInternalServerError)
+		http.Error(w, "?? ??????? ????????? ??????? ?????????", http.StatusInternalServerError)
 		return
 	}
 	currentForm := buildSettingsForm(currentProfile)
@@ -485,8 +479,8 @@ func (h *UploadHandler) renderIndex(
 		SettingsWarnings:    buildSettingsWarnings(currentForm),
 		TriggerRuleError:    triggerRuleError,
 		TriggerRuleSuccess:  triggerRuleSuccess,
-		MaxUploadMB:         strconv.FormatInt(h.maxUploadSizeB/(1024*1024), 10),
-		MaxUploadHuman:      HumanSize(h.maxUploadSizeB),
+		MaxUploadMB:         strconv.FormatInt(h.currentMaxUploadSizeBytes(r.Context())/(1024*1024), 10),
+		MaxUploadHuman:      HumanSize(h.currentMaxUploadSizeBytes(r.Context())),
 		SettingsForm:        currentForm,
 		TriggerRuleForm:     currentTriggerRuleForm,
 		TriggerRules:        buildTriggerRuleViews(triggerRules),
@@ -500,7 +494,7 @@ func (h *UploadHandler) renderIndex(
 	}
 	if execErr := h.tmpl.ExecuteTemplate(w, "index.html", data); execErr != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("render index template failed", slog.Any("error", execErr))
-		http.Error(w, "не удалось отрисовать страницу", http.StatusInternalServerError)
+		http.Error(w, "?? ??????? ?????????? ??????? ????????", http.StatusInternalServerError)
 	}
 }
 
@@ -516,7 +510,7 @@ func (h *UploadHandler) buildMediaListItems(ctx context.Context) ([]MediaListIte
 		if err != nil {
 			return nil, fmt.Errorf("load jobs for media %d: %w", item.ID, err)
 		}
-		pipelineView := buildMediaPipelineView(item, jobs)
+		pipelineView := h.buildPipelineView(ctx, item, jobs)
 		viewItems = append(viewItems, MediaListItem{
 			ID:                item.ID,
 			OriginalName:      item.OriginalName,
@@ -532,11 +526,13 @@ func (h *UploadHandler) buildMediaListItems(ctx context.Context) ([]MediaListIte
 			IsActive:          pipelineView.IsActive,
 			CurrentStage:      pipelineView.CurrentStage,
 			CurrentTimingText: pipelineView.CurrentTimingText,
+			CurrentEtaLabel:   pipelineView.CurrentEtaLabel,
 			FailedStage:       pipelineView.FailedStage,
 			ErrorSummary:      pipelineView.ErrorSummary,
 			ErrorLocation:     pipelineView.ErrorLocation,
 			Steps:             pipelineView.Steps,
-			CreatedAtUTC:      item.CreatedAtUTC.UTC().Format("2006-01-02 15:04:05"),
+			CreatedAtUTC:      FormatDateTimeUTC(item.CreatedAtUTC),
+			CompletedAtUTC:    formatOptionalDateTime(latestCompletedCoreJobTime(jobs)),
 			HasTranscript:     strings.TrimSpace(item.TranscriptText) != "",
 			CanOpenTranscript: canOpenTranscript(item),
 			TranscriptURL:     fmt.Sprintf("/media/%d/transcript", item.ID),
@@ -607,8 +603,26 @@ func (h *UploadHandler) writeJSON(w http.ResponseWriter, statusCode int, payload
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func (h *UploadHandler) uploadLimitMessage(prefix string) string {
-	return fmt.Sprintf("%s Максимальный размер файла: %s.", strings.TrimSpace(prefix), HumanSize(h.maxUploadSizeB))
+func (h *UploadHandler) uploadLimitMessage(ctx context.Context, prefix string) string {
+	return fmt.Sprintf("%s ???????????? ?????? ?????: %s.", strings.TrimSpace(prefix), HumanSize(h.currentMaxUploadSizeBytes(ctx)))
+}
+
+func (h *UploadHandler) currentMaxUploadSizeBytes(ctx context.Context) int64 {
+	if h.runtimeSvc == nil {
+		return h.maxUploadSizeB
+	}
+
+	settings, err := h.runtimeSvc.GetCurrent(ctx)
+	if err != nil {
+		return h.maxUploadSizeB
+	}
+
+	maxUploadSizeBytes := settings.MaxUploadSizeBytes()
+	if maxUploadSizeBytes <= 0 {
+		return h.maxUploadSizeB
+	}
+
+	return maxUploadSizeBytes
 }
 
 func (h *UploadHandler) userFacingUploadError(err error) string {
@@ -623,16 +637,16 @@ func (h *UploadHandler) userFacingUploadError(err error) string {
 	case strings.Contains(msg, "content type is not supported"):
 		return "Файл не похож на аудио или видео."
 	case strings.Contains(msg, "empty file"):
-		return "Пустой файл загружать нельзя."
+		return "???? ??????. ????????? ???????? ?????- ??? ?????????."
 	case strings.Contains(msg, "exceeds max size"):
-		return h.uploadLimitMessage("Файл превышает допустимый размер.")
+		return h.uploadLimitMessage(context.Background(), "?????? ????? ????????? ?????????? ?????.")
 	case strings.Contains(msg, "upload canceled"):
-		return "Загрузка была отменена до завершения."
+		return "???????? ???? ???????? ?? ??????????."
 	default:
 		if errors.Is(err, http.ErrMissingFile) {
-			return "Выберите файл для загрузки."
+			return "???? ?? ??? ??????? ? ???????."
 		}
-		return "Ошибка загрузки: " + msg
+		return "?? ??????? ?????????? ???????? ?????: " + msg
 	}
 }
 
@@ -649,7 +663,7 @@ func parseTranscriptionProfileForm(r *http.Request) (transcription.Profile, Tran
 	form := buildSettingsFormFromRequest(r)
 	beamSize, err := strconv.Atoi(strings.TrimSpace(r.FormValue("beam_size")))
 	if err != nil {
-		return transcription.Profile{}, *form, fmt.Errorf("Поле beam_size должно быть целым числом.")
+		return transcription.Profile{}, *form, fmt.Errorf("???? beam_size ?????? ???? ????? ??????")
 	}
 	form.BeamSize = beamSize
 
@@ -721,92 +735,6 @@ func backendOptions() []string {
 		values = append(values, string(item))
 	}
 	return values
-}
-
-func parseTriggerRuleForm(r *http.Request) (domaintrigger.Rule, TriggerRuleForm, error) {
-	form := *buildTriggerRuleFormFromRequest(r)
-	rule := domaintrigger.NormalizeRule(domaintrigger.Rule{
-		Name:      form.Name,
-		Category:  form.Category,
-		Pattern:   form.Pattern,
-		MatchMode: domaintrigger.MatchMode(form.MatchMode),
-		Enabled:   true,
-	})
-	form = buildTriggerRuleForm(rule)
-
-	if err := domaintrigger.ValidateRule(rule); err != nil {
-		return domaintrigger.Rule{}, form, err
-	}
-
-	return rule, form, nil
-}
-
-func buildTriggerRuleForm(rule domaintrigger.Rule) TriggerRuleForm {
-	return TriggerRuleForm{
-		Name:      rule.Name,
-		Category:  rule.Category,
-		Pattern:   rule.Pattern,
-		MatchMode: string(rule.MatchMode),
-	}
-}
-
-func buildTriggerRuleFormFromRequest(r *http.Request) *TriggerRuleForm {
-	return &TriggerRuleForm{
-		Name:      strings.TrimSpace(r.FormValue("name")),
-		Category:  strings.TrimSpace(r.FormValue("category")),
-		Pattern:   strings.TrimSpace(r.FormValue("pattern")),
-		MatchMode: strings.TrimSpace(r.FormValue("match_mode")),
-	}
-}
-
-func buildTriggerRuleViews(items []domaintrigger.Rule) []TriggerRuleView {
-	views := make([]TriggerRuleView, 0, len(items))
-	for _, item := range items {
-		view := TriggerRuleView{
-			ID:           item.ID,
-			Name:         item.Name,
-			Category:     item.Category,
-			Pattern:      item.Pattern,
-			MatchMode:    string(item.MatchMode),
-			Enabled:      item.Enabled,
-			ToggleURL:    fmt.Sprintf("/trigger-rules/%d/toggle", item.ID),
-			DeleteURL:    fmt.Sprintf("/trigger-rules/%d/delete", item.ID),
-			EnabledLabel: "Выключено",
-			EnabledTone:  "neutral",
-			ToggleLabel:  "Включить",
-		}
-		if item.Enabled {
-			view.EnabledLabel = "Включено"
-			view.EnabledTone = "success"
-			view.ToggleLabel = "Выключить"
-		}
-		views = append(views, view)
-	}
-
-	return views
-}
-
-func matchModeOptions() []string {
-	options := domaintrigger.SupportedMatchModes()
-	values := make([]string, 0, len(options))
-	for _, option := range options {
-		values = append(values, string(option))
-	}
-	return values
-}
-
-func triggerRuleIDFromRequest(r *http.Request) (int64, error) {
-	raw := strings.TrimSpace(chi.URLParam(r, "ruleID"))
-	if raw == "" {
-		return 0, fmt.Errorf("trigger rule id is required")
-	}
-
-	value, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || value <= 0 {
-		return 0, fmt.Errorf("invalid trigger rule id %q", raw)
-	}
-
-	return value, nil
 }
 
 func buildRuntimeSnapshotJSON(r *http.Request) string {

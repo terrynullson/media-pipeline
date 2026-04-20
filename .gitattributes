@@ -1,0 +1,54 @@
+# .gitattributes — правила нормализации строк для Git.
+# Цель: все текстовые файлы в репозитории хранятся с LF,
+# независимо от ОС разработчика. Это предотвращает случайную порчу кодировки
+# при коммите с Windows (CRLF) или macOS (CR).
+
+# По умолчанию: текст → LF в репозитории, auto-convert на рабочей машине
+* text=auto
+
+# Go-файлы — всегда LF
+*.go text eol=lf
+
+# Веб / фронтенд
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.js   text eol=lf
+*.jsx  text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+
+# Конфиги
+*.json text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.env  text eol=lf
+
+# Документация и SQL
+*.md   text eol=lf
+*.sql  text eol=lf
+
+# Shell-скрипты — обязательно LF, иначе bash не запустится
+*.sh   text eol=lf
+
+# Python
+*.py   text eol=lf
+
+# PowerShell (.ps1) может работать с CRLF на Windows — оставляем auto
+*.ps1  text eol=crlf
+
+# Bat-файлы на Windows ожидают CRLF
+*.bat  text eol=crlf
+
+# Бинарные файлы — без конвертации
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.wav  binary
+*.mp3  binary
+*.mp4  binary
+*.webm binary
+*.db   binary
+*.sqlite binary

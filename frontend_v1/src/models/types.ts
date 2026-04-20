@@ -8,6 +8,7 @@ export interface PipelineStep {
   startedAtLabel?: string;
   finishedAtLabel?: string;
   durationLabel?: string;
+  etaLabel?: string;
   progressLabel?: string;
   progressPercent?: number;
   progressVisible?: boolean;
@@ -19,6 +20,7 @@ export interface MediaListItem {
   extension: string;
   sizeHuman: string;
   createdAtUtc: string;
+  completedAtUtc?: string;
   status: string;
   statusLabel: string;
   statusTone: string;
@@ -28,6 +30,7 @@ export interface MediaListItem {
   stagePercent: number;
   currentStage: string;
   currentTimingText: string;
+  currentEtaLabel?: string;
   errorSummary?: string;
   hasTranscript: boolean;
   isAudioOnly: boolean;
@@ -103,6 +106,7 @@ export interface MediaDetailResponse {
     mimeType: string;
     sizeHuman: string;
     createdAtUtc: string;
+    completedAtUtc?: string;
     isAudioOnly: boolean;
   };
   pipeline: {
@@ -204,6 +208,11 @@ export interface SettingsResponse {
     vadEnabled: boolean;
     uiTheme: string;
   };
+  runtime: {
+    autoUploadMinAgeSec: number;
+    previewTimeoutSec: number;
+    maxUploadSizeMB: number;
+  };
   warnings: string[];
   ui: {
     theme: string;
@@ -222,6 +231,14 @@ export interface SettingsResponse {
   };
 }
 
+export interface RuntimeSettingsResponse {
+  runtime: {
+    autoUploadMinAgeSec: number;
+    previewTimeoutSec: number;
+    maxUploadSizeMB: number;
+  };
+}
+
 export interface UIConfigResponse {
   maxUploadBytes: number;
   maxUploadHuman: string;
@@ -237,4 +254,74 @@ export interface UploadProgress {
   loaded: number;
   total: number;
   percent: number;
+}
+
+export interface AnalyticsOverviewMetric {
+  label: string;
+  value: string;
+  help: string;
+}
+
+export interface TopWord {
+  word: string;
+  count: number;
+}
+
+export interface AnalyticsSource {
+  source: string;
+  mediaCount: number;
+  totalDurationSec: number;
+  transcriptCount: number;
+}
+
+export interface AnalyticsActivity {
+  date: string;
+  mediaCount: number;
+}
+
+export interface AnalyticsResponse {
+  overview: AnalyticsOverviewMetric[];
+  topWords: TopWord[];
+  sources: AnalyticsSource[];
+  activity: AnalyticsActivity[];
+  stopWords: string[];
+}
+
+export interface TimelineItem {
+  mediaId: number;
+  mediaName: string;
+  source: string;
+  segmentStart: string;
+  segmentEnd: string;
+  startSec: number;
+  endSec: number;
+  text: string;
+  correctedText: string;
+}
+
+export interface TimelineResponse {
+  items: TimelineItem[];
+}
+
+export interface TimelineFilters {
+  from?: string;
+  to?: string;
+  source?: string;
+}
+
+export interface WorkerStatusResponse {
+  workerHeartbeatAge: number;
+  likelyAlive: boolean;
+  currentJob: {
+    id: number;
+    mediaId: number;
+    type: string;
+    startedAt: string;
+    progressPercent?: number;
+    progressLabel?: string;
+  } | null;
+  queue: {
+    pending: number;
+    byType: Record<string, number>;
+  };
 }

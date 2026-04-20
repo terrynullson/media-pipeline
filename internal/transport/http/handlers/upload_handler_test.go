@@ -17,17 +17,19 @@ import (
 	"testing"
 	"time"
 
+	appsettingsapp "media-pipeline/internal/app/appsettings"
 	"media-pipeline/internal/app/command"
 	mediaapp "media-pipeline/internal/app/media"
 	transcriptionapp "media-pipeline/internal/app/transcription"
 	triggerapp "media-pipeline/internal/app/trigger"
+	appsettings "media-pipeline/internal/domain/appsettings"
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
 	domainsummary "media-pipeline/internal/domain/summary"
 	"media-pipeline/internal/domain/transcript"
 	domaintranscription "media-pipeline/internal/domain/transcription"
 	domaintrigger "media-pipeline/internal/domain/trigger"
-	"media-pipeline/internal/infra/db"
+	"media-pipeline/internal/infra/db/dbtest"
 	"media-pipeline/internal/infra/db/repositories"
 	infraRuntime "media-pipeline/internal/infra/runtime"
 	"media-pipeline/internal/infra/storage"
@@ -642,16 +644,16 @@ func TestUploadHandler_TranscriptPageShowsPlayerFallbackWhenSourceMissing(t *tes
 	if err := transcriptRepo.Save(ctx, transcript.Transcript{
 		MediaID:      mediaID,
 		Language:     "ru",
-		FullText:     "С„Р°Р№Р» Р±РµР· РёСЃС…РѕРґРЅРёРєР°",
+		FullText:     "файл без исходника",
 		CreatedAtUTC: nowUTC,
 		UpdatedAtUTC: nowUTC,
 		Segments: []transcript.Segment{
-			{StartSec: 0, EndSec: 1.5, Text: "С„Р°Р№Р» Р±РµР· РёСЃС…РѕРґРЅРёРєР°"},
+			{StartSec: 0, EndSec: 1.5, Text: "файл без исходника"},
 		},
 	}); err != nil {
 		t.Fatalf("Save(transcript) error = %v", err)
 	}
-	if err := mediaRepo.MarkTranscribed(ctx, mediaID, "С„Р°Р№Р» Р±РµР· РёСЃС…РѕРґРЅРёРєР°", nowUTC); err != nil {
+	if err := mediaRepo.MarkTranscribed(ctx, mediaID, "файл без исходника", nowUTC); err != nil {
 		t.Fatalf("MarkTranscribed() error = %v", err)
 	}
 
@@ -669,7 +671,7 @@ func TestUploadHandler_TranscriptPageShowsPlayerFallbackWhenSourceMissing(t *tes
 		}
 		return
 	}
-	if !strings.Contains(body, "Р’РёРґРµРѕС„Р°Р№Р» СЃРµР№С‡Р°СЃ РЅРµРґРѕСЃС‚СѓРїРµРЅ РґР»СЏ РІСЃС‚СЂРѕРµРЅРЅРѕРіРѕ РїСЂРѕРёРіСЂС‹РІР°С‚РµР»СЏ") {
+	if !strings.Contains(body, "Видеофайл сейчас недоступен для встроенного проигрывателя") {
 		t.Fatalf("transcript page body missing player fallback: %s", body)
 	}
 	if strings.Contains(body, "data-media-player") {
@@ -704,11 +706,11 @@ func TestUploadHandler_RequestSummaryCreatesJobAndRedirects(t *testing.T) {
 	if err := transcriptRepo.Save(ctx, transcript.Transcript{
 		MediaID:      mediaID,
 		Language:     "ru",
-		FullText:     "РљРѕСЂРѕС‚РєРёР№ С‚РµРєСЃС‚ РґР»СЏ СЃР°РјРјР°СЂРё.",
+		FullText:     "Короткий текст для саммари.",
 		CreatedAtUTC: nowUTC,
 		UpdatedAtUTC: nowUTC,
 		Segments: []transcript.Segment{
-			{StartSec: 0, EndSec: 1, Text: "РљРѕСЂРѕС‚РєРёР№ С‚РµРєСЃС‚ РґР»СЏ СЃР°РјРјР°СЂРё."},
+			{StartSec: 0, EndSec: 1, Text: "Короткий текст для саммари."},
 		},
 	}); err != nil {
 		t.Fatalf("Save(transcript) error = %v", err)
@@ -1069,8 +1071,8 @@ func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 	}
 	if err := summaryRepo.Save(ctx, domainsummary.Summary{
 		MediaID:      mediaID,
-		SummaryText:  "РљРѕСЂРѕС‚РєРѕРµ СЃР°РјРјР°СЂРё РґР»СЏ СѓРґР°Р»РµРЅРёСЏ.",
-		Highlights:   []string{"РўРµР·РёСЃ 1"},
+		SummaryText:  "Короткое саммари для удаления.",
+		Highlights:   []string{"Тезис 1"},
 		Provider:     "simple-summary-v1",
 		CreatedAtUTC: nowUTC,
 		UpdatedAtUTC: nowUTC,
@@ -1099,10 +1101,10 @@ func TestUploadHandler_DeleteMediaRemovesRowsAndFiles(t *testing.T) {
 		t.Fatalf("status = %q, want deleted", payload.Status)
 	}
 
-	assertDBCount(t, app.db, "SELECT COUNT(*) FROM media WHERE id = ?", mediaID, 0)
-	assertDBCount(t, app.db, "SELECT COUNT(*) FROM jobs WHERE media_id = ?", mediaID, 0)
-	assertDBCount(t, app.db, "SELECT COUNT(*) FROM transcripts WHERE media_id = ?", mediaID, 0)
-	assertDBCount(t, app.db, "SELECT COUNT(*) FROM summaries WHERE media_id = ?", mediaID, 0)
+	assertDBCount(t, app.db, "SELECT COUNT(*) FROM media WHERE id = $1", mediaID, 0)
+	assertDBCount(t, app.db, "SELECT COUNT(*) FROM jobs WHERE media_id = $1", mediaID, 0)
+	assertDBCount(t, app.db, "SELECT COUNT(*) FROM transcripts WHERE media_id = $1", mediaID, 0)
+	assertDBCount(t, app.db, "SELECT COUNT(*) FROM summaries WHERE media_id = $1", mediaID, 0)
 
 	if _, err := os.Stat(filepath.Join(app.uploadDir, filepath.FromSlash(uploadRelative))); !os.IsNotExist(err) {
 		t.Fatalf("uploaded file still exists, stat err = %v", err)
@@ -1181,27 +1183,15 @@ func newTestApp(t *testing.T) testWebApp {
 	t.Helper()
 
 	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "app.db")
 	uploadDir := filepath.Join(tempDir, "uploads")
 	audioDir := filepath.Join(tempDir, "audio")
 	previewDir := filepath.Join(tempDir, "previews")
 	screenshotsDir := filepath.Join(tempDir, "screenshots")
 
-	sqlDB, err := db.OpenSQLite(dbPath)
-	if err != nil {
-		t.Fatalf("OpenSQLite() error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = sqlDB.Close()
-	})
-
-	migrationsPath, err := infraRuntime.ResolvePath("internal/infra/db/migrations")
-	if err != nil {
-		t.Fatalf("ResolvePath(migrations) error = %v", err)
-	}
-	if err := db.RunMigrations(sqlDB, migrationsPath); err != nil {
-		t.Fatalf("RunMigrations() error = %v", err)
-	}
+	// dbtest.New skips the test when TEST_DATABASE_URL is unset; otherwise it
+	// returns a *sql.DB scoped to a freshly migrated schema and registers
+	// cleanup so the schema is dropped at the end of the test.
+	sqlDB := dbtest.New(t)
 
 	templatesDir, err := infraRuntime.ResolvePath("internal/transport/http/views/templates")
 	if err != nil {
@@ -1228,6 +1218,15 @@ func newTestApp(t *testing.T) testWebApp {
 		repositories.NewTranscriptionProfileRepository(sqlDB),
 		domaintranscription.DefaultProfile("ru"),
 	)
+	runtimeSettingsSvc := appsettingsapp.NewService(
+		repositories.NewRuntimeSettingsRepository(sqlDB),
+		appsettings.Settings{
+			AutoUploadMinAgeSec: 60,
+			PreviewTimeoutSec:   600,
+			MaxUploadSizeMB:     10,
+		},
+	)
+	cancelRequestRepo := repositories.NewMediaCancelRequestRepository(sqlDB)
 	triggerRuleService := triggerapp.NewService(triggerRuleRepo)
 	uploadUC := command.NewUploadMediaUseCase(
 		mediaRepo,
@@ -1251,15 +1250,20 @@ func newTestApp(t *testing.T) testWebApp {
 		5*time.Minute,
 	)
 	requestSummaryUC := mediaapp.NewRequestSummaryUseCase(mediaRepo, transcriptRepo, jobRepo)
-	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, triggerScreenshotRepo, uploadStorage, audioStorage, previewStorage, screenshotStorage, logger)
+	deleteMediaUC := mediaapp.NewDeleteMediaUseCase(mediaRepo, jobRepo, cancelRequestRepo, triggerScreenshotRepo, uploadStorage, audioStorage, previewStorage, screenshotStorage, logger)
+	retryJobUC := mediaapp.NewRetryJobUseCase(mediaRepo, jobRepo, jobRepo, mediaRepo, logger)
+	historicalETA := mediaapp.NewHistoricalEstimator(jobRepo)
 	handler, err := handlers.NewUploadHandler(
 		uploadUC,
 		profileService,
+		runtimeSettingsSvc,
 		triggerRuleService,
 		transcriptViewUC,
 		requestSummaryUC,
 		deleteMediaUC,
+		retryJobUC,
 		jobRepo,
+		historicalETA,
 		templatesDir,
 		10*1024*1024,
 		logger,
@@ -1268,8 +1272,16 @@ func newTestApp(t *testing.T) testWebApp {
 		t.Fatalf("NewUploadHandler() error = %v", err)
 	}
 
+	mediaStatusUC := mediaapp.NewMediaStatusUseCase(mediaRepo, transcriptRepo, jobRepo)
+	machineAPIHandler := handlers.NewMachineAPIHandler(mediaStatusUC, transcriptViewUC, logger)
+	workerStatusUC := mediaapp.NewWorkerStatusUseCase(jobRepo)
+	workerStatusHandler := handlers.NewWorkerStatusHandler(workerStatusUC, logger)
+	triggerPreviewUC := mediaapp.NewTriggerPreviewUseCase(transcriptRepo)
+	triggerRuleHandler := handlers.NewTriggerRuleHandler(triggerRuleService, handler, logger).
+		WithPreviewService(triggerPreviewUC)
+
 	return testWebApp{
-		router:         httptransport.NewRouter(logger, handler, staticPath, uploadDir, audioDir, previewDir, screenshotsDir),
+		router:         httptransport.NewRouter(logger, handler, machineAPIHandler, triggerRuleHandler, workerStatusHandler, nil, staticPath, uploadDir, audioDir, previewDir, screenshotsDir, "", 30*time.Second, 0),
 		db:             sqlDB,
 		uploadDir:      uploadDir,
 		audioDir:       audioDir,

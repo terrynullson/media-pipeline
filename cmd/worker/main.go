@@ -8,15 +8,22 @@ import (
 	"path/filepath"
 	"syscall"
 
+	appsettingsapp "media-pipeline/internal/app/appsettings"
+	autouploadapp "media-pipeline/internal/app/autoupload"
+	"media-pipeline/internal/app/command"
 	transcriptionapp "media-pipeline/internal/app/transcription"
 	appworker "media-pipeline/internal/app/worker"
+	appsettings "media-pipeline/internal/domain/appsettings"
 	"media-pipeline/internal/domain/ports"
 	domaintranscription "media-pipeline/internal/domain/transcription"
+	infraAutoUpload "media-pipeline/internal/infra/autoupload"
 	"media-pipeline/internal/infra/config"
 	"media-pipeline/internal/infra/db"
 	"media-pipeline/internal/infra/db/repositories"
 	infraMedia "media-pipeline/internal/infra/media"
+	"media-pipeline/internal/infra/recording"
 	infraRuntime "media-pipeline/internal/infra/runtime"
+	"media-pipeline/internal/infra/storage"
 	infraSummary "media-pipeline/internal/infra/summary"
 	infraTranscription "media-pipeline/internal/infra/transcription"
 	"media-pipeline/internal/observability"
@@ -31,12 +38,32 @@ func main() {
 	}
 	defer closeLog()
 
+	if check := infraRuntime.CheckWorkerDependencies(cfg); !check.OK() {
+		for _, e := range check.Errors {
+			logger.Error("startup check failed", slog.String("error", e))
+		}
+		for _, w := range check.Warnings {
+			logger.Warn("startup warning", slog.String("warning", w))
+		}
+		os.Exit(1)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	sqlDB, err := db.OpenSQLite(cfg.DBPath)
+	dsn, err := cfg.BuildDatabaseURL()
 	if err != nil {
-		logger.Error("open database", slog.Any("error", err), slog.String("db_path", cfg.DBPath))
+		logger.Error("resolve database URL", slog.Any("error", err))
+		os.Exit(1)
+	}
+	sqlDB, err := db.Open(ctx, db.Options{
+		DSN:             dsn,
+		MaxOpenConns:    cfg.DBMaxOpenConns,
+		MaxIdleConns:    cfg.DBMaxIdleConns,
+		ConnMaxLifetime: cfg.DBConnMaxLifetime(),
+	})
+	if err != nil {
+		logger.Error("open database", slog.Any("error", err), slog.String("db", cfg.SafeDSN()))
 		os.Exit(1)
 	}
 	defer sqlDB.Close()
@@ -46,10 +73,11 @@ func main() {
 		logger.Error("resolve migrations path", slog.Any("error", err))
 		os.Exit(1)
 	}
-	if err := db.RunMigrations(sqlDB, migrationsPath); err != nil {
-		logger.Error("run migrations", slog.Any("error", err), slog.String("path", migrationsPath))
+	if err := db.EnsureMigrationsApplied(ctx, sqlDB, migrationsPath); err != nil {
+		logger.Error("database schema is not ready", slog.Any("error", err), slog.String("path", migrationsPath))
 		os.Exit(1)
 	}
+	logger.Info("worker verified database schema", slog.String("path", migrationsPath))
 
 	jobRepo := repositories.NewJobRepository(sqlDB)
 	mediaRepo := repositories.NewMediaRepository(sqlDB)
@@ -59,7 +87,16 @@ func main() {
 	triggerScreenshotRepo := repositories.NewTriggerScreenshotRepository(sqlDB)
 	summaryRepo := repositories.NewSummaryRepository(sqlDB)
 	profileRepo := repositories.NewTranscriptionProfileRepository(sqlDB)
+	runtimeSettingsRepo := repositories.NewRuntimeSettingsRepository(sqlDB)
+	cancelRequestRepo := repositories.NewMediaCancelRequestRepository(sqlDB)
+	autoUploadImportRepo := repositories.NewAutoUploadImportRepository(sqlDB)
 	profileService := transcriptionapp.NewService(profileRepo, domaintranscription.DefaultProfile(cfg.TranscribeLanguage))
+	runtimeSettingsSvc := appsettingsapp.NewService(runtimeSettingsRepo, appsettings.Settings{
+		AutoUploadMinAgeSec: cfg.AutoUploadMinAgeSec,
+		PreviewTimeoutSec:   cfg.PreviewTimeoutSec,
+		MaxUploadSizeMB:     cfg.MaxUploadSizeMB,
+	})
+	fileStorage := storage.NewLocalStorage(cfg.UploadDir)
 	audioExtractor := infraMedia.NewFFmpegExtractor(cfg.FFmpegBinary)
 	previewGenerator := infraMedia.NewFFmpegPreviewGenerator(cfg.FFmpegBinary)
 	audioDurationReader := infraMedia.NewWAVDurationReader()
@@ -78,6 +115,12 @@ func main() {
 		os.Exit(1)
 	}
 	transcriber := infraTranscription.NewPythonTranscriber(cfg.PythonBinary, transcribeScriptPath, logger)
+	uploadUC := command.NewUploadMediaUseCase(mediaRepo, jobRepo, fileStorage, cfg.MaxUploadSizeBytes(), logger)
+	autoUploadSource := infraAutoUpload.NewLocalSource(cfg.AutoUploadDir, cfg.AutoUploadArchiveDir, cfg.AutoUploadMinAge()).
+		WithMinAgeProvider(runtimeSettingsSvc)
+	autoUploadService := autouploadapp.NewService(autoUploadSource, uploadUC, logger).
+		WithImportTracker(autoUploadImportRepo).
+		WithRecordingMetadataParser(recording.AutoUploadParser)
 
 	processor := appworker.NewProcessor(
 		jobRepo,
@@ -103,12 +146,17 @@ func main() {
 		cfg.ScreenshotTimeout(),
 		cfg.TranscribeTimeout(),
 		logger,
-	)
-	runner := appworker.NewRunner(processor, cfg.WorkerPollInterval(), logger)
+	).
+		WithRuntimeSettings(runtimeSettingsSvc).
+		WithCancellationReader(cancelRequestRepo).
+		WithTranscriptionCommitter(repositories.NewTranscriptionCommitRepository(sqlDB))
+	runner := appworker.NewRunner(processor, autoUploadService, cfg.WorkerPollInterval(), logger)
 
 	logger.Info("starting worker",
-		slog.String("db_path", cfg.DBPath),
+		slog.String("db", cfg.SafeDSN()),
 		slog.String("upload_dir", cfg.UploadDir),
+		slog.String("auto_upload_dir", cfg.AutoUploadDir),
+		slog.String("auto_upload_archive_dir", cfg.AutoUploadArchiveDir),
 		slog.String("audio_dir", cfg.AudioDir),
 		slog.String("preview_dir", cfg.PreviewDir),
 		slog.String("screenshots_dir", cfg.ScreenshotsDir),
@@ -116,6 +164,7 @@ func main() {
 		slog.String("python_binary", cfg.PythonBinary),
 		slog.String("transcribe_script", transcribeScriptPath),
 		slog.Duration("poll_interval", cfg.WorkerPollInterval()),
+		slog.Duration("auto_upload_min_age", cfg.AutoUploadMinAge()),
 		slog.Duration("ffmpeg_timeout", cfg.FFmpegTimeout()),
 		slog.Duration("preview_timeout", cfg.PreviewTimeout()),
 		slog.Duration("screenshot_timeout", cfg.ScreenshotTimeout()),

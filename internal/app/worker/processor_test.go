@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"media-pipeline/internal/app/messages"
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/ports"
@@ -35,8 +36,10 @@ func TestProcessor_RecoverInterruptedJobs(t *testing.T) {
 		},
 	}
 	mediaRepo := &stubMediaRepository{}
+	// No transcript saved → TypeTranscribe job should be requeued (normal recovery).
+	transcriptRepo := &stubTranscriptRepository{}
 
-	processor := newTestProcessor(jobRepo, mediaRepo, &stubTranscriptRepository{}, &stubAudioExtractor{}, &stubTranscriber{})
+	processor := newTestProcessor(jobRepo, mediaRepo, transcriptRepo, &stubAudioExtractor{}, &stubTranscriber{})
 
 	if err := processor.RecoverInterruptedJobs(context.Background()); err != nil {
 		t.Fatalf("RecoverInterruptedJobs() error = %v", err)
@@ -50,6 +53,43 @@ func TestProcessor_RecoverInterruptedJobs(t *testing.T) {
 	}
 	if len(mediaRepo.markAudioReadyIDs) != 1 || mediaRepo.markAudioReadyIDs[0] != 21 {
 		t.Fatalf("mark audio ready ids = %#v, want [21]", mediaRepo.markAudioReadyIDs)
+	}
+}
+
+// TestProcessor_RecoverInterruptedJobs_TranscriptExists covers the crash window where
+// transcript was saved but the job was not yet marked done. Recovery should mark the
+// job done directly without resetting media state or re-running transcription.
+func TestProcessor_RecoverInterruptedJobs_TranscriptExists(t *testing.T) {
+	t.Parallel()
+
+	jobRepo := &stubJobRepository{
+		listByTypeAndStatus: map[job.Type][]job.Job{
+			job.TypeTranscribe: {
+				{ID: 11, MediaID: 21, Type: job.TypeTranscribe, Status: job.StatusRunning},
+			},
+		},
+	}
+	mediaRepo := &stubMediaRepository{}
+	// Transcript already exists for mediaID 21 → job should be marked done, not requeued.
+	transcriptRepo := &stubTranscriptRepository{
+		item: transcript.Transcript{ID: 1, MediaID: 21, FullText: "hello"},
+		ok:   true,
+	}
+
+	processor := newTestProcessor(jobRepo, mediaRepo, transcriptRepo, &stubAudioExtractor{}, &stubTranscriber{})
+
+	if err := processor.RecoverInterruptedJobs(context.Background()); err != nil {
+		t.Fatalf("RecoverInterruptedJobs() error = %v", err)
+	}
+
+	if len(jobRepo.requeued) != 0 {
+		t.Fatalf("requeued jobs = %d, want 0 (transcript exists, should mark done)", len(jobRepo.requeued))
+	}
+	if len(jobRepo.markDoneIDs) != 1 || jobRepo.markDoneIDs[0] != 11 {
+		t.Fatalf("markDoneIDs = %v, want [11]", jobRepo.markDoneIDs)
+	}
+	if len(mediaRepo.markAudioReadyIDs) != 0 {
+		t.Fatalf("markAudioReadyIDs = %v, want [] (state must not be reset when transcript exists)", mediaRepo.markAudioReadyIDs)
 	}
 }
 
@@ -531,7 +571,7 @@ func TestProcessor_ProcessNextTranscribeFailureStoresReadableError(t *testing.T)
 	if len(jobRepo.markFailedCalls) != 1 {
 		t.Fatalf("mark failed calls = %d, want 1", len(jobRepo.markFailedCalls))
 	}
-	if got := jobRepo.markFailedCalls[0].errorMessage; got != "Не удалось распознать текст: модель вернула пустой результат" {
+	if got := jobRepo.markFailedCalls[0].errorMessage; got != messages.PrefixTranscribe+messages.TranscriptionEmpty {
 		t.Fatalf("errorMessage = %q, want readable transcription failure", got)
 	}
 	if len(mediaRepo.markFailedIDs) != 1 || mediaRepo.markFailedIDs[0] != 51 {
@@ -1278,14 +1318,15 @@ func newTestProcessor(
 }
 
 type stubJobRepository struct {
-	claimByType         map[job.Type]claimResult
-	listByTypeAndStatus map[job.Type][]job.Job
-	createdJobs         []job.Job
-	existsActiveOrDone  map[job.Type]bool
-	markDoneIDs         []int64
-	markFailedCalls     []markFailedCall
-	requeued            []requeueCall
-	progressUpdates     []progressUpdateCall
+	claimByType            map[job.Type]claimResult
+	listByTypeAndStatus    map[job.Type][]job.Job
+	pendingCoreJobsWithAge []job.JobWithMediaAge
+	createdJobs            []job.Job
+	existsActiveOrDone     map[job.Type]bool
+	markDoneIDs            []int64
+	markFailedCalls        []markFailedCall
+	requeued               []requeueCall
+	progressUpdates        []progressUpdateCall
 }
 
 type claimResult struct {
@@ -1355,6 +1396,20 @@ func (s *stubJobRepository) ListByStatus(_ context.Context, jobType job.Type, _ 
 func (s *stubJobRepository) Requeue(_ context.Context, id int64, errorMessage string, _ time.Time) error {
 	s.requeued = append(s.requeued, requeueCall{id: id, errorMessage: errorMessage})
 	return nil
+}
+
+func (s *stubJobRepository) ListPendingCoreJobsWithMediaAge(_ context.Context, types []job.Type) ([]job.JobWithMediaAge, error) {
+	if len(s.pendingCoreJobsWithAge) > 0 {
+		return s.pendingCoreJobsWithAge, nil
+	}
+	// Fall back: derive from claimByType so existing tests don't need updating.
+	var result []job.JobWithMediaAge
+	for _, t := range types {
+		if cr, ok := s.claimByType[t]; ok && cr.ok {
+			result = append(result, job.JobWithMediaAge{Job: cr.job})
+		}
+	}
+	return result, nil
 }
 
 type stubMediaRepository struct {

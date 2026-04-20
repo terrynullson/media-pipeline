@@ -1,10 +1,10 @@
-import { Settings, Waves, Sun, Moon, Globe } from "lucide-react";
+import { Settings, Waves, Sun, Moon, BarChart3, Clock, Home } from "lucide-react";
+import { useNavigate, useMatch, useLocation } from "react-router-dom";
 import { useTranslation, type Locale } from "../../i18n";
 import { useTheme } from "../../theme";
-
-interface TopbarProps {
-  onSettingsClick: () => void;
-}
+import { api } from "../../api/client";
+import { usePolling } from "../../hooks/usePolling";
+import type { WorkerStatusResponse } from "../../models/types";
 
 const iconBtn: React.CSSProperties = {
   width: 32,
@@ -16,7 +16,8 @@ const iconBtn: React.CSSProperties = {
   border: "1px solid var(--border)",
   background: "none",
   cursor: "pointer",
-  transition: "color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease)",
+  transition:
+    "color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease)",
 };
 
 function hoverIn(e: React.MouseEvent<HTMLButtonElement>) {
@@ -29,9 +30,86 @@ function hoverOut(e: React.MouseEvent<HTMLButtonElement>) {
   e.currentTarget.style.borderColor = "var(--border)";
 }
 
-export function Topbar({ onSettingsClick }: TopbarProps) {
+function WorkerStatusChip({
+  status,
+}: {
+  status: WorkerStatusResponse | null | undefined;
+}) {
+  if (!status) return null;
+
+  const { likelyAlive, currentJob, queue } = status;
+  const hasWork = currentJob != null || queue.pending > 0;
+
+  let dot = "var(--text-muted)";
+  let label = "Воркер простаивает";
+  let title = "Сейчас активных задач нет.";
+
+  if (currentJob && likelyAlive) {
+    const pct =
+      currentJob.progressPercent != null ? ` · ${currentJob.progressPercent}%` : "";
+    dot = "var(--success)";
+    label = `Воркер активен${pct}`;
+    title = `${currentJob.type} · media ${currentJob.mediaId}`;
+  } else if (currentJob && !likelyAlive) {
+    dot = "var(--warning, #ca8a04)";
+    label = "Идёт длинная задача";
+    title = `${currentJob.type} · media ${currentJob.mediaId}. Heartbeat давно не обновлялся, но задача всё ещё отмечена как running.`;
+  } else if (queue.pending > 0) {
+    dot = "var(--warning, #ca8a04)";
+    label = `В очереди: ${queue.pending}`;
+    title = `Ожидает задач: ${queue.pending}`;
+  } else if (hasWork) {
+    dot = "var(--warning, #ca8a04)";
+    label = "Нужно проверить воркер";
+    title = "Есть работа, но статус воркера выглядит несвежим.";
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: "var(--text-xs)",
+        color: "var(--text-muted)",
+        whiteSpace: "nowrap",
+      }}
+      title={title}
+    >
+      <span
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          background: dot,
+          flexShrink: 0,
+          boxShadow: likelyAlive && hasWork ? `0 0 5px ${dot}` : "none",
+        }}
+      />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+export function Topbar() {
   const { t, locale, setLocale } = useTranslation();
   const { theme, toggleTheme } = useTheme();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const onSettingsPage = Boolean(useMatch("/settings"));
+
+  const navTabs: { path: string; label: string; icon: React.ReactNode }[] = [
+    { path: "/", label: "Главная", icon: <Home size={13} /> },
+    { path: "/analytics", label: "Аналитика", icon: <BarChart3 size={13} /> },
+    { path: "/timeline", label: "Хронология", icon: <Clock size={13} /> },
+  ];
+  const activeTab =
+    navTabs
+      .slice()
+      .sort((a, b) => b.path.length - a.path.length)
+      .find((t) => (t.path === "/" ? location.pathname === "/" : location.pathname.startsWith(t.path)))?.path ?? "/";
+
+  const { data: workerStatus } = usePolling(api.workerStatus, 5000, true);
 
   const nextLocale: Locale = locale === "ru" ? "en" : "ru";
 
@@ -57,7 +135,6 @@ export function Topbar({ onSettingsClick }: TopbarProps) {
           padding: "0 var(--sp-6)",
         }}
       >
-        {/* Left: logo */}
         <a
           href="/app-v1/"
           style={{
@@ -91,30 +168,74 @@ export function Topbar({ onSettingsClick }: TopbarProps) {
           </span>
         </a>
 
-        {/* Center: theme toggle */}
-        <button
-          onClick={toggleTheme}
-          aria-label="Toggle theme"
+        <nav
+          aria-label="Primary"
           style={{
-            ...iconBtn,
             position: "absolute",
             left: "50%",
             transform: "translateX(-50%)",
-            borderColor: "var(--border-accent)",
-            color: "var(--accent)",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "var(--accent-soft)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "none";
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
           }}
         >
-          {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-        </button>
+          {navTabs.map((tab) => {
+            const isActive = activeTab === tab.path;
+            return (
+              <button
+                key={tab.path}
+                onClick={() => navigate(tab.path)}
+                aria-current={isActive ? "page" : undefined}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  height: 30,
+                  padding: "0 10px",
+                  borderRadius: "var(--radius-sm)",
+                  border: "1px solid",
+                  borderColor: isActive ? "var(--accent)" : "transparent",
+                  background: isActive ? "var(--accent-soft)" : "transparent",
+                  color: isActive ? "var(--accent)" : "var(--text-muted)",
+                  fontSize: "var(--text-xs)",
+                  fontWeight: isActive ? 600 : 500,
+                  cursor: "pointer",
+                  transition:
+                    "color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease)",
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.color = "var(--text)";
+                    e.currentTarget.style.background = "var(--bg-card-hover)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.color = "var(--text-muted)";
+                    e.currentTarget.style.background = "transparent";
+                  }
+                }}
+              >
+                {tab.icon}
+                {tab.label}
+              </button>
+            );
+          })}
+        </nav>
 
-        {/* Right: lang + settings */}
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
+          <WorkerStatusChip status={workerStatus} />
+
+          <button
+            onClick={toggleTheme}
+            aria-label="Toggle theme"
+            style={iconBtn}
+            onMouseEnter={hoverIn}
+            onMouseLeave={hoverOut}
+          >
+            {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
+
           <button
             onClick={() => setLocale(nextLocale)}
             aria-label="Switch language"
@@ -122,17 +243,33 @@ export function Topbar({ onSettingsClick }: TopbarProps) {
             onMouseEnter={hoverIn}
             onMouseLeave={hoverOut}
           >
-            <span style={{ fontSize: "var(--text-xs)", fontWeight: 700, letterSpacing: "0.02em" }}>
+            <span
+              style={{
+                fontSize: "var(--text-xs)",
+                fontWeight: 700,
+                letterSpacing: "0.02em",
+              }}
+            >
               {locale === "ru" ? "EN" : "RU"}
             </span>
           </button>
 
           <button
-            onClick={onSettingsClick}
+            onClick={() => navigate("/settings")}
             aria-label={t("topbar.settings")}
-            style={iconBtn}
-            onMouseEnter={hoverIn}
-            onMouseLeave={hoverOut}
+            aria-current={onSettingsPage ? "page" : undefined}
+            style={{
+              ...iconBtn,
+              ...(onSettingsPage
+                ? {
+                    color: "var(--accent)",
+                    borderColor: "var(--accent)",
+                    background: "var(--accent-soft)",
+                  }
+                : {}),
+            }}
+            onMouseEnter={onSettingsPage ? undefined : hoverIn}
+            onMouseLeave={onSettingsPage ? undefined : hoverOut}
           >
             <Settings size={15} />
           </button>

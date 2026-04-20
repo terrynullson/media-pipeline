@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"media-pipeline/internal/observability"
@@ -120,6 +121,90 @@ func (r *statusRecorder) ensureStatus(statusCode int) {
 	r.WriteHeader(statusCode)
 }
 
+// RequestTimeoutMiddleware wraps each request with http.TimeoutHandler so that
+// slow or stalled clients are cut off after timeout. Should NOT be applied to
+// the /upload route, which legitimately takes longer for large files.
+func RequestTimeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.TimeoutHandler(next, timeout, `{"error":"request timeout"}`)
+	}
+}
+
+// MediaTokenMiddleware protects routes with a static shared-secret token.
+// If token is empty the middleware is a no-op (disabled, backward-compatible).
+// Clients must supply the token via:
+//   - Header:        Authorization: Bearer <token>
+//   - Query param:   ?token=<token>
+func MediaTokenMiddleware(token string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		if token == "" {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var got string
+			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				got = strings.TrimPrefix(auth, "Bearer ")
+			} else {
+				got = r.URL.Query().Get("token")
+			}
+			if got != token {
+				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// UploadRateLimitMiddleware limits POST /upload requests to limit per minute per
+// IP address using a sliding window. If limit is 0 or negative the middleware
+// is disabled (no-op). Exceeding the limit results in 429 Too Many Requests.
+func UploadRateLimitMiddleware(limit int64) func(http.Handler) http.Handler {
+	if limit <= 0 {
+		return func(next http.Handler) http.Handler { return next }
+	}
+
+	var mu sync.Mutex
+	// ipTimestamps maps remote IP → sorted slice of request timestamps within the current window.
+	ipTimestamps := make(map[string][]time.Time)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err != nil {
+				ip = r.RemoteAddr
+			}
+
+			now := time.Now()
+			windowStart := now.Add(-time.Minute)
+
+			mu.Lock()
+			timestamps := ipTimestamps[ip]
+
+			// Evict timestamps outside the sliding window.
+			valid := timestamps[:0]
+			for _, ts := range timestamps {
+				if ts.After(windowStart) {
+					valid = append(valid, ts)
+				}
+			}
+
+			if int64(len(valid)) >= limit {
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error":"слишком много запросов"}`))
+				return
+			}
+
+			ipTimestamps[ip] = append(valid, now)
+			mu.Unlock()
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func sanitizeRequestID(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -150,4 +235,21 @@ func newRequestID() string {
 	}
 
 	return fmt.Sprintf("%d-%s", time.Now().UTC().UnixNano(), hex.EncodeToString(randomBytes[:]))
+}
+
+// LimitRequestBody wraps the request body with http.MaxBytesReader so that
+// reads beyond maxBytes fail immediately instead of buffering arbitrary data
+// into memory. When the limit is exceeded, json.Decoder returns an error and
+// http.MaxBytesReader marks the ResponseWriter so the server returns 413.
+//
+// Use this on every JSON API endpoint that accepts a request body
+// (POST / PUT / PATCH). File-upload endpoints manage their own limit via
+// http.MaxBytesReader directly on the multipart reader.
+func LimitRequestBody(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
+	}
 }

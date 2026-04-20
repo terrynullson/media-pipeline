@@ -43,6 +43,38 @@ func TestMediaRepository_StatusOnlyUpdatesPreservePathsAndTranscript(t *testing.
 	}
 }
 
+func TestMediaRepository_MarkTranscribedPersistsTextAndStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
+
+	mediaRepo := NewMediaRepository(sqlDB)
+	mediaID := createTestMedia(t, ctx, mediaRepo)
+
+	createdAt := time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC)
+	updatedAt := createdAt.Add(5 * time.Minute)
+
+	if err := mediaRepo.MarkTranscribed(ctx, mediaID, "transcript text here", updatedAt); err != nil {
+		t.Fatalf("MarkTranscribed() error = %v", err)
+	}
+
+	item, err := mediaRepo.GetByID(ctx, mediaID)
+	if err != nil {
+		t.Fatalf("GetByID() error = %v", err)
+	}
+	if item.Status != media.StatusTranscribed {
+		t.Fatalf("Status = %q, want %q", item.Status, media.StatusTranscribed)
+	}
+	if item.TranscriptText != "transcript text here" {
+		t.Fatalf("TranscriptText = %q, want %q", item.TranscriptText, "transcript text here")
+	}
+	if !item.UpdatedAtUTC.Equal(updatedAt) {
+		t.Fatalf("UpdatedAtUTC = %v, want %v", item.UpdatedAtUTC, updatedAt)
+	}
+}
+
 func TestMediaRepository_DeleteWithAssociationsRemovesRows(t *testing.T) {
 	t.Parallel()
 
@@ -95,12 +127,12 @@ func TestMediaRepository_DeleteWithAssociationsRemovesRows(t *testing.T) {
 		}
 	}
 
-	assertCount("SELECT COUNT(*) FROM media WHERE id = ?", 0)
-	assertCount("SELECT COUNT(*) FROM jobs WHERE media_id = ?", 0)
-	assertCount("SELECT COUNT(*) FROM transcripts WHERE media_id = ?", 0)
+	assertCount("SELECT COUNT(*) FROM media WHERE id = $1", 0)
+	assertCount("SELECT COUNT(*) FROM jobs WHERE media_id = $1", 0)
+	assertCount("SELECT COUNT(*) FROM transcripts WHERE media_id = $1", 0)
 	assertCount(`SELECT COUNT(*)
 		FROM transcript_segments
-		WHERE transcript_id IN (SELECT id FROM transcripts WHERE media_id = ?)`, 0)
+		WHERE transcript_id IN (SELECT id FROM transcripts WHERE media_id = $1)`, 0)
 }
 
 func TestMediaRepository_PersistsRuntimeSnapshot(t *testing.T) {

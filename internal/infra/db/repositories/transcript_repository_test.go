@@ -54,7 +54,7 @@ func TestTranscriptRepository_SavePersistsTranscriptAndSegments(t *testing.T) {
 
 	var fullText string
 	var language string
-	if err := sqlDB.QueryRowContext(ctx, "SELECT full_text, language FROM transcripts WHERE media_id = ?", mediaID).
+	if err := sqlDB.QueryRowContext(ctx, "SELECT full_text, language FROM transcripts WHERE media_id = $1", mediaID).
 		Scan(&fullText, &language); err != nil {
 		t.Fatalf("QueryRow(transcripts) error = %v", err)
 	}
@@ -69,7 +69,7 @@ func TestTranscriptRepository_SavePersistsTranscriptAndSegments(t *testing.T) {
 		ctx,
 		`SELECT segment_index, start_sec, end_sec, text, confidence
 		 FROM transcript_segments
-		 WHERE transcript_id = (SELECT id FROM transcripts WHERE media_id = ?)
+		 WHERE transcript_id = (SELECT id FROM transcripts WHERE media_id = $1)
 		 ORDER BY segment_index ASC`,
 		mediaID,
 	)

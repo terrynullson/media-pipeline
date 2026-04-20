@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,9 +12,10 @@ import (
 	"strings"
 	"time"
 
+	appsettings "media-pipeline/internal/domain/appsettings"
 	"media-pipeline/internal/domain/job"
+	"media-pipeline/internal/domain/ports"
 	"media-pipeline/internal/domain/transcription"
-	domaintrigger "media-pipeline/internal/domain/trigger"
 	"media-pipeline/internal/observability"
 )
 
@@ -38,6 +38,7 @@ type apiMediaItem struct {
 	Extension          string             `json:"extension"`
 	SizeHuman          string             `json:"sizeHuman"`
 	CreatedAtUTC       string             `json:"createdAtUtc"`
+	CompletedAtUTC     string             `json:"completedAtUtc,omitempty"`
 	Status             string             `json:"status"`
 	StatusLabel        string             `json:"statusLabel"`
 	StatusTone         string             `json:"statusTone"`
@@ -47,6 +48,7 @@ type apiMediaItem struct {
 	StagePercent       int                `json:"stagePercent"`
 	CurrentStage       string             `json:"currentStage"`
 	CurrentTimingText  string             `json:"currentTimingText"`
+	CurrentEtaLabel    string             `json:"currentEtaLabel,omitempty"`
 	ErrorSummary       string             `json:"errorSummary,omitempty"`
 	HasTranscript      bool               `json:"hasTranscript"`
 	IsAudioOnly        bool               `json:"isAudioOnly"`
@@ -92,16 +94,14 @@ type transcriptionSettingsPayload struct {
 	UITheme     string `json:"uiTheme"`
 }
 
-type uiPreferencePayload struct {
-	UITheme string `json:"uiTheme"`
+type runtimeSettingsPayload struct {
+	AutoUploadMinAgeSec int64 `json:"autoUploadMinAgeSec"`
+	PreviewTimeoutSec   int64 `json:"previewTimeoutSec"`
+	MaxUploadSizeMB     int64 `json:"maxUploadSizeMB"`
 }
 
-type triggerRulePayload struct {
-	Name      string `json:"name"`
-	Category  string `json:"category"`
-	Pattern   string `json:"pattern"`
-	MatchMode string `json:"matchMode"`
-	Enabled   *bool  `json:"enabled,omitempty"`
+type uiPreferencePayload struct {
+	UITheme string `json:"uiTheme"`
 }
 
 func (h *UploadHandler) APIDashboard(w http.ResponseWriter, r *http.Request) {
@@ -240,7 +240,7 @@ func (h *UploadHandler) APIMediaDetail(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.transcriptViewUC.Load(r.Context(), mediaID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, ports.ErrNotFound) {
 			http.NotFound(w, r)
 			return
 		}
@@ -255,7 +255,7 @@ func (h *UploadHandler) APIMediaDetail(w http.ResponseWriter, r *http.Request) {
 			jobs = append(jobs, *current)
 		}
 	}
-	pipelineView := buildMediaPipelineView(result.Media, jobs)
+	pipelineView := h.buildPipelineView(r.Context(), result.Media, jobs)
 	playerView := buildTranscriptPlayerView(result)
 	triggerViews := buildTriggerEventViews(result.TriggerEvents, result.TriggerScreenshots, result.Media, result.ScreenshotJob)
 	triggerStatusLabel, triggerStatusTone, triggerNotice, triggerNoticeTone := describeTriggerAnalysis(result.AnalyzeJob, len(triggerViews))
@@ -264,13 +264,14 @@ func (h *UploadHandler) APIMediaDetail(w http.ResponseWriter, r *http.Request) {
 
 	h.writeJSON(w, http.StatusOK, map[string]any{
 		"media": map[string]any{
-			"id":           result.Media.ID,
-			"name":         result.Media.OriginalName,
-			"extension":    result.Media.Extension,
-			"mimeType":     result.Media.MIMEType,
-			"sizeHuman":    HumanSize(result.Media.SizeBytes),
-			"createdAtUtc": FormatDateTimeUTC(result.Media.CreatedAtUTC),
-			"isAudioOnly":  result.Media.IsAudioOnly(),
+			"id":             result.Media.ID,
+			"name":           result.Media.OriginalName,
+			"extension":      result.Media.Extension,
+			"mimeType":       result.Media.MIMEType,
+			"sizeHuman":      HumanSize(result.Media.SizeBytes),
+			"createdAtUtc":   FormatDateTimeUTC(result.Media.CreatedAtUTC),
+			"completedAtUtc": formatOptionalDateTime(latestCompletedCoreJobTime(jobs)),
+			"isAudioOnly":    result.Media.IsAudioOnly(),
 		},
 		"pipeline": pipelineView,
 		"player":   playerView,
@@ -326,6 +327,7 @@ func (h *UploadHandler) APITranscriptionSettings(w http.ResponseWriter, r *http.
 	h.writeJSON(w, http.StatusOK, map[string]any{
 		"profile":  form,
 		"warnings": buildSettingsWarnings(form),
+		"runtime":  h.buildAPIRuntimeSettings(r.Context()),
 		"ui": map[string]any{
 			"theme":        form.UITheme,
 			"appURL":       "/app-v1",
@@ -377,11 +379,51 @@ func (h *UploadHandler) APIUpdateTranscriptionSettings(w http.ResponseWriter, r 
 		"status":   "saved",
 		"profile":  form,
 		"warnings": buildSettingsWarnings(form),
+		"runtime":  h.buildAPIRuntimeSettings(r.Context()),
 		"ui": map[string]any{
 			"theme":        form.UITheme,
 			"appURL":       "/app-v1",
 			"workspaceURL": "/workspace",
 		},
+	})
+}
+
+func (h *UploadHandler) APIRuntimeSettings(w http.ResponseWriter, r *http.Request) {
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"runtime": h.buildAPIRuntimeSettings(r.Context()),
+	})
+}
+
+func (h *UploadHandler) APIUpdateRuntimeSettings(w http.ResponseWriter, r *http.Request) {
+	var payload runtimeSettingsPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "не удалось прочитать JSON runtime settings", http.StatusBadRequest)
+		return
+	}
+
+	current, err := h.runtimeSvc.GetCurrent(r.Context())
+	if err != nil {
+		observability.LoggerFromContext(r.Context(), h.logger).Error("load current runtime settings", slog.Any("error", err))
+		http.Error(w, "не удалось загрузить настройки", http.StatusInternalServerError)
+		return
+	}
+	current.AutoUploadMinAgeSec = payload.AutoUploadMinAgeSec
+	current.PreviewTimeoutSec = payload.PreviewTimeoutSec
+	current.MaxUploadSizeMB = payload.MaxUploadSizeMB
+
+	saved, err := h.runtimeSvc.SaveCurrent(r.Context(), current)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			http.Error(w, "request canceled", http.StatusRequestTimeout)
+			return
+		}
+		h.writeJSON(w, http.StatusBadRequest, map[string]any{"status": "error", "message": err.Error()})
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "saved",
+		"runtime": runtimeSettingsResponse(saved),
 	})
 }
 
@@ -394,8 +436,8 @@ func (h *UploadHandler) APIUIConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, map[string]any{
-		"maxUploadBytes":  h.maxUploadSizeB,
-		"maxUploadHuman":  HumanSize(h.maxUploadSizeB),
+		"maxUploadBytes":  h.currentMaxUploadSizeBytes(r.Context()),
+		"maxUploadHuman":  HumanSize(h.currentMaxUploadSizeBytes(r.Context())),
 		"acceptedFormats": []string{".mp4", ".mov", ".mkv", ".avi", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".flac"},
 		"uiTheme":         normalizeUITheme(profile.UITheme),
 		"appURL":          "/app-v1",
@@ -430,89 +472,6 @@ func (h *UploadHandler) APIUpdateUITheme(w http.ResponseWriter, r *http.Request)
 		"uiTheme":         normalizeUITheme(saved.UITheme),
 		"preferredAppURL": preferredAppURL(saved.UITheme),
 	})
-}
-
-func (h *UploadHandler) APITriggerRules(w http.ResponseWriter, r *http.Request) {
-	rules, err := h.triggerRulesSvc.List(r.Context())
-	if err != nil {
-		observability.LoggerFromContext(r.Context(), h.logger).Error("load api trigger rules failed", slog.Any("error", err))
-		http.Error(w, "не удалось загрузить правила", http.StatusInternalServerError)
-		return
-	}
-
-	h.writeJSON(w, http.StatusOK, map[string]any{"items": buildTriggerRuleViews(rules)})
-}
-
-func (h *UploadHandler) APICreateTriggerRule(w http.ResponseWriter, r *http.Request) {
-	var payload triggerRulePayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, "не удалось прочитать JSON правила", http.StatusBadRequest)
-		return
-	}
-
-	rule := domaintrigger.NormalizeRule(domaintrigger.Rule{
-		Name:      payload.Name,
-		Category:  payload.Category,
-		Pattern:   payload.Pattern,
-		MatchMode: domaintrigger.MatchMode(payload.MatchMode),
-		Enabled:   true,
-	})
-	if err := domaintrigger.ValidateRule(rule); err != nil {
-		h.writeJSON(w, http.StatusBadRequest, map[string]any{"status": "error", "message": err.Error()})
-		return
-	}
-
-	created, err := h.triggerRulesSvc.Create(r.Context(), rule)
-	if err != nil {
-		observability.LoggerFromContext(r.Context(), h.logger).Error("create api trigger rule failed", slog.Any("error", err))
-		http.Error(w, "не удалось создать правило", http.StatusInternalServerError)
-		return
-	}
-
-	view := buildTriggerRuleViews([]domaintrigger.Rule{created})
-	h.writeJSON(w, http.StatusCreated, map[string]any{"status": "created", "item": view[0]})
-}
-
-func (h *UploadHandler) APIUpdateTriggerRule(w http.ResponseWriter, r *http.Request) {
-	ruleID, err := triggerRuleIDFromRequest(r)
-	if err != nil {
-		http.Error(w, "invalid trigger rule id", http.StatusBadRequest)
-		return
-	}
-
-	var payload triggerRulePayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, "не удалось прочитать JSON правила", http.StatusBadRequest)
-		return
-	}
-	if payload.Enabled == nil {
-		http.Error(w, "нужно передать enabled", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.triggerRulesSvc.SetEnabled(r.Context(), ruleID, *payload.Enabled); err != nil {
-		observability.LoggerFromContext(r.Context(), h.logger).Error("update api trigger rule failed", slog.Int64("rule_id", ruleID), slog.Any("error", err))
-		http.Error(w, "не удалось обновить правило", http.StatusInternalServerError)
-		return
-	}
-
-	h.writeJSON(w, http.StatusOK, map[string]any{"status": "updated", "ruleId": ruleID, "enabled": *payload.Enabled})
-}
-
-func (h *UploadHandler) APIDeleteTriggerRule(w http.ResponseWriter, r *http.Request) {
-	ruleID, err := triggerRuleIDFromRequest(r)
-	if err != nil {
-		http.Error(w, "invalid trigger rule id", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.triggerRulesSvc.Delete(r.Context(), ruleID); err != nil {
-		observability.LoggerFromContext(r.Context(), h.logger).Error("delete api trigger rule failed", slog.Int64("rule_id", ruleID), slog.Any("error", err))
-		http.Error(w, "не удалось удалить правило", http.StatusInternalServerError)
-		return
-	}
-
-	h.writeJSON(w, http.StatusOK, map[string]any{"status": "deleted", "ruleId": ruleID})
 }
 
 func (h *UploadHandler) buildAPIJobItems(ctx context.Context, viewItems []MediaListItem) ([]apiJobItem, error) {
@@ -575,6 +534,7 @@ func apiMediaFromView(item MediaListItem) apiMediaItem {
 		Extension:         item.Extension,
 		SizeHuman:         item.SizeHuman,
 		CreatedAtUTC:      item.CreatedAtUTC,
+		CompletedAtUTC:    item.CompletedAtUTC,
 		Status:            string(item.Status),
 		StatusLabel:       item.StatusLabel,
 		StatusTone:        item.StatusTone,
@@ -584,6 +544,7 @@ func apiMediaFromView(item MediaListItem) apiMediaItem {
 		StagePercent:      item.StagePercent,
 		CurrentStage:      item.CurrentStage,
 		CurrentTimingText: item.CurrentTimingText,
+		CurrentEtaLabel:   item.CurrentEtaLabel,
 		ErrorSummary:      item.ErrorSummary,
 		HasTranscript:     item.HasTranscript,
 		IsAudioOnly:       extension == ".wav" || extension == ".mp3" || extension == ".m4a" || extension == ".aac" || extension == ".flac",
@@ -637,6 +598,39 @@ func minInt(a int, b int) int {
 	return b
 }
 
+func latestCompletedCoreJobTime(jobs []job.Job) *time.Time {
+	coreTypes := map[job.Type]struct{}{
+		job.TypePreparePreviewVideo: {},
+		job.TypeExtractAudio:        {},
+		job.TypeTranscribe:          {},
+		job.TypeAnalyzeTriggers:     {},
+		job.TypeExtractScreenshots:  {},
+	}
+
+	var latest *time.Time
+	for _, current := range jobs {
+		if _, ok := coreTypes[current.Type]; !ok || current.Status != job.StatusDone || current.FinishedAtUTC == nil {
+			continue
+		}
+
+		finishedAt := current.FinishedAtUTC.UTC()
+		if latest == nil || finishedAt.After(*latest) {
+			copyValue := finishedAt
+			latest = &copyValue
+		}
+	}
+
+	return latest
+}
+
+func formatOptionalDateTime(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+
+	return FormatDateTimeUTC(*value)
+}
+
 func normalizeUITheme(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "new", "v1", "modern":
@@ -648,4 +642,34 @@ func normalizeUITheme(value string) string {
 
 func preferredAppURL(_ string) string {
 	return "/app-v1"
+}
+
+func (h *UploadHandler) buildAPIRuntimeSettings(ctx context.Context) map[string]any {
+	if h.runtimeSvc == nil {
+		return map[string]any{
+			"autoUploadMinAgeSec": int64(60),
+			"previewTimeoutSec":   int64(600),
+			"maxUploadSizeMB":     int64(1024),
+		}
+	}
+
+	settings, err := h.runtimeSvc.GetCurrent(ctx)
+	if err != nil {
+		observability.LoggerFromContext(ctx, h.logger).Warn("load runtime settings failed", slog.Any("error", err))
+		return map[string]any{
+			"autoUploadMinAgeSec": int64(60),
+			"previewTimeoutSec":   int64(600),
+			"maxUploadSizeMB":     int64(1024),
+		}
+	}
+
+	return runtimeSettingsResponse(settings)
+}
+
+func runtimeSettingsResponse(settings appsettings.Settings) map[string]any {
+	return map[string]any{
+		"autoUploadMinAgeSec": settings.AutoUploadMinAgeSec,
+		"previewTimeoutSec":   settings.PreviewTimeoutSec,
+		"maxUploadSizeMB":     settings.MaxUploadSizeMB,
+	}
 }

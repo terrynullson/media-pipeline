@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Search, ChevronDown, ChevronRight, FileAudio, ExternalLink, Trash2 } from "lucide-react";
+import { Search, ChevronDown, ChevronRight, FileAudio, ExternalLink, Trash2, CheckSquare, Square } from "lucide-react";
 import type { MediaListItem } from "../../models/types";
 import { api } from "../../api/client";
 import { useTranslation } from "../../i18n";
@@ -34,12 +34,14 @@ function countTab(items: MediaListItem[], tab: FilterTab): number {
   return items.filter((i) => matchTab(i, tab)).length;
 }
 
+/** Parse "DD.MM.YYYY HH:MM:SS" to timestamp for correct sorting */
+// ── Styles ──────────────────────────────────────────────────────────
+
 const tabBarStyle: React.CSSProperties = {
   display: "flex",
-  alignItems: "center",
+  alignItems: "stretch",
   gap: 0,
-  borderBottom: "1px solid var(--border)",
-  marginBottom: 0,
+  // No border here — each button owns its own bottom line
 };
 
 const tabBase: React.CSSProperties = {
@@ -48,7 +50,8 @@ const tabBase: React.CSSProperties = {
   fontWeight: 500,
   background: "none",
   border: "none",
-  borderBottom: "2px solid transparent",
+  // Inactive tabs show the same subtle line as a divider
+  borderBottom: "2px solid var(--border)",
   cursor: "pointer",
   color: "var(--text-muted)",
   transition: "color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease)",
@@ -87,20 +90,16 @@ const rowStyle: React.CSSProperties = {
   color: "inherit",
   transition: "background var(--duration-fast) var(--ease)",
   cursor: "pointer",
+  overflow: "hidden",
 };
 
 function stepToneColor(tone: string): string {
   switch (tone) {
-    case "success":
-      return "var(--success)";
-    case "error":
-      return "var(--error)";
-    case "running":
-      return "var(--accent)";
-    case "ready":
-      return "var(--accent)";
-    default:
-      return "var(--text-muted)";
+    case "success": return "var(--success)";
+    case "error":   return "var(--error)";
+    case "running": return "var(--accent)";
+    case "ready":   return "var(--accent)";
+    default:        return "var(--text-muted)";
   }
 }
 
@@ -108,13 +107,37 @@ function isReady(item: MediaListItem): boolean {
   return item.statusTone === "success" || item.statusTone === "error";
 }
 
-function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => void }) {
+function overallProgressPercent(item: MediaListItem): number {
+  const steps = item.pipelineSteps ?? [];
+  if (steps.length === 0) return item.stagePercent;
+
+  const completedSteps = steps.filter((step) => step.statusLabel === "Готово" || step.statusLabel === "Не требуется").length;
+  const runningStep = steps.find((step) => step.isCurrent || step.tone === "running");
+  if (!runningStep || runningStep.progressPercent == null) {
+    return item.stagePercent;
+  }
+
+  return Math.max(item.stagePercent, Math.min(100, Math.round(((completedSteps + runningStep.progressPercent / 100) / steps.length) * 100)));
+}
+
+// ── MediaRow ─────────────────────────────────────────────────────────
+
+function MediaRow({ item, onDeleted, selectMode, selected, onToggleSelect }: {
+  item: MediaListItem;
+  onDeleted?: () => void;
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: number) => void;
+}) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [showWait, setShowWait] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const steps = item.pipelineSteps ?? [];
+  const isRunning = item.statusTone === "running" || item.statusTone === "queued";
+  const overallPercent = overallProgressPercent(item);
 
   async function handleDelete() {
     setDeleting(true);
@@ -128,77 +151,102 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
 
   return (
     <div>
-      {/* Main row */}
+      {/* ── Main row: normal view OR inline delete confirmation ── */}
       <div
-        style={rowStyle}
-        onClick={() => setExpanded(!expanded)}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLElement).style.background = "var(--bg-card-hover)";
+        style={{
+          ...rowStyle,
+          background: confirmDelete
+            ? "rgba(239,68,68,0.06)"
+            : (hovered || selected)
+              ? "var(--bg-card-hover)"
+              : isRunning && !expanded
+                ? `linear-gradient(to right,
+                    rgba(255,197,112,0.06) 0%,
+                    rgba(255,197,112,0.06) ${overallPercent}%,
+                    transparent ${overallPercent}%)`
+                : "transparent",
+          borderBottom: confirmDelete ? "1px solid rgba(239,68,68,0.18)" : rowStyle.borderBottom,
+          transition: "background var(--duration-normal) var(--ease)",
+          cursor: confirmDelete ? "default" : "pointer",
         }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLElement).style.background = "transparent";
+        onClick={() => {
+          if (confirmDelete) return;
+          selectMode ? onToggleSelect?.(item.id) : setExpanded(!expanded);
         }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
       >
-        {expanded ? (
-          <ChevronDown size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
+        {confirmDelete ? (
+          /* ── Confirmation replaces row content ── */
+          <>
+            <Trash2 size={14} style={{ color: "var(--error)", flexShrink: 0 }} />
+            <span style={{ flex: 1, fontSize: "var(--text-sm)", color: "var(--error)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {t("action.confirmDelete")} «{item.name}»
+            </span>
+            <Button variant="danger" size="sm" loading={deleting} onClick={(e) => { e.stopPropagation(); handleDelete(); }}>
+              {t("action.yesDelete")}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }} disabled={deleting}>
+              {t("action.cancel")}
+            </Button>
+          </>
         ) : (
-          <ChevronRight size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+          /* ── Normal row content ── */
+          <>
+            {selectMode ? (
+              <span style={{ flexShrink: 0, color: selected ? "var(--accent)" : "var(--text-muted)" }}>
+                {selected ? <CheckSquare size={14} /> : <Square size={14} />}
+              </span>
+            ) : expanded ? (
+              <ChevronDown size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
+            ) : (
+              <ChevronRight size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+            )}
+
+            <span style={{ flex: 1, fontWeight: 600, fontSize: "var(--text-base)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+              {item.name}
+            </span>
+
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", flexShrink: 0, width: 80, textAlign: "right" }}>
+              {item.sizeHuman}
+            </span>
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", flexShrink: 0, width: 140, textAlign: "right" }}>
+              {item.createdAtUtc}
+            </span>
+            <span style={{ flexShrink: 0, width: 100, display: "flex", justifyContent: "center" }}>
+              <StatusChip label={item.statusLabel} tone={item.statusTone} />
+            </span>
+
+            {/* Trash slides in from the right */}
+            {!selectMode && (
+              <div style={{ maxWidth: hovered ? 30 : 0, overflow: "hidden", flexShrink: 0, transition: "max-width var(--duration-normal) var(--ease)" }}>
+                <button
+                  type="button"
+                  title={t("action.delete")}
+                  onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: "var(--radius-sm)", border: "none", background: "rgba(239,68,68,0.10)", color: "var(--error)", cursor: "pointer", flexShrink: 0 }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            )}
+          </>
         )}
-
-        <span
-          style={{
-            flex: 1,
-            fontWeight: 600,
-            fontSize: "var(--text-base)",
-            color: "var(--text)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            minWidth: 0,
-          }}
-        >
-          {item.name}
-        </span>
-
-        <span
-          style={{
-            fontSize: "var(--text-sm)",
-            color: "var(--text-muted)",
-            flexShrink: 0,
-            width: 80,
-            textAlign: "right",
-          }}
-        >
-          {item.sizeHuman}
-        </span>
-
-        <span
-          style={{
-            fontSize: "var(--text-sm)",
-            color: "var(--text-muted)",
-            flexShrink: 0,
-            width: 140,
-            textAlign: "right",
-          }}
-        >
-          {item.createdAtUtc}
-        </span>
-
-        <span style={{ flexShrink: 0, width: 100, display: "flex", justifyContent: "center" }}>
-          <StatusChip label={item.statusLabel} tone={item.statusTone} />
-        </span>
       </div>
 
-      {/* Expanded pipeline steps */}
+      {/* ── Expanded panel ── */}
       {expanded && (
         <div
           style={{
-            padding: "var(--sp-2) var(--sp-4) var(--sp-3)",
+            padding: "var(--sp-3) var(--sp-4)",
             paddingLeft: "calc(var(--sp-4) + 14px + var(--sp-3))",
-            background: "var(--bg-surface)",
             borderBottom: "1px solid var(--border)",
+            position: "relative",
+            overflow: "hidden",
+            background: "var(--bg-surface)",
           }}
         >
+          {/* Stage label + percent row */}
           <div
             style={{
               display: "flex",
@@ -207,38 +255,25 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
               marginBottom: "var(--sp-3)",
             }}
           >
-            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", flexShrink: 0 }}>
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", flex: 1 }}>
               {item.stageLabel}
             </span>
-            <div style={{ flex: 1 }}>
-              <Progress percent={item.stagePercent} height={4} animate={item.statusTone === "running"} />
-            </div>
-            <span
-              style={{
-                fontSize: "var(--text-xs)",
-                fontWeight: 600,
-                color: "var(--accent)",
-                fontVariantNumeric: "tabular-nums",
-                minWidth: 32,
-                textAlign: "right",
-              }}
-            >
-              {item.stagePercent}%
-            </span>
+            {isRunning && (
+              <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--accent)", fontVariantNumeric: "tabular-nums" }}>
+                {overallPercent}%
+              </span>
+            )}
           </div>
 
+          {/* Steps */}
           {steps.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-1)" }}>
               {steps.map((step) => (
                 <div
                   key={step.label}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "var(--sp-3)",
-                    padding: "5px 0",
-                  }}
+                  style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", padding: "5px 0" }}
                 >
+                  {/* Status dot */}
                   <span
                     style={{
                       width: 7,
@@ -249,44 +284,66 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
                       boxShadow: step.isCurrent ? `0 0 6px ${stepToneColor(step.tone)}` : "none",
                     }}
                   />
+
+                  {/* Label */}
                   <span
                     style={{
                       fontSize: "var(--text-sm)",
                       fontWeight: step.isCurrent ? 600 : 400,
-                      color: step.isCurrent ? "var(--text)" : "var(--text-muted)",
+                      color: step.tone === "neutral"
+                        ? "var(--text-muted)"
+                        : step.isCurrent ? "var(--text)" : "var(--text-secondary)",
                       minWidth: 160,
                     }}
                   >
                     {step.label}
                   </span>
+
                   <StatusChip label={step.statusLabel} tone={step.tone} />
-                  <span
-                    style={{
-                      fontSize: "var(--text-xs)",
-                      color: "var(--text-muted)",
-                      marginLeft: "auto",
-                    }}
-                  >
-                    {step.durationLabel || step.timingText}
+
+                  <span style={{ fontSize: "var(--text-xs)", color: step.etaLabel ? "var(--accent)" : "var(--text-muted)", marginLeft: "auto" }}>
+                    {step.etaLabel || step.durationLabel || step.timingText}
                   </span>
-                  {step.progressVisible && step.progressPercent != null && (
-                    <div style={{ width: 80 }}>
+
+                  {/* ── Per-step live progress (пункт 1) ── */}
+                  {step.progressVisible && step.progressPercent != null ? (
+                    <div style={{ width: 80, flexShrink: 0 }}>
                       <Progress percent={step.progressPercent} height={3} animate />
                     </div>
-                  )}
+                  ) : step.tone === "running" ? (
+                    <div style={{ width: 80, flexShrink: 0 }}>
+                      <Progress indeterminate height={3} />
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
           )}
 
+          {(item.currentEtaLabel || item.completedAtUtc) && (
+            <div style={{ marginTop: "var(--sp-2)", display: "flex", flexDirection: "column", gap: "var(--sp-1)" }}>
+              {item.currentEtaLabel && (
+                <span style={{ fontSize: "var(--text-xs)", color: "var(--accent)" }}>
+                  {item.currentEtaLabel}
+                </span>
+              )}
+              {item.completedAtUtc && (
+                <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+                  Обработка завершена: {item.completedAtUtc}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Error block */}
           {item.errorSummary && (
             <div
               style={{
                 marginTop: "var(--sp-2)",
                 padding: "var(--sp-2) var(--sp-3)",
-                background: "rgba(239, 68, 68, 0.08)",
+                background: "rgba(239,68,68,0.08)",
                 borderRadius: "var(--radius-sm)",
-                border: "1px solid rgba(239, 68, 68, 0.2)",
+                border: "1px solid rgba(239,68,68,0.2)",
                 fontSize: "var(--text-xs)",
                 color: "var(--error)",
               }}
@@ -295,79 +352,34 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
             </div>
           )}
 
+          {/* Footer actions */}
           <div style={{ marginTop: "var(--sp-3)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
-              {!confirmDelete ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<Trash2 size={12} />}
-                  onClick={() => setConfirmDelete(true)}
-                >
-                  {t("action.delete")}
-                </Button>
-              ) : (
-                <>
-                  <span style={{ fontSize: "var(--text-xs)", color: "var(--error)", fontWeight: 500 }}>
-                    {t("action.confirmDelete")}
-                  </span>
-                  <Button variant="danger" size="sm" loading={deleting} onClick={handleDelete}>
-                    {t("action.yesDelete")}
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)} disabled={deleting}>
-                    {t("action.cancel")}
-                  </Button>
-                </>
-              )}
+              <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => setConfirmDelete(true)}>
+                {t("action.delete")}
+              </Button>
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
               {showWait && !isReady(item) && (
-                <span
-                  style={{
-                    fontSize: "var(--text-xs)",
-                    color: "var(--text-muted)",
-                    animation: "fade-in var(--duration-normal) var(--ease)",
-                  }}
-                >
+                <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", animation: "fade-in var(--duration-normal) var(--ease)" }}>
                   {t("action.processing")}
                 </span>
               )}
               {isReady(item) ? (
                 <Link
                   to={`/media/${item.id}`}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "var(--sp-1)",
-                    fontSize: "var(--text-sm)",
-                    fontWeight: 500,
-                    color: "var(--accent)",
-                    textDecoration: "none",
-                  }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: "var(--sp-1)", fontSize: "var(--text-sm)", fontWeight: 500, color: "var(--accent)", textDecoration: "none" }}
                 >
-                  {t("action.openDetails")}
-                  <ExternalLink size={12} />
+                  {t("action.openDetails")} <ExternalLink size={12} />
                 </Link>
               ) : (
                 <button
                   type="button"
                   onClick={() => setShowWait(true)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "var(--sp-1)",
-                    fontSize: "var(--text-sm)",
-                    fontWeight: 500,
-                    color: "var(--text-muted)",
-                    background: "none",
-                    border: "none",
-                    cursor: "pointer",
-                    padding: 0,
-                  }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: "var(--sp-1)", fontSize: "var(--text-sm)", fontWeight: 500, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", padding: 0 }}
                 >
-                  {t("action.openDetails")}
-                  <ExternalLink size={12} />
+                  {t("action.openDetails")} <ExternalLink size={12} />
                 </button>
               )}
             </div>
@@ -378,25 +390,25 @@ function MediaRow({ item, onDeleted }: { item: MediaListItem; onDeleted?: () => 
   );
 }
 
+// ── MediaList ─────────────────────────────────────────────────────────
+
 export function MediaList({ items, onDeleted }: MediaListProps) {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const [query, setQuery] = useState("");
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState(false);
 
   const tabs: { key: FilterTab; labelKey: "filter.all" | "filter.processing" | "filter.done" | "filter.failed" }[] = [
-    { key: "all", labelKey: "filter.all" },
+    { key: "all",        labelKey: "filter.all" },
     { key: "processing", labelKey: "filter.processing" },
-    { key: "done", labelKey: "filter.done" },
-    { key: "failed", labelKey: "filter.failed" },
+    { key: "done",       labelKey: "filter.done" },
+    { key: "failed",     labelKey: "filter.failed" },
   ];
 
-  const sorted = useMemo(
-    () =>
-      [...items].sort(
-        (a, b) => new Date(b.createdAtUtc).getTime() - new Date(a.createdAtUtc).getTime(),
-      ),
-    [items],
-  );
+  const sorted = useMemo(() => [...items], [items]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
@@ -407,6 +419,40 @@ export function MediaList({ items, onDeleted }: MediaListProps) {
     });
   }, [sorted, activeTab, query]);
 
+  const allSelected = filtered.length > 0 && filtered.every((i) => selected.has(i.id));
+
+  function toggleSelectMode() {
+    setSelectMode((v) => !v);
+    setSelected(new Set());
+    setBulkConfirm(false);
+  }
+
+  function toggleItem(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    if (allSelected) setSelected(new Set());
+    else setSelected(new Set(filtered.map((i) => i.id)));
+  }
+
+  async function handleBulkDelete() {
+    if (selected.size === 0) return;
+    setBulkDeleting(true);
+    try {
+      await api.bulkDeleteMedia(Array.from(selected));
+      setSelected(new Set());
+      setSelectMode(false);
+      setBulkConfirm(false);
+      onDeleted?.();
+    } catch {}
+    setBulkDeleting(false);
+  }
+
   return (
     <div
       style={{
@@ -416,23 +462,41 @@ export function MediaList({ items, onDeleted }: MediaListProps) {
         overflow: "hidden",
       }}
     >
-      <div style={tabBarStyle}>
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            style={{
-              ...tabBase,
-              ...(activeTab === tab.key ? tabActive : {}),
-            }}
-            onClick={() => setActiveTab(tab.key)}
-          >
-            {t(tab.labelKey)} ({countTab(items, tab.key)})
-          </button>
-        ))}
+      {/* ── Tab bar (пункт 4: только активная вкладка подсвечена) ── */}
+      <div style={{ ...tabBarStyle, justifyContent: "space-between" }}>
+        <div style={{ display: "flex" }}>
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              style={{ ...tabBase, ...(activeTab === tab.key ? tabActive : {}) }}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {t(tab.labelKey)} ({countTab(items, tab.key)})
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={toggleSelectMode}
+          style={{ ...tabBase, marginRight: "var(--sp-2)", ...(selectMode ? tabActive : {}) }}
+        >
+          {selectMode ? t("action.cancelSelect") : t("action.select")}
+        </button>
       </div>
 
+      {/* ── Search + select all ── */}
       <div style={searchWrap}>
+        {selectMode && (
+          <button
+            type="button"
+            onClick={toggleAll}
+            title={t("action.selectAll")}
+            style={{ display: "flex", alignItems: "center", background: "none", border: "none", cursor: "pointer", padding: 0, flexShrink: 0, color: allSelected ? "var(--accent)" : "var(--text-muted)" }}
+          >
+            {allSelected ? <CheckSquare size={14} /> : <Square size={14} />}
+          </button>
+        )}
         <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
         <input
           type="text"
@@ -443,6 +507,44 @@ export function MediaList({ items, onDeleted }: MediaListProps) {
         />
       </div>
 
+      {/* ── Bulk action panel ── */}
+      {selectMode && selected.size > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--sp-3)",
+            padding: "8px 14px",
+            background: "rgba(239,68,68,0.06)",
+            borderBottom: "1px solid rgba(239,68,68,0.2)",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          {!bulkConfirm ? (
+            <>
+              <span style={{ flex: 1, color: "var(--text-secondary)" }}>
+                {t("action.selectedCount").replace("{n}", String(selected.size))}
+              </span>
+              <Button variant="danger" size="sm" icon={<Trash2 size={12} />} onClick={() => setBulkConfirm(true)}>
+                {t("action.deleteSelected")}
+              </Button>
+            </>
+          ) : (
+            <>
+              <span style={{ flex: 1, color: "var(--error)", fontWeight: 500 }}>
+                {t("action.confirmDeleteN").replace("{n}", String(selected.size))}
+              </span>
+              <Button variant="danger" size="sm" loading={bulkDeleting} onClick={handleBulkDelete}>
+                {t("action.yesDelete")}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setBulkConfirm(false)} disabled={bulkDeleting}>
+                {t("action.cancel")}
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+
       {filtered.length === 0 ? (
         <div style={{ padding: "var(--sp-4)" }}>
           <EmptyState text={t("filter.empty")} icon={<FileAudio size={20} />} />
@@ -450,7 +552,14 @@ export function MediaList({ items, onDeleted }: MediaListProps) {
       ) : (
         <div>
           {filtered.map((item) => (
-            <MediaRow key={item.id} item={item} onDeleted={onDeleted} />
+            <MediaRow
+              key={item.id}
+              item={item}
+              onDeleted={onDeleted}
+              selectMode={selectMode}
+              selected={selected.has(item.id)}
+              onToggleSelect={toggleItem}
+            />
           ))}
         </div>
       )}

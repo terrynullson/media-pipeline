@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	mediaapp "media-pipeline/internal/app/media"
+	transcriptionapp "media-pipeline/internal/app/transcription"
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
 	"media-pipeline/internal/domain/transcript"
@@ -137,7 +139,7 @@ type TriggerEventView struct {
 func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 	mediaID, err := mediaIDFromRequest(r)
 	if err != nil {
-		http.Error(w, "некорректный media id", http.StatusBadRequest)
+		http.Error(w, "???????????? media id", http.StatusBadRequest)
 		return
 	}
 
@@ -153,7 +155,7 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 			slog.Int64("media_id", mediaID),
 			slog.Any("error", err),
 		)
-		http.Error(w, "не удалось загрузить страницу расшифровки", http.StatusInternalServerError)
+		http.Error(w, "?? ??????? ????????? ???????? ???????????", http.StatusInternalServerError)
 		return
 	}
 
@@ -173,7 +175,7 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 	if result.SummaryJob != nil {
 		jobs = append(jobs, *result.SummaryJob)
 	}
-	pipelineView := buildMediaPipelineView(result.Media, jobs)
+	pipelineView := h.buildPipelineView(r.Context(), result.Media, jobs)
 	playerView := buildTranscriptPlayerView(result)
 	data := TranscriptPageViewData{
 		PageNotice:          transcriptFlashMessage(r.URL.Query().Get("summary_status")),
@@ -209,7 +211,7 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		data.HasSummary = true
 		data.SummaryText = strings.TrimSpace(result.Summary.SummaryText)
 		data.SummaryHighlights = append([]string(nil), result.Summary.Highlights...)
-		data.SummaryProvider = fallbackValue(result.Summary.Provider, "не указан")
+		data.SummaryProvider = fallbackValue(result.Summary.Provider, "?? ??????")
 		data.SummaryUpdatedAtUTC = FormatDateTimeUTC(result.Summary.UpdatedAtUTC)
 	}
 	data.TriggerMatches = buildTriggerEventViews(result.TriggerEvents, result.TriggerScreenshots, result.Media, result.ScreenshotJob)
@@ -225,14 +227,14 @@ func (h *UploadHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if execErr := h.tmpl.ExecuteTemplate(w, "transcript.html", data); execErr != nil {
 		observability.LoggerFromContext(r.Context(), h.logger).Error("render transcript template failed", slog.Any("error", execErr))
-		http.Error(w, "не удалось отрисовать страницу расшифровки", http.StatusInternalServerError)
+		http.Error(w, "?? ??????? ?????????? ???????? ???????????", http.StatusInternalServerError)
 	}
 }
 
 func (h *UploadHandler) RequestSummary(w http.ResponseWriter, r *http.Request) {
 	mediaID, err := mediaIDFromRequest(r)
 	if err != nil {
-		http.Error(w, "некорректный media id", http.StatusBadRequest)
+		http.Error(w, "???????????? media id", http.StatusBadRequest)
 		return
 	}
 
@@ -251,7 +253,7 @@ func (h *UploadHandler) RequestSummary(w http.ResponseWriter, r *http.Request) {
 				slog.Int64("media_id", mediaID),
 				slog.Any("error", err),
 			)
-			http.Error(w, "не удалось поставить саммари в очередь", http.StatusInternalServerError)
+			http.Error(w, "?? ??????? ????????? ??????? ??????", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -264,10 +266,44 @@ func (h *UploadHandler) RequestSummary(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/media/%d/transcript?summary_status=%s", mediaID, status), http.StatusSeeOther)
 }
 
+// RetryJob requeues the latest failed job for the given media item so the
+// worker picks it up again on the next poll cycle.
+func (h *UploadHandler) RetryJob(w http.ResponseWriter, r *http.Request) {
+	mediaID, err := mediaIDFromRequest(r)
+	if err != nil {
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "???????????? media id"})
+		return
+	}
+
+	result, err := h.retryJobUC.Retry(r.Context(), mediaID)
+	if err != nil {
+		if errors.Is(err, mediaapp.ErrNoFailedJobs) {
+			h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "???? ???? ??? ?? ?????, ????????? ?????? ?????? ?? ?????????"})
+			return
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			h.writeJSON(w, http.StatusNotFound, map[string]string{"error": "???? ?? ??????"})
+			return
+		}
+		observability.LoggerFromContext(r.Context(), h.logger).Error(
+			"retry job failed",
+			slog.Int64("media_id", mediaID),
+			slog.Any("error", err),
+		)
+		h.writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "?? ??????? ???????? ????????? ?????? ?? ?????"})
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"status": "requeued",
+		"jobId":  result.JobID,
+	})
+}
+
 func (h *UploadHandler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 	mediaID, err := mediaIDFromRequest(r)
 	if err != nil {
-		http.Error(w, "некорректный media id", http.StatusBadRequest)
+		http.Error(w, "???????????? media id", http.StatusBadRequest)
 		return
 	}
 
@@ -277,11 +313,33 @@ func (h *UploadHandler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 			if wantsJSON(r) {
 				h.writeJSON(w, http.StatusNotFound, map[string]any{
 					"status":  "error",
-					"message": "Файл не найден.",
+					"message": "???? ?? ??????.",
 				})
 				return
 			}
 			http.NotFound(w, r)
+			return
+		}
+		if errors.Is(err, mediaapp.ErrMediaBusy) {
+			if wantsJSON(r) {
+				h.writeJSON(w, http.StatusConflict, map[string]any{
+					"status":  "error",
+					"message": "???? ?????? ??????????????. ??????? ????????? ????????? ????????? ?????.",
+				})
+				return
+			}
+			http.Error(w, "???? ?????? ??????????????. ??????? ????????? ????????? ????????? ?????.", http.StatusConflict)
+			return
+		}
+		if errors.Is(err, mediaapp.ErrMediaCancelTimeout) {
+			if wantsJSON(r) {
+				h.writeJSON(w, http.StatusConflict, map[string]any{
+					"status":  "error",
+					"message": "?? ??????? ?????? ?????????? ???????? ?????????. ?????????? ??? ??? ????? ????????? ??????.",
+				})
+				return
+			}
+			http.Error(w, "?? ??????? ?????? ?????????? ???????? ?????????. ?????????? ??? ??? ????? ????????? ??????.", http.StatusConflict)
 			return
 		}
 
@@ -293,17 +351,17 @@ func (h *UploadHandler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 		if wantsJSON(r) {
 			h.writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"status":  "error",
-				"message": "Не удалось удалить файл.",
+				"message": "?? ??????? ??????? ????.",
 			})
 			return
 		}
-		http.Error(w, "не удалось удалить файл", http.StatusInternalServerError)
+		http.Error(w, "?? ??????? ??????? ????", http.StatusInternalServerError)
 		return
 	}
 
-	message := "Файл удалён."
+	message := "???? ?????? ?? ???????."
 	if len(result.CleanupWarnings) > 0 {
-		message = "Файл удалён, но часть файлов не получилось очистить автоматически."
+		message = "???? ?????? ?? ???????, ?? ????? ????????? ?????? ?? ??????? ???????? ?????????????."
 	}
 	if wantsJSON(r) {
 		h.writeJSON(w, http.StatusOK, map[string]any{
@@ -318,6 +376,51 @@ func (h *UploadHandler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/?status=deleted", http.StatusSeeOther)
 }
 
+// BulkDeleteMedia handles POST /api/media/bulk-delete.
+// It deletes each ID sequentially and returns partial-success results.
+func (h *UploadHandler) BulkDeleteMedia(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if len(payload.IDs) == 0 {
+		http.Error(w, "ids is required", http.StatusBadRequest)
+		return
+	}
+
+	type failedItem struct {
+		ID    int64  `json:"id"`
+		Error string `json:"error"`
+	}
+	deleted := make([]int64, 0, len(payload.IDs))
+	failed := make([]failedItem, 0)
+
+	for _, id := range payload.IDs {
+		_, err := h.deleteMediaUC.Delete(r.Context(), id)
+		if err != nil {
+			msg := "?? ??????? ??????? ????."
+			if errors.Is(err, sql.ErrNoRows) {
+				msg = "???? ?? ??????."
+			} else if errors.Is(err, mediaapp.ErrMediaBusy) {
+				msg = "???? ?????? ??????????????. ??????? ????????? ????????? ????????? ?????."
+			} else if errors.Is(err, mediaapp.ErrMediaCancelTimeout) {
+				msg = "?? ??????? ?????? ?????????? ???????? ?????????. ?????????? ??? ??? ????? ????????? ??????."
+			}
+			failed = append(failed, failedItem{ID: id, Error: msg})
+		} else {
+			deleted = append(deleted, id)
+		}
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"deleted": deleted,
+		"failed":  failed,
+	})
+}
+
 func mediaIDFromRequest(r *http.Request) (int64, error) {
 	raw := strings.TrimSpace(chi.URLParam(r, "mediaID"))
 	if raw == "" {
@@ -330,6 +433,144 @@ func mediaIDFromRequest(r *http.Request) (int64, error) {
 	}
 
 	return value, nil
+}
+
+// ExportTranscript serves the transcript in one of three downloadable formats:
+//
+//	?format=srt  - SubRip subtitle file
+//	?format=txt  - plain text (full_text, newline-separated segments)
+//	?format=json - JSON matching the /result API response shape
+func (h *UploadHandler) ExportTranscript(w http.ResponseWriter, r *http.Request) {
+	mediaID, err := mediaIDFromRequest(r)
+	if err != nil {
+		http.Error(w, "???????????? media id", http.StatusBadRequest)
+		return
+	}
+
+	format := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("format")))
+	if format == "" {
+		format = "txt"
+	}
+
+	result, err := h.transcriptViewUC.Load(r.Context(), mediaID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.writeJSON(w, http.StatusNotFound, map[string]string{"error": "???? ?? ??????"})
+			return
+		}
+		observability.LoggerFromContext(r.Context(), h.logger).Error(
+			"export transcript load failed",
+			slog.Int64("media_id", mediaID),
+			slog.Any("error", err),
+		)
+		http.Error(w, "?? ??????? ??????????? ??????? ???????????", http.StatusInternalServerError)
+		return
+	}
+
+	if !result.HasTranscript {
+		h.writeJSON(w, http.StatusNotFound, map[string]string{"error": "??? ????? ????? ??????????? ???? ??????????"})
+		return
+	}
+
+	baseName := strings.TrimSuffix(result.Media.OriginalName, filepath.Ext(result.Media.OriginalName))
+	baseName = sanitizeFilename(baseName)
+
+	switch format {
+	case "srt":
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.srt"`, baseName))
+		_, _ = fmt.Fprint(w, formatSRT(result.Transcript.Segments))
+
+	case "txt":
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.txt"`, baseName))
+		_, _ = fmt.Fprint(w, formatTXT(result.Transcript))
+
+	case "json":
+		type segmentJSON struct {
+			Index    int     `json:"index"`
+			StartSec float64 `json:"startSec"`
+			EndSec   float64 `json:"endSec"`
+			Text     string  `json:"text"`
+		}
+		segs := make([]segmentJSON, 0, len(result.Transcript.Segments))
+		for i, s := range result.Transcript.Segments {
+			segs = append(segs, segmentJSON{Index: i, StartSec: s.StartSec, EndSec: s.EndSec, Text: s.Text})
+		}
+		payload := map[string]any{
+			"mediaId":  result.Media.ID,
+			"name":     result.Media.OriginalName,
+			"language": result.Transcript.Language,
+			"fullText": result.Transcript.FullText,
+			"segments": segs,
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s_transcript.json"`, baseName))
+		_ = json.NewEncoder(w).Encode(payload)
+
+	default:
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "???????????????? ?????? ????????. ????????: srt, txt, json"})
+	}
+}
+
+// formatSRT converts transcript segments to SubRip (.srt) text.
+func formatSRT(segments []transcript.Segment) string {
+	if len(segments) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for i, s := range segments {
+		text := strings.TrimSpace(s.Text)
+		if text == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "%d\n%s --> %s\n%s\n\n",
+			i+1,
+			FormatSRTTimestamp(s.StartSec),
+			FormatSRTTimestamp(s.EndSec),
+			text,
+		)
+	}
+	return b.String()
+}
+
+// formatTXT returns plain text: each segment on its own line.
+// Falls back to FullText when no segments are available.
+func formatTXT(t transcript.Transcript) string {
+	if len(t.Segments) == 0 {
+		return strings.TrimSpace(t.FullText)
+	}
+
+	var b strings.Builder
+	for _, s := range t.Segments {
+		text := strings.TrimSpace(s.Text)
+		if text == "" {
+			continue
+		}
+		b.WriteString(text)
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// sanitizeFilename removes or replaces characters that are unsafe in filenames.
+func sanitizeFilename(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r == '/' || r == '\\' || r == ':' || r == '*' ||
+			r == '?' || r == '"' || r == '<' || r == '>' || r == '|':
+			b.WriteByte('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	result := strings.TrimSpace(b.String())
+	if result == "" {
+		return "transcript"
+	}
+	return result
 }
 
 func buildTranscriptSettings(settings *transcription.Settings) []TranscriptSettingItem {
@@ -365,14 +606,14 @@ func buildTranscriptRuntimePolicyView(result mediaapp.TranscriptViewResult) Tran
 		case strings.TrimSpace(result.Media.ExtractedAudioPath) == "":
 			return TranscriptRuntimePolicyView{
 				Visible: true,
-				Title:   "Оценка времени запуска",
+				Title:   "Политика времени",
 				Tone:    "warning",
 				Summary: "Оценка времени появится после извлечения аудио.",
 			}
 		default:
 			return TranscriptRuntimePolicyView{
 				Visible: true,
-				Title:   "Оценка времени запуска",
+				Title:   "Политика времени",
 				Tone:    "warning",
 				Summary: "Не удалось заранее оценить время распознавания для этого файла.",
 			}
@@ -382,11 +623,11 @@ func buildTranscriptRuntimePolicyView(result mediaapp.TranscriptViewResult) Tran
 	policy := result.RuntimePolicy
 	view := TranscriptRuntimePolicyView{
 		Visible:          true,
-		Title:            "Оценка времени запуска",
+		Title:            "Политика времени",
 		Tone:             "warning",
-		DurationLabel:    transcription.FormatRuntimeDurationRU(policy.MediaDuration),
-		DurationClass:    capitalizeFirst(policy.DurationClassLabelRU()),
-		EffectiveTimeout: transcription.FormatRuntimeDurationRU(policy.EffectiveTimeout),
+		DurationLabel:    transcriptionapp.FormatRuntimeDurationRU(policy.MediaDuration),
+		DurationClass:    capitalizeFirst(transcriptionapp.DurationClassLabelRU(policy.DurationClass)),
+		EffectiveTimeout: transcriptionapp.FormatRuntimeDurationRU(policy.EffectiveTimeout),
 		Warnings:         append([]string(nil), policy.Warnings...),
 	}
 	switch {
@@ -398,7 +639,7 @@ func buildTranscriptRuntimePolicyView(result mediaapp.TranscriptViewResult) Tran
 		view.Summary = fmt.Sprintf("Для этого файла лимит распознавания автоматически увеличен до %s.", view.EffectiveTimeout)
 	default:
 		view.Tone = "success"
-		view.Summary = fmt.Sprintf("Для этого файла достаточно стандартного лимита %s.", transcription.FormatRuntimeDurationRU(policy.BaseTimeout))
+		view.Summary = fmt.Sprintf("Для этого файла достаточно стандартного лимита %s.", transcriptionapp.FormatRuntimeDurationRU(policy.BaseTimeout))
 	}
 
 	return view
@@ -424,7 +665,6 @@ func buildTranscriptSegments(items []transcript.Segment) []TranscriptSegmentView
 
 	return segments
 }
-
 func buildTriggerEventViews(
 	items []domaintrigger.Event,
 	screenshots map[int64]domaintrigger.Screenshot,
@@ -448,7 +688,7 @@ func buildTriggerEventViews(
 			SegmentText:       segmentText,
 			ContextText:       contextText,
 			ScreenshotSeekSec: item.StartSec,
-			ScreenshotAlt:     fmt.Sprintf("Скриншот для %s на %s", item.MatchedText, FormatTimestamp(item.StartSec)),
+			ScreenshotAlt:     fmt.Sprintf("Снимок по триггеру %s на %s", item.MatchedText, FormatTimestamp(item.StartSec)),
 			Placeholder:       describeScreenshotPlaceholder(mediaItem, screenshotJob),
 		}
 		if screenshot, ok := screenshots[item.ID]; ok {
@@ -505,7 +745,7 @@ func buildTranscriptPlayerView(result mediaapp.TranscriptViewResult) TranscriptP
 		view.AudioPlayerType = strings.TrimSpace(result.Media.MIMEType)
 		view.HasMediaPlayer = view.HasAudioPlayer
 		if !view.HasMediaPlayer {
-			view.PlayerFallbackText = "Аудиофайл сейчас недоступен для встроенного проигрывателя, но страница остаётся доступной."
+			view.PlayerFallbackText = "Исходный файл пока недоступен для браузерного воспроизведения."
 		}
 		return view
 	}
@@ -541,35 +781,35 @@ func describePreviewState(currentJob *job.Job, previewReady bool) (label string,
 		return "Готово", "success", "", ""
 	}
 	if currentJob == nil {
-		return "Недоступно", "neutral", "Browser-safe preview для этого видео ещё не подготовлен.", "neutral"
+		return "Не запускалось", "neutral", "Browser-safe preview ещё не запускался.", "neutral"
 	}
 
 	switch currentJob.Status {
 	case job.StatusPending:
-		return "В очереди", "ready", "Browser-safe preview поставлен в очередь. Пока можно использовать audio fallback, если он уже готов.", "neutral"
+		return "Ждёт", "ready", "Browser-safe preview поставлен в очередь и скоро начнётся.", "neutral"
 	case job.StatusRunning:
-		return "В работе", "running", "Browser-safe preview сейчас готовится. Пока можно использовать audio fallback, если он уже готов.", "neutral"
+		return "В работе", "running", "Browser-safe preview сейчас подготавливается.", "neutral"
 	case job.StatusFailed:
-		message := "Не удалось подготовить browser-safe preview видео."
+		message := "Не удалось подготовить browser-safe preview."
 		if current := userFacingJobError(currentJob); current != "" {
 			message = current
 		}
 		return "Ошибка", "error", message, "error"
 	case job.StatusDone:
-		return "Недоступно", "warning", "Preview job завершился, но preview-файл не найден на диске. Можно использовать audio fallback.", "warning"
+		return "Готово", "warning", "Preview-задача завершилась, но preview-файл не найден.", "neutral"
 	default:
-		return "Недоступно", "neutral", "Browser-safe preview сейчас недоступен.", "neutral"
+		return "Неизвестно", "neutral", "Статус подготовки preview пока не удалось определить.", "neutral"
 	}
 }
 
 func describeVideoPlayerFallback(result mediaapp.TranscriptViewResult) string {
 	if result.PreviewJob != nil && result.PreviewJob.Status == job.StatusFailed {
-		return "Browser-safe preview недоступен, а извлечённая аудиодорожка тоже пока не готова."
+		return "Browser-safe preview не удалось подготовить. Если видео не открывается напрямую, попробуйте аудио-версию."
 	}
 	if result.PreviewJob != nil && (result.PreviewJob.Status == job.StatusPending || result.PreviewJob.Status == job.StatusRunning) {
-		return "Browser-safe preview ещё готовится. Проигрыватель появится автоматически после завершения задачи."
+		return "Browser-safe preview ещё готовится. Если плеер пока недоступен, обновите страницу немного позже."
 	}
-	return "Browser-safe preview сейчас недоступен, поэтому встроенный video player временно не показывается."
+	return "Browser-safe preview пока недоступен для этого файла."
 }
 
 func describeMediaPlayerFallback(mediaItem media.Media, sourceReady bool) string {
@@ -577,36 +817,36 @@ func describeMediaPlayerFallback(mediaItem media.Media, sourceReady bool) string
 		return ""
 	}
 	if strings.TrimSpace(mediaItem.StoragePath) == "" {
-		return "Исходный медиафайл для встроенного плеера не найден."
+		return "Исходный файл недоступен, поэтому браузерный плеер сейчас открыть нельзя."
 	}
 	if mediaItem.IsAudioOnly() {
-		return "Аудиофайл сейчас недоступен для встроенного проигрывателя, но расшифровка и таймлайн остаются доступными."
+		return "Исходный файл пока недоступен для браузерного воспроизведения."
 	}
-	return "Видеофайл сейчас недоступен для встроенного проигрывателя, но расшифровка и таймлайн остаются доступными."
+	return "Исходный файл пока недоступен для браузерного воспроизведения."
 }
 
 func describeScreenshotPlaceholder(mediaItem media.Media, currentJob *job.Job) string {
 	if mediaItem.IsAudioOnly() {
-		return "Для аудио скриншоты не создаются."
+		return "Для аудиофайлов снимки по триггерам не создаются."
 	}
 	if currentJob == nil {
-		return "Скриншоты ещё не запускались."
+		return "Снимок по триггеру появится после обработки воркером."
 	}
 
 	switch currentJob.Status {
 	case job.StatusPending:
-		return "Скриншот в очереди."
+		return "Снимок ждёт очереди."
 	case job.StatusRunning:
-		return "Скриншот сейчас создаётся."
+		return "Снимок подготавливается."
 	case job.StatusFailed:
 		if message := userFacingJobError(currentJob); message != "" {
 			return message
 		}
-		return "Не удалось создать скриншот."
+		return "Снимок не удалось подготовить."
 	case job.StatusDone:
-		return "Для этого триггера скриншот не найден."
+		return "Снимок готов."
 	default:
-		return "Скриншот недоступен."
+		return "Статус снимка пока неизвестен."
 	}
 }
 
@@ -615,12 +855,12 @@ func describeTriggerAnalysis(currentJob *job.Job, triggerCount int) (label strin
 		if triggerCount > 0 {
 			return "Готово", "success", "", ""
 		}
-		return "Не запускалось", "neutral", "Анализ триггеров ещё не запускался.", "neutral"
+		return "Не запускалось", "neutral", "Для этой расшифровки триггеры не найдены.", "neutral"
 	}
 
 	switch currentJob.Status {
 	case job.StatusPending:
-		return "В очереди", "ready", "Анализ триггеров поставлен в очередь и будет выполнен worker-процессом.", "neutral"
+		return "Ждёт", "ready", "Анализ триггеров поставлен в очередь и будет выполнен worker-процессом.", "neutral"
 	case job.StatusRunning:
 		return "В работе", "running", "Анализ триггеров выполняется прямо сейчас.", "neutral"
 	case job.StatusFailed:
@@ -649,7 +889,7 @@ func describeSummaryState(currentJob *job.Job, hasSummary bool) (label string, t
 
 	switch currentJob.Status {
 	case job.StatusPending:
-		return "В очереди", "ready", "Саммари поставлено в очередь.", "neutral"
+		return "Ждёт", "ready", "Саммари поставлено в очередь и ждёт запуска.", "neutral"
 	case job.StatusRunning:
 		return "В работе", "running", "Worker сейчас собирает саммари.", "neutral"
 	case job.StatusFailed:
@@ -686,7 +926,7 @@ func transcriptFlashMessage(status string) string {
 	case "requested":
 		return "Задача на саммари поставлена в очередь."
 	case "in_progress":
-		return "Саммари уже создаётся. Дождитесь завершения."
+		return "Саммари уже собирается. Можно дождаться завершения на этой странице."
 	case "not_ready":
 		return "Саммари можно запустить только после готовой расшифровки."
 	default:
@@ -804,9 +1044,9 @@ func fallbackValue(value string, fallback string) string {
 
 func boolLabel(value bool) string {
 	if value {
-		return "включено"
+		return "Включено"
 	}
-	return "выключено"
+	return "Выключено"
 }
 
 func capitalizeFirst(value string) string {
@@ -825,7 +1065,7 @@ func capitalizeFirst(value string) string {
 }
 
 func buildSummaryStepView(currentJob *job.Job) PipelineStepView {
-	step := describeJobBackedStep("Саммари", currentJob, time.Now().UTC())
+	step := describeJobBackedStep("Саммари", currentJob, 0, time.Now().UTC())
 	return PipelineStepView{
 		Label:           step.label,
 		StatusLabel:     step.statusLabel,
@@ -860,14 +1100,14 @@ func buildRuntimeSnapshotItems(raw string) []TranscriptSettingItem {
 	}
 
 	if !snapshot.CapturedAtUTC.IsZero() {
-		appendItem("Собрано", FormatDateTimeUTC(snapshot.CapturedAtUTC))
+		appendItem("Время захвата", FormatDateTimeUTC(snapshot.CapturedAtUTC))
 	}
 	appendItem("IP", snapshot.RequestIP)
 	appendItem("User-Agent", snapshot.UserAgent)
-	appendItem("Язык браузера", firstNonEmptyValue(snapshot.ClientLanguage, snapshot.AcceptLanguage))
-	appendItem("Платформа", firstNonEmptyValue(snapshot.ClientPlatform, snapshot.ClientHintPlatform))
+	appendItem("Язык клиента", firstNonEmptyValue(snapshot.ClientLanguage, snapshot.AcceptLanguage))
+	appendItem("Платформа клиента", firstNonEmptyValue(snapshot.ClientPlatform, snapshot.ClientHintPlatform))
 	if snapshot.HardwareConcurrency != nil {
-		appendItem("Потоки браузера", strconv.Itoa(*snapshot.HardwareConcurrency))
+		appendItem("Потоки CPU", strconv.Itoa(*snapshot.HardwareConcurrency))
 	}
 	if snapshot.DeviceMemoryGB != nil {
 		appendItem("Память устройства", fmt.Sprintf("%.1f ГБ", *snapshot.DeviceMemoryGB))

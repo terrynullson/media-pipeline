@@ -1,12 +1,17 @@
 import type {
+  AnalyticsResponse,
   DashboardResponse,
   JobItem,
   MediaDetailResponse,
   MediaListItem,
+  RuntimeSettingsResponse,
   SettingsResponse,
+  TimelineFilters,
+  TimelineResponse,
   TriggerRule,
   UIConfigResponse,
-  UploadProgress
+  UploadProgress,
+  WorkerStatusResponse
 } from "../models/types";
 
 const defaultUIConfig: UIConfigResponse = {
@@ -25,6 +30,11 @@ function normalizeSettingsResponse(raw: SettingsResponse): SettingsResponse {
     profile: {
       ...raw.profile,
       uiTheme: raw.profile?.uiTheme ?? raw.ui?.theme ?? "new"
+    },
+    runtime: {
+      autoUploadMinAgeSec: raw.runtime?.autoUploadMinAgeSec ?? 60,
+      previewTimeoutSec: raw.runtime?.previewTimeoutSec ?? 600,
+      maxUploadSizeMB: raw.runtime?.maxUploadSizeMB ?? 1024
     },
     warnings: Array.isArray(raw.warnings) ? raw.warnings : [],
     ui: {
@@ -68,8 +78,15 @@ export const api = {
   jobs: async () => (await requestJSON<{ items: JobItem[] }>("/api/jobs")).items,
   mediaDetail: (mediaId: string) => requestJSON<MediaDetailResponse>(`/api/media/${mediaId}`),
   settings: async () => normalizeSettingsResponse(await requestJSON<SettingsResponse>("/api/settings/transcription")),
+  runtimeSettings: () => requestJSON<RuntimeSettingsResponse>("/api/settings/runtime"),
   updateSettings: (payload: SettingsResponse["profile"]) =>
     requestJSON<{ status: string; preferredAppURL?: string }>("/api/settings/transcription", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }),
+  updateRuntimeSettings: (payload: RuntimeSettingsResponse["runtime"]) =>
+    requestJSON<{ status: string; runtime: RuntimeSettingsResponse["runtime"] }>("/api/settings/runtime", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -118,12 +135,20 @@ export const api = {
   },
   uploadWithProgress: (
     file: File,
-    onProgress: (p: UploadProgress) => void
+    onProgress: (p: UploadProgress) => void,
+    onCancelReady?: (cancel: () => void) => void
   ): Promise<{ mediaId: number; status: string; message: string }> =>
     new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       const form = new FormData();
       form.append("media", file);
+
+      if (onCancelReady) {
+        onCancelReady(() => {
+          xhr.abort();
+          reject(new Error("cancelled"));
+        });
+      }
 
       xhr.upload.addEventListener("progress", (e) => {
         if (e.lengthComputable) {
@@ -142,17 +167,59 @@ export const api = {
           let msg = `Ошибка загрузки (HTTP ${xhr.status})`;
           try {
             const body = JSON.parse(xhr.responseText);
-            if (body.message) msg = body.message;
-          } catch { /* ignore parse errors */ }
+            if (body.message) {
+              msg = body.message;
+            }
+          } catch {
+            // ignore parse errors
+          }
           reject(new Error(msg));
         }
       });
 
       xhr.addEventListener("error", () => reject(new Error("Upload failed")));
+      xhr.addEventListener("abort", () => reject(new Error("cancelled")));
       xhr.open("POST", "/upload");
       xhr.setRequestHeader("Accept", "application/json");
       xhr.send(form);
     }),
   deleteMedia: (mediaId: number) =>
-    requestJSON<{ status: string }>(`/media/${mediaId}/delete`, { method: "POST" })
+    requestJSON<{ status: string }>(`/media/${mediaId}/delete`, { method: "POST" }),
+  workerStatus: () => requestJSON<WorkerStatusResponse>("/api/worker/status"),
+  previewTriggerRule: (payload: { pattern: string; matchMode: string }) =>
+    requestJSON<{ totalMatches: number; mediaMatches: { mediaId: number; matchCount: number; firstMatchAt: number }[]; limited: boolean }>("/api/trigger-rules/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  analytics: () => requestJSON<AnalyticsResponse>("/api/analytics"),
+  timeline: (filters: TimelineFilters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
+    if (filters.source) params.set("source", filters.source);
+    const qs = params.toString();
+    return requestJSON<TimelineResponse>(`/api/timeline${qs ? `?${qs}` : ""}`);
+  },
+  timelineExportURL: (filters: TimelineFilters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
+    if (filters.source) params.set("source", filters.source);
+    const qs = params.toString();
+    return `/api/timeline/export${qs ? `?${qs}` : ""}`;
+  },
+  stopWords: () => requestJSON<{ stopWords: string }>("/api/settings/stop-words"),
+  updateStopWords: (stopWords: string) =>
+    requestJSON<{ status: string; stopWords: string }>("/api/settings/stop-words", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stopWords }),
+    }),
+  bulkDeleteMedia: (ids: number[]) =>
+    requestJSON<{ deleted: number[]; failed: { id: number; error: string }[] }>("/api/media/bulk-delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    })
 };

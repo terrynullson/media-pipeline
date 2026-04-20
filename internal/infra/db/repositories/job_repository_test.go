@@ -2,15 +2,11 @@ package repositories
 
 import (
 	"context"
-	"database/sql"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"media-pipeline/internal/domain/job"
 	"media-pipeline/internal/domain/media"
-	"media-pipeline/internal/infra/db"
-	infraRuntime "media-pipeline/internal/infra/runtime"
 )
 
 func TestJobRepository_ClaimNextPendingAndMarkDone(t *testing.T) {
@@ -61,7 +57,7 @@ func TestJobRepository_ClaimNextPendingAndMarkDone(t *testing.T) {
 	var status string
 	var attempts int
 	var errorMessage string
-	if err := sqlDB.QueryRowContext(ctx, "SELECT status, attempts, error_message FROM jobs WHERE id = ?", claimedJob.ID).
+	if err := sqlDB.QueryRowContext(ctx, "SELECT status, attempts, error_message FROM jobs WHERE id = $1", claimedJob.ID).
 		Scan(&status, &attempts, &errorMessage); err != nil {
 		t.Fatalf("QueryRow(status) error = %v", err)
 	}
@@ -121,7 +117,7 @@ func TestJobRepository_MarkFailedIncrementsAttempts(t *testing.T) {
 	var status string
 	var attempts int
 	var errorMessage string
-	if err := sqlDB.QueryRowContext(ctx, "SELECT status, attempts, error_message FROM jobs WHERE id = ?", jobID).
+	if err := sqlDB.QueryRowContext(ctx, "SELECT status, attempts, error_message FROM jobs WHERE id = $1", jobID).
 		Scan(&status, &attempts, &errorMessage); err != nil {
 		t.Fatalf("QueryRow(status) error = %v", err)
 	}
@@ -175,7 +171,7 @@ func TestJobRepository_RequeueMovesRunningBackToPending(t *testing.T) {
 	var status string
 	var attempts int
 	var errorMessage string
-	if err := sqlDB.QueryRowContext(ctx, "SELECT status, attempts, error_message FROM jobs WHERE id = ?", jobID).
+	if err := sqlDB.QueryRowContext(ctx, "SELECT status, attempts, error_message FROM jobs WHERE id = $1", jobID).
 		Scan(&status, &attempts, &errorMessage); err != nil {
 		t.Fatalf("QueryRow(status) error = %v", err)
 	}
@@ -369,26 +365,96 @@ func TestJobRepository_ListByMediaIDReturnsNewestFirst(t *testing.T) {
 	}
 }
 
-func openTestDB(t *testing.T) *sql.DB {
-	t.Helper()
+func TestJobRepository_ClaimNextPendingSelectsOldestAcrossMedia(t *testing.T) {
+	t.Parallel()
 
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "app.db")
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
 
-	sqlDB, err := db.OpenSQLite(dbPath)
+	mediaRepo := NewMediaRepository(sqlDB)
+	jobRepo := NewJobRepository(sqlDB)
+
+	mediaID1 := createTestMedia(t, ctx, mediaRepo)
+	mediaID2 := createTestMedia(t, ctx, mediaRepo)
+
+	older := time.Date(2026, 4, 3, 8, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 4, 3, 9, 0, 0, 0, time.UTC)
+
+	// Intentionally create the newer job first so insertion order differs from creation time.
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID2,
+		Type:         job.TypeExtractAudio,
+		Status:       job.StatusPending,
+		CreatedAtUTC: newer,
+		UpdatedAtUTC: newer,
+	}); err != nil {
+		t.Fatalf("Create(job2) error = %v", err)
+	}
+	firstID, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID1,
+		Type:         job.TypeExtractAudio,
+		Status:       job.StatusPending,
+		CreatedAtUTC: older,
+		UpdatedAtUTC: older,
+	})
 	if err != nil {
-		t.Fatalf("OpenSQLite() error = %v", err)
+		t.Fatalf("Create(job1) error = %v", err)
 	}
 
-	migrationsPath, err := infraRuntime.ResolvePath("internal/infra/db/migrations")
+	claimedJob, ok, err := jobRepo.ClaimNextPending(ctx, job.TypeExtractAudio, newer.Add(time.Minute))
 	if err != nil {
-		t.Fatalf("ResolvePath(migrations) error = %v", err)
+		t.Fatalf("ClaimNextPending() error = %v", err)
 	}
-	if err := db.RunMigrations(sqlDB, migrationsPath); err != nil {
-		t.Fatalf("RunMigrations() error = %v", err)
+	if !ok {
+		t.Fatal("ClaimNextPending() ok = false, want true")
+	}
+	if claimedJob.ID != firstID {
+		t.Fatalf("claimed job ID = %d, want %d (oldest job for media %d)", claimedJob.ID, firstID, mediaID1)
+	}
+	if claimedJob.MediaID != mediaID1 {
+		t.Fatalf("claimed media ID = %d, want %d", claimedJob.MediaID, mediaID1)
+	}
+}
+
+func TestJobRepository_ClaimNextPendingSecondCallReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sqlDB := openTestDB(t)
+	defer sqlDB.Close()
+
+	mediaRepo := NewMediaRepository(sqlDB)
+	jobRepo := NewJobRepository(sqlDB)
+
+	mediaID := createTestMedia(t, ctx, mediaRepo)
+	nowUTC := time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC)
+
+	if _, err := jobRepo.Create(ctx, job.Job{
+		MediaID:      mediaID,
+		Type:         job.TypeTranscribe,
+		Status:       job.StatusPending,
+		CreatedAtUTC: nowUTC,
+		UpdatedAtUTC: nowUTC,
+	}); err != nil {
+		t.Fatalf("Create(job) error = %v", err)
 	}
 
-	return sqlDB
+	_, ok1, err := jobRepo.ClaimNextPending(ctx, job.TypeTranscribe, nowUTC.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("first ClaimNextPending() error = %v", err)
+	}
+	if !ok1 {
+		t.Fatal("first ClaimNextPending() ok = false, want true")
+	}
+
+	_, ok2, err := jobRepo.ClaimNextPending(ctx, job.TypeTranscribe, nowUTC.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("second ClaimNextPending() error = %v", err)
+	}
+	if ok2 {
+		t.Fatal("second ClaimNextPending() ok = true, want false (no more pending jobs)")
+	}
 }
 
 func createTestMedia(t *testing.T, ctx context.Context, mediaRepo *MediaRepository) int64 {

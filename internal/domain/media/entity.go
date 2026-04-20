@@ -39,6 +39,17 @@ type Media struct {
 	Status                   Status
 	CreatedAtUTC             time.Time
 	UpdatedAtUTC             time.Time
+
+	// Airtime / broadcast metadata. SourceName identifies the recorder
+	// (e.g. "Recorder_1"). RecordingStartedAtUTC is the absolute wall-clock
+	// start of the recording, parsed from the original filename. RecordingEndedAtUTC
+	// is filled in once the duration of the audio is known. RawRecordingLabel
+	// preserves the parsed timecode portion of the filename for debugging the
+	// parser without re-reading the original name.
+	SourceName            string
+	RecordingStartedAtUTC *time.Time
+	RecordingEndedAtUTC   *time.Time
+	RawRecordingLabel     string
 }
 
 type RuntimeSnapshot struct {

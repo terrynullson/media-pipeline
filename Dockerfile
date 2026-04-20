@@ -1,4 +1,4 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:1.24-alpine AS builder
 WORKDIR /app
 
 COPY go.mod go.sum ./
@@ -15,12 +15,13 @@ RUN apk add --no-cache ffmpeg python3 && ln -sf /usr/bin/python3 /usr/bin/python
 
 COPY --from=builder /bin/web /app/web
 COPY --from=builder /bin/worker /app/worker
+COPY frontend_v1/dist /app/frontend_v1/dist
 COPY internal/infra/db/migrations /app/internal/infra/db/migrations
 COPY internal/transport/http/views/templates /app/internal/transport/http/views/templates
 COPY scripts /app/scripts
 COPY web/static /app/web/static
 
-RUN mkdir -p /app/data/uploads /app/data/audio && chown -R appuser:appuser /app
+RUN mkdir -p /app/data/uploads /app/data/audio /app/data/previews /app/data/screenshots /app/data/auto_uploads /app/data/auto_uploads_imported && chown -R appuser:appuser /app
 
 EXPOSE 8080
 USER appuser

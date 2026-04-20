@@ -4,6 +4,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
+. (Join-Path $PSScriptRoot "load_env.ps1") -RepoRoot $repoRoot
 
 function Use-Utf8Console {
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -50,18 +51,31 @@ function Resolve-PythonBinary {
     return "python"
 }
 
+function Test-DatabaseConfigPresent {
+    if ($env:DATABASE_URL) {
+        return $true
+    }
+
+    return [bool]($env:DB_HOST -and $env:DB_NAME -and $env:DB_USER)
+}
+
 $env:APP_PORT = if ($env:APP_PORT) { $env:APP_PORT } else { "8080" }
-$env:DB_PATH = if ($env:DB_PATH) { $env:DB_PATH } else { ".\data\app.db" }
 $env:UPLOAD_DIR = if ($env:UPLOAD_DIR) { $env:UPLOAD_DIR } else { ".\data\uploads" }
 $env:AUDIO_DIR = if ($env:AUDIO_DIR) { $env:AUDIO_DIR } else { ".\data\audio" }
 $env:TRANSCRIBE_SCRIPT = if ($env:TRANSCRIBE_SCRIPT) { $env:TRANSCRIBE_SCRIPT } else { ".\scripts\transcribe.py" }
 $env:PYTHON_BINARY = if ($env:PYTHON_BINARY) { $env:PYTHON_BINARY } else { Resolve-PythonBinary }
 
+if (-not (Test-DatabaseConfigPresent)) {
+    Write-Error "Database is not configured. Set DATABASE_URL or DB_HOST/DB_NAME/DB_USER before starting web."
+    exit 1
+}
+
 $logPath = Join-Path $logDir "web.log"
 
 Write-Host "Starting web app..."
-Write-Host "URL: http://localhost:$($env:APP_PORT)/"
+Write-Host "App URL: http://localhost:$($env:APP_PORT)/app-v1"
 Write-Host "Health: http://localhost:$($env:APP_PORT)/health"
+Write-Host "Database: PostgreSQL (configured via DATABASE_URL / DB_*)"
 Write-Host "Log file: $logPath"
 Write-Host "Stop: press Ctrl+C in this window"
 

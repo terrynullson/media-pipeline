@@ -6,6 +6,9 @@ import (
 	"time"
 )
 
+// moscowTZ is UTC+3 (Moscow Standard Time, no DST).
+var moscowTZ = time.FixedZone("MSK", 3*60*60)
+
 func HumanSize(sizeBytes int64) string {
 	if sizeBytes < 1024 {
 		return fmt.Sprintf("%d B", sizeBytes)
@@ -45,7 +48,7 @@ func FormatDateTimeUTC(value time.Time) string {
 		return ""
 	}
 
-	return value.UTC().Format("2006-01-02 15:04:05")
+	return value.In(moscowTZ).Format("02.01.2006 15:04:05")
 }
 
 func FormatClockUTC(value time.Time) string {
@@ -53,7 +56,25 @@ func FormatClockUTC(value time.Time) string {
 		return ""
 	}
 
-	return value.UTC().Format("15:04:05")
+	return value.In(moscowTZ).Format("02.01.2006 15:04:05")
+}
+
+// FormatSRTTimestamp converts fractional seconds to SRT timestamp format HH:MM:SS,mmm.
+func FormatSRTTimestamp(totalSeconds float64) string {
+	if totalSeconds < 0 {
+		totalSeconds = 0
+	}
+
+	duration := time.Duration(math.Round(totalSeconds * float64(time.Second)))
+	hours := duration / time.Hour
+	duration -= hours * time.Hour
+	minutes := duration / time.Minute
+	duration -= minutes * time.Minute
+	seconds := duration / time.Second
+	duration -= seconds * time.Second
+	milliseconds := duration / time.Millisecond
+
+	return fmt.Sprintf("%02d:%02d:%02d,%03d", hours, minutes, seconds, milliseconds)
 }
 
 func FormatDurationRU(value time.Duration) string {

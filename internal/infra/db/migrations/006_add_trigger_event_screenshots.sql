@@ -1,14 +1,12 @@
 CREATE TABLE IF NOT EXISTS trigger_event_screenshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    media_id INTEGER NOT NULL,
-    trigger_event_id INTEGER NOT NULL,
-    timestamp_sec REAL NOT NULL,
-    image_path TEXT NOT NULL,
-    width INTEGER NOT NULL,
-    height INTEGER NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE,
-    FOREIGN KEY (trigger_event_id) REFERENCES trigger_events(id) ON DELETE CASCADE
+    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    media_id          BIGINT           NOT NULL REFERENCES media(id)          ON DELETE CASCADE,
+    trigger_event_id  BIGINT           NOT NULL REFERENCES trigger_events(id) ON DELETE CASCADE,
+    timestamp_sec     DOUBLE PRECISION NOT NULL,
+    image_path        TEXT             NOT NULL,
+    width             INTEGER          NOT NULL,
+    height            INTEGER          NOT NULL,
+    created_at        TIMESTAMPTZ      NOT NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_trigger_event_screenshots_event
