@@ -161,6 +161,7 @@ func main() {
 	triggerPreviewUC := mediaapp.NewTriggerPreviewUseCase(transcriptRepo)
 	triggerRuleHandler := handlers.NewTriggerRuleHandler(triggerRuleService, uploadHandler, logger).
 		WithPreviewService(triggerPreviewUC)
+	analyticsHandler := handlers.NewAnalyticsHandler(sqlDB, runtimeSettingsSvc, logger)
 
 	staticPath, err := infraRuntime.ResolvePath("web/static")
 	if err != nil {
@@ -171,7 +172,7 @@ func main() {
 	if frontendV1Err != nil {
 		frontendV1DistPath = ""
 	}
-	router := httptransport.NewRouter(logger, uploadHandler, machineAPIHandler, triggerRuleHandler, workerStatusHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir, cfg.MediaAccessToken, cfg.HTTPRequestTimeout(), cfg.UploadRateLimitPerMinute, frontendV1DistPath)
+	router := httptransport.NewRouter(logger, uploadHandler, machineAPIHandler, triggerRuleHandler, workerStatusHandler, analyticsHandler, staticPath, cfg.UploadDir, cfg.AudioDir, cfg.PreviewDir, cfg.ScreenshotsDir, cfg.MediaAccessToken, cfg.HTTPRequestTimeout(), cfg.UploadRateLimitPerMinute, frontendV1DistPath)
 
 	// Signal-aware context: SIGINT (Ctrl-C) and SIGTERM (systemd / Docker stop)
 	// both trigger a clean drain of in-flight requests before exit.

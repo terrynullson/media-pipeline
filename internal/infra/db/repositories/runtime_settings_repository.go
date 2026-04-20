@@ -21,7 +21,7 @@ func NewRuntimeSettingsRepository(db *sql.DB) *RuntimeSettingsRepository {
 func (r *RuntimeSettingsRepository) Get(ctx context.Context) (appsettings.Settings, bool, error) {
 	row := r.db.QueryRowContext(
 		ctx,
-		`SELECT id, auto_upload_min_age_sec, preview_timeout_sec, max_upload_size_mb, created_at, updated_at
+		`SELECT id, auto_upload_min_age_sec, preview_timeout_sec, max_upload_size_mb, stop_words, created_at, updated_at
 		 FROM runtime_settings
 		 WHERE id = 1
 		 LIMIT 1`,
@@ -34,6 +34,7 @@ func (r *RuntimeSettingsRepository) Get(ctx context.Context) (appsettings.Settin
 		&item.AutoUploadMinAgeSec,
 		&item.PreviewTimeoutSec,
 		&item.MaxUploadSizeMB,
+		&item.StopWords,
 		&createdAt,
 		&updatedAt,
 	); err != nil {
@@ -57,17 +58,19 @@ func (r *RuntimeSettingsRepository) Save(ctx context.Context, settings appsettin
 	_, err := r.db.ExecContext(
 		ctx,
 		`INSERT INTO runtime_settings (
-			id, auto_upload_min_age_sec, preview_timeout_sec, max_upload_size_mb, created_at, updated_at
-		 ) VALUES ($1, $2, $3, $4, $5, $6)
+			id, auto_upload_min_age_sec, preview_timeout_sec, max_upload_size_mb, stop_words, created_at, updated_at
+		 ) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 ON CONFLICT (id) DO UPDATE SET
 			auto_upload_min_age_sec = EXCLUDED.auto_upload_min_age_sec,
 			preview_timeout_sec     = EXCLUDED.preview_timeout_sec,
 			max_upload_size_mb      = EXCLUDED.max_upload_size_mb,
+			stop_words              = EXCLUDED.stop_words,
 			updated_at              = EXCLUDED.updated_at`,
 		settings.ID,
 		settings.AutoUploadMinAgeSec,
 		settings.PreviewTimeoutSec,
 		settings.MaxUploadSizeMB,
+		settings.StopWords,
 		settings.CreatedAtUTC.UTC(),
 		settings.UpdatedAtUTC.UTC(),
 	)

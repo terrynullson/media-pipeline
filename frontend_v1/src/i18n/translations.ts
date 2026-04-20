@@ -116,6 +116,11 @@ const translations = {
     en: "Highlight important moments in transcripts using keyword or exact-phrase rules.",
     ru: "Подсветка важных моментов по ключевым словам и точным фразам.",
   },
+  "settings.analytics": { en: "Analytics", ru: "Аналитика" },
+  "settings.analyticsDesc": {
+    en: "Configure stop-words for the word-frequency report on the Analytics page.",
+    ru: "Настройка стоп-слов для отчёта «Топ слов» на странице Аналитика.",
+  },
 
   "settings.groupEngine": { en: "Engine", ru: "Движок" },
   "settings.groupHardware": { en: "Hardware", ru: "Железо" },

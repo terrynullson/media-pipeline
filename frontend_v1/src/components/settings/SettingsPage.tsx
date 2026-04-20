@@ -27,6 +27,7 @@ import {
   ListFilter,
   CheckCircle2,
   AlertTriangle,
+  BarChart3,
 } from "lucide-react";
 import { api } from "../../api/client";
 import type { SettingsResponse } from "../../models/types";
@@ -36,7 +37,7 @@ import { TriggerRules } from "./TriggerRules";
 
 // ─── Типы ────────────────────────────────────────────────────────────────────
 
-type Section = "transcription" | "rules";
+type Section = "transcription" | "rules" | "analytics";
 
 interface NavItem {
   id: Section;
@@ -58,7 +59,84 @@ const NAV_ITEMS: NavItem[] = [
     titleKey: "rules.title",
     descKey: "settings.rulesDesc",
   },
+  {
+    id: "analytics",
+    icon: <BarChart3 size={15} />,
+    titleKey: "settings.analytics",
+    descKey: "settings.analyticsDesc",
+  },
 ];
+
+// ─── Секция: Аналитика (стоп-слова) ──────────────────────────────────────────
+
+function AnalyticsSection({
+  onSaved,
+  onError,
+}: {
+  onSaved: () => void;
+  onError: () => void;
+}) {
+  const [value, setValue] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api
+      .stopWords()
+      .then((res) => setValue(res.stopWords ?? ""))
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await api.updateStopWords(value);
+      onSaved();
+    } catch {
+      onError();
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
+      <FieldRow
+        label="Стоп-слова"
+        hint="Список слов, исключаемых из «Топ слов» на странице Аналитика. По одному на строку (также допустимы запятые/пробелы). Если оставить пустым — используется встроенный ru/en набор."
+      >
+        <textarea
+          style={{
+            ...inputStyle,
+            minHeight: 180,
+            fontFamily: "var(--font-mono, ui-monospace, monospace)",
+            fontSize: "var(--text-xs)",
+            lineHeight: "var(--leading-normal)",
+            resize: "vertical",
+          }}
+          value={loading ? "загрузка..." : value}
+          disabled={loading}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={"и\nна\nне\nкак\n..."}
+          spellCheck={false}
+        />
+      </FieldRow>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          paddingTop: "var(--sp-2)",
+          borderTop: "1px solid var(--border)",
+        }}
+      >
+        <Button variant="primary" size="sm" loading={saving} onClick={handleSave}>
+          Сохранить
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 // ─── Переиспользуемые стили ──────────────────────────────────────────────────
 
@@ -695,6 +773,19 @@ export function SettingsPage() {
               />
             )}
             {active === "rules" && <TriggerRules />}
+            {active === "analytics" && (
+              <AnalyticsSection
+                onSaved={() =>
+                  setToast({ message: t("settings.saved"), type: "success" })
+                }
+                onError={() =>
+                  setToast({
+                    message: t("settings.saveError"),
+                    type: "error",
+                  })
+                }
+              />
+            )}
           </section>
         </div>
       )}

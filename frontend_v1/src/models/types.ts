@@ -256,6 +256,59 @@ export interface UploadProgress {
   percent: number;
 }
 
+export interface AnalyticsOverviewMetric {
+  label: string;
+  value: string;
+  help: string;
+}
+
+export interface TopWord {
+  word: string;
+  count: number;
+}
+
+export interface AnalyticsSource {
+  source: string;
+  mediaCount: number;
+  totalDurationSec: number;
+  transcriptCount: number;
+}
+
+export interface AnalyticsActivity {
+  date: string;
+  mediaCount: number;
+}
+
+export interface AnalyticsResponse {
+  overview: AnalyticsOverviewMetric[];
+  topWords: TopWord[];
+  sources: AnalyticsSource[];
+  activity: AnalyticsActivity[];
+  stopWords: string[];
+}
+
+export interface TimelineItem {
+  mediaId: number;
+  mediaName: string;
+  source: string;
+  segmentStart: string;
+  segmentEnd: string;
+  startSec: number;
+  endSec: number;
+  text: string;
+  correctedText: string;
+}
+
+export interface TimelineResponse {
+  items: TimelineItem[];
+}
+
+export interface TimelineFilters {
+  from?: string;
+  to?: string;
+  source?: string;
+}
+
 export interface WorkerStatusResponse {
   workerHeartbeatAge: number;
   likelyAlive: boolean;

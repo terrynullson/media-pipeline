@@ -21,6 +21,7 @@ func NewRouter(
 	machineAPIHandler *handlers.MachineAPIHandler,
 	triggerRuleHandler *handlers.TriggerRuleHandler,
 	workerStatusHandler *handlers.WorkerStatusHandler,
+	analyticsHandler *handlers.AnalyticsHandler,
 	staticDir string,
 	uploadsDir string,
 	audioDir string,
@@ -59,6 +60,14 @@ func NewRouter(
 	r.With(timeout).Get("/api/settings/runtime", uploadHandler.APIRuntimeSettings)
 	r.With(timeout).Get("/api/ui-config", uploadHandler.APIUIConfig)
 	r.With(timeout).Get("/api/trigger-rules", triggerRuleHandler.APITriggerRules)
+
+	if analyticsHandler != nil {
+		r.With(timeout).Get("/api/analytics", analyticsHandler.APIAnalytics)
+		r.With(timeout).Get("/api/timeline", analyticsHandler.APITimeline)
+		r.With(timeout).Get("/api/timeline/export", analyticsHandler.APITimelineExport)
+		r.With(timeout).Get("/api/settings/stop-words", analyticsHandler.APIStopWords)
+		r.With(timeout, adminToken, limitJSON).Put("/api/settings/stop-words", analyticsHandler.APIUpdateStopWords)
+	}
 
 	// Mutating / destructive endpoints — require admin token when configured.
 	r.With(timeout, adminToken).Post("/api/media/{mediaID}/retry", uploadHandler.RetryJob)
