@@ -102,6 +102,7 @@ export function Topbar() {
     { path: "/", label: "Главная", icon: <Home size={13} /> },
     { path: "/analytics", label: "Аналитика", icon: <BarChart3 size={13} /> },
     { path: "/timeline", label: "Хронология", icon: <Clock size={13} /> },
+    { path: "/history", label: "История", icon: <Clock size={13} /> },
   ];
   const activeTab =
     navTabs

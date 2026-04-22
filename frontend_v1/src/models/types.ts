@@ -309,6 +309,10 @@ export interface TimelineFilters {
   source?: string;
 }
 
+export type AnalyticsOverviewItem = AnalyticsOverviewMetric;
+export type AnalyticsTopWord = TopWord;
+export type AnalyticsDayActivity = AnalyticsActivity;
+
 export interface WorkerStatusResponse {
   workerHeartbeatAge: number;
   likelyAlive: boolean;
